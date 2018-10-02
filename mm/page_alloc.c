@@ -3348,7 +3348,10 @@ EXPORT_SYMBOL(get_zeroed_page);
 
 void __free_pages(struct page *page, unsigned int order)
 {
+	/* 检查页框是否还有进程在使用，就是检查_count变量的值是否为0 */
+
 	if (put_page_testzero(page)) {
+		/* 如果是1个页框，则放回每CPU高速缓存中，如果是多个页框，则放回伙伴系统，放回CPU高速缓存中优先把其设置为热页，而不是冷页 */
 		if (order == 0)
 			free_hot_cold_page(page, false);
 		else

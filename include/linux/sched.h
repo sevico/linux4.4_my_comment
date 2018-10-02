@@ -1252,10 +1252,10 @@ struct sched_statistics {
 	u64			nr_wakeups_idle;
 };
 #endif
-
+/* 一个调度实体(红黑树的一个结点)，其包含一组或一个指定的进程，包含一个自己的运行队列，一个父亲指针，一个指向需要调度的运行队列指针 */
 struct sched_entity {
 	/* 用于进行调度均衡的相关变量，主要跟红黑树有关 */
-
+	/* 权重，在数组prio_to_weight[]包含优先级转权重的数值 */
 	struct load_weight	load;	// 权重，跟优先级有关	/* for load-balancing */
 	struct rb_node		run_node;// 红黑树的节点
 	struct list_head	group_node; // 所在进程组
@@ -1263,21 +1263,36 @@ struct sched_entity {
 
 	u64			exec_start;// 进程开始执行的时间
 	u64			sum_exec_runtime;// 进程总运行时间
+	/* 虚拟运行时间，在时间中断或者任务状态发生改变时会更新
+	 其会不停增长，增长速度与load权重成反比，load越高，增长速度越慢，就越可能处于红黑树最左边被调度
+	 * 每次时钟中断都会修改其值
+	 * 具体见calc_delta_fair()函数
+	 */
 	u64			vruntime; /*存放进程的虚拟运行时间,用于调度器的选择*/
+	/* 进程在切换进CPU时的sum_exec_runtime值 */
 	u64			prev_sum_exec_runtime;// 进程在切换CPU时的sum_exec_runtime，简单说就是上个调度周期中运行的总时间
-
+	/* 此调度实体中进程移到其他CPU组的数量 */
 	u64			nr_migrations;
 
 #ifdef CONFIG_SCHEDSTATS
+	/* 用于统计一些数据 */
+
 	struct sched_statistics statistics;
 #endif
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
+	/* 代表此进程组的深度，每个进程组都比其parent调度组深度大1 */
+
 	int			depth;
+	/* 父亲调度实体指针，如果是进程则指向其运行队列的调度实体，如果是进程组则指向其上一个进程组的调度实体
+	* 在 set_task_rq 函数中设置
+	*/
+
 	struct sched_entity	*parent;//组调度中的父进程
 	/* rq on which this entity is (to be) queued: */
 	struct cfs_rq		*cfs_rq;  //进程此时在哪个运行队列中
 	/* rq "owned" by this entity/group: */
+	/* 实体的红黑树运行队列，如果为NULL表明其是一个进程，若非NULL表明其是调度组 */
 	struct cfs_rq		*my_q;
 #endif
 
@@ -1408,14 +1423,27 @@ struct task_struct {
 
 	int wake_cpu;
 #endif
+	/* 表示是否在运行队列 */
+
 	int on_rq;
+	/* 进程优先级 
+	* prio: 动态优先级，范围为100~139，与静态优先级和补偿(bonus)有关
+	* static_prio: 静态优先级，static_prio = 100 + nice + 20 (nice值为-20~19,所以static_prio值为100~139)
+	* normal_prio: 没有受优先级继承影响的常规优先级，具体见normal_prio函数，跟属于什么类型的进程有关
+	*/
 
 	int prio, static_prio, normal_prio;
+	/* 实时进程优先级 */
 	unsigned int rt_priority;
+	/* 调度类，调度处理函数类 */
 	const struct sched_class *sched_class;
+	/* 调度实体(红黑树的一个结点) */
 	struct sched_entity se;
+	/* 调度实体(实时调度使用) */
 	struct sched_rt_entity rt;
 #ifdef CONFIG_CGROUP_SCHED
+	/* 指向其所在进程组 */
+
 	struct task_group *sched_task_group;
 #endif
 	struct sched_dl_entity dl;

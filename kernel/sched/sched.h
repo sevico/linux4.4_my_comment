@@ -237,14 +237,22 @@ struct cfs_bandwidth {
 };
 
 /* task group related information */
+/* 进程组，用于实现组调度 */
 struct task_group {
+	/* 用于进程找到其所属进程组结构 */
+
 	struct cgroup_subsys_state css;
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
+	/* CFS调度器的进程组变量，在 alloc_fair_sched_group() 中进程初始化及分配内存 */
+	/* 该进程组在每个CPU上都有对应的一个调度实体，因为有可能此进程组同时在两个CPU上运行(它的A进程在CPU0上运行，B进程在CPU1上运行) */
+
 	/* schedulable entities of this group on each cpu */
 	struct sched_entity **se;
 	/* runqueue "owned" by this group on each cpu */
+	/* 进程组在每个CPU上都有一个CFS运行队列(为什么需要，稍后解释) */
 	struct cfs_rq **cfs_rq;
+	/* 用于保存优先级默认为NICE 0的优先级 */
 	unsigned long shares;
 
 #ifdef	CONFIG_SMP
@@ -253,6 +261,8 @@ struct task_group {
 #endif
 
 #ifdef CONFIG_RT_GROUP_SCHED
+	/* 实时进程调度器的进程组变量，同 CFS */
+
 	struct sched_rt_entity **rt_se;
 	struct rt_rq **rt_rq;
 
@@ -260,10 +270,15 @@ struct task_group {
 #endif
 
 	struct rcu_head rcu;
+	/* 用于建立进程链表(属于此调度组的进程链表) */
+
 	struct list_head list;
+	/* 指向其上层的进程组，每一层的进程组都是它上一层进程组的运行队列的一个调度实体，在同一层中，进程组和进程被同等对待 */
 
 	struct task_group *parent;
+	/* 进程组的兄弟结点链表 */
 	struct list_head siblings;
+	/* 进程组的儿子结点链表 */
 	struct list_head children;
 
 #ifdef CONFIG_SCHED_AUTOGROUP
@@ -344,17 +359,30 @@ struct cfs_bandwidth { };
 #endif	/* CONFIG_CGROUP_SCHED */
 
 /* CFS-related fields in a runqueue */
+/* CFS调度的运行队列，每个CPU的rq会包含一个cfs_rq，而每个组调度的sched_entity也会有自己的一个cfs_rq队列 */
+
 struct cfs_rq {
+	/* CFS运行队列中所有进程的总负载 */
 	struct load_weight load;  /*运行负载*/
+	/*
+	* nr_running: cfs_rq中调度实体数量
+	* h_nr_running: 只对进程组有效，其下所有进程组中cfs_rq的nr_running之和
+	*/
 	unsigned int nr_running, h_nr_running;  ;/*运行进程个数*/
 
 	u64 exec_clock; //运行的时钟
+	/* 当前CFS队列上最小运行时间，单调递增
+	* 两种情况下更新该值:
+	* 1、更新当前运行任务的累计运行时间时
+	* 2、当任务从队列删除去，如任务睡眠或退出，这时候会查看剩下的任务的vruntime是否大于min_vruntime，如果是则更新该值。
+	*/
 	u64 min_vruntime; //该cpu运行队列的vruntime推进值, 一般是红黑树中最小的vruntime值
 #ifndef CONFIG_64BIT
 	u64 min_vruntime_copy;
 #endif
-
+	/* 该红黑树的root */
 	struct rb_root tasks_timeline;//红黑树的根结点
+	/* 下一个调度结点(红黑树最左边结点，最左边结点就是下个调度实体) */
 	struct rb_node *rb_leftmost; /*保存的红黑树最左边的
 	节点，这个为最小运行时间的节点，当进程
 	选择下一个来运行时，直接选择这个*/
@@ -362,6 +390,12 @@ struct cfs_rq {
 	/*
 	 * 'curr' points to currently running entity on this cfs_rq.
 	 * It is set to NULL otherwise (i.e when none are currently running).
+	 */
+	 /*
+	 * curr: 当前正在运行的sched_entity（对于组虽然它不会在cpu上运行，但是当它的下层有一个task在cpu上运行，那么它所在的cfs_rq就把它当做是该cfs_rq上当前正在运行的sched_entity）
+	 * next: 表示有些进程急需运行，即使不遵从CFS调度也必须运行它，调度时会检查是否next需要调度，有就调度next
+	 *
+	 * skip: 略过进程(不会选择skip指定的进程调度)
 	 */
 	 //当前运行进程, 下一个将要调度的进程, 马上要抢占的进程, 
 	struct sched_entity *curr, *next, *last, *skip;
@@ -400,7 +434,7 @@ struct cfs_rq {
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
 	//系统中有普通进程的运行队列, 实时进程的运行队列, 这些队列都包含在rq运行队列中  
-
+	/* 所属于的CPU rq */
 	struct rq *rq;	/* cpu runqueue to which this cfs_rq is attached */
 
 	/*
@@ -413,6 +447,7 @@ struct cfs_rq {
 	 */
 	int on_list;
 	struct list_head leaf_cfs_rq_list;
+	/* 拥有该CFS运行队列的进程组 */
 	struct task_group *tg;	/* group that "owns" this runqueue */
 
 #ifdef CONFIG_CFS_BANDWIDTH
@@ -573,6 +608,7 @@ extern void rto_push_irq_work_func(struct irq_work *work);
  * (such as the load balancing or the thread migration code), lock
  * acquire operations must be ordered by ascending &runqueue.
  */
+ /* CPU运行队列，每个CPU包含一个struct rq */
 struct rq {
 	/* runqueue lock: */
 	raw_spinlock_t lock;
@@ -581,13 +617,16 @@ struct rq {
 	 * nr_running and cpu_load should be in the same cacheline because
 	 * remote CPUs use both these fields when doing load calculation.
 	 */
+	 /* 此CPU上总共就绪的进程数，包括cfs，rt和正在运行的 */
 	unsigned int nr_running;
 #ifdef CONFIG_NUMA_BALANCING
 	unsigned int nr_numa_running;
 	unsigned int nr_preferred_running;
 #endif
 	#define CPU_LOAD_IDX_MAX 5
+	/* 根据CPU历史情况计算的负载，cpu_load[0]一直等于load.weight，当达到负载平衡时，cpu_load[1]和cpu_load[2]都应该等于load.weight */
 	unsigned long cpu_load[CPU_LOAD_IDX_MAX];
+	/* 最后一次更新 cpu_load 的时间 */
 	unsigned long last_load_update_tick;
 #ifdef CONFIG_NO_HZ_COMMON
 	u64 nohz_stamp;
@@ -597,11 +636,15 @@ struct rq {
 	unsigned long last_sched_tick;
 #endif
 	/* capture load from *all* tasks on this cpu: */
+	/* CPU负载，该CPU上所有可运行进程的load之和，nr_running更新时这个值也必须更新 */
+
 	struct load_weight load;
 	unsigned long nr_load_updates;
+	/* 进行上下文切换次数，只有proc会使用这个 */
 	u64 nr_switches;
-
+	/* cfs调度运行队列，包含红黑树的根 */
 	struct cfs_rq cfs;
+	/* 实时调度运行队列 */
 	struct rt_rq rt;
 	struct dl_rq dl;
 
@@ -616,13 +659,21 @@ struct rq {
 	 * one CPU and if it got migrated afterwards it may decrease
 	 * it on another CPU. Always updated under the runqueue lock:
 	 */
+	 /* 曾经处于队列但现在处于TASK_UNINTERRUPTIBLE状态的进程数量 */
 	unsigned long nr_uninterruptible;
+	/*
+	* curr: 当前正在此CPU上运行的进程
+	* idle: 当前CPU上idle进程的指针，idle进程用于当CPU没事做的时候调用，它什么都不执行
+	*/
 
 	struct task_struct *curr, *idle, *stop;
+	/* 下次进行负载平衡执行时间 */
 	unsigned long next_balance;
+	/* 在进程切换时用来存放换出进程的内存描述符地址 */
 	struct mm_struct *prev_mm;
-
+	/* 是否需要更新rq的运行时间 */
 	unsigned int clock_skip_update;
+	/* rq运行时间 */
 	u64 clock;
 	u64 clock_task;
 
@@ -630,6 +681,8 @@ struct rq {
 
 #ifdef CONFIG_SMP
 	struct root_domain *rd;
+	/* 当前CPU所在基本调度域，每个调度域包含一个或多个CPU组，每个CPU组包含该调度域中一个或多个CPU子集，负载均衡都是在调度域中的组之间完成的，不能跨域进行负载均衡 */
+
 	struct sched_domain *sd;
 
 	unsigned long cpu_capacity;
@@ -639,16 +692,19 @@ struct rq {
 
 	unsigned char idle_balance;
 	/* For active balancing */
+	/* 如果需要把进程迁移到其他运行队列，就需要设置这个位 */
 	int active_balance;  //用于主动均衡
 	int push_cpu;
 	struct cpu_stop_work active_balance_work;
 	/* cpu of this runqueue: */
+	/* 该运行队列所属CPU */
 	int cpu;  //该就绪队列的CPU
 	int online;
 
 	struct list_head cfs_tasks;
 
 	u64 rt_avg;
+	/* 该运行队列存活时间 */
 	u64 age_stamp;
 	u64 idle_stamp;
 	u64 avg_idle;
@@ -668,6 +724,8 @@ struct rq {
 #endif
 
 	/* calc_load related fields */
+	/* 用于负载均衡 */
+
 	unsigned long calc_load_update;
 	long calc_load_active;
 
@@ -676,6 +734,7 @@ struct rq {
 	int hrtick_csd_pending;
 	struct call_single_data hrtick_csd;
 #endif
+	/* 调度使用的高精度定时器 */
 	struct hrtimer hrtick_timer;
 #endif
 
@@ -1187,18 +1246,22 @@ static const u32 prio_to_wmult[40] = {
 #define RETRY_TASK		((void *)-1UL)
 
 struct sched_class {
+	/* 下一优先级的调度类
+	* 调度类优先级顺序: stop_sched_class -> dl_sched_class -> rt_sched_class -> fair_sched_class -> idle_sched_class
+	*/
+	
+
 	const struct sched_class *next;
-
+	/* 将进程加入到运行队列中，即将调度实体（进程）放入红黑树中，并对 nr_running 变量加1 */
+	//当某个任务进入可运行状态时，该函数将得到调用。它将调度实体（进程）放入红黑树中，并对 nr_running 变量加 1。
 	void (*enqueue_task) (struct rq *rq, struct task_struct *p, int flags);
-//当某个任务进入可运行状态时，该函数将得到调用。它将调度实体（进程）放入红黑树中，并对 nr_running 变量加 1。
+	//当某个任务退出可运行状态时调用该函数，它将从红黑树中去掉对应的调度实体，并从 nr_running 变量中减 1。
 	void (*dequeue_task) (struct rq *rq, struct task_struct *p, int flags);
-//当某个任务退出可运行状态时调用该函数，它将从红黑树中去掉对应的调度实体，并从 nr_running 变量中减 1。
+	//在 compat_yield sysctl 关闭的情况下，该函数实际上执行先出队后入队；在这种情况下，它将调度实体放在红黑树的最右端
 	void (*yield_task) (struct rq *rq);
-//在 compat_yield sysctl 关闭的情况下，该函数实际上执行先出队后入队；在这种情况下，它将调度实体放在红黑树的最右端
 	bool (*yield_to_task) (struct rq *rq, struct task_struct *p, bool preempt);
-
+	//该函数将检查当前运行的任务是否被抢占。在实际抢占正在运行的任务之前，CFS 调度程序模块将执行公平性测试。这将驱动唤醒式（wakeup）抢占。
 	void (*check_preempt_curr) (struct rq *rq, struct task_struct *p, int flags);
-//该函数将检查当前运行的任务是否被抢占。在实际抢占正在运行的任务之前，CFS 调度程序模块将执行公平性测试。这将驱动唤醒式（wakeup）抢占。
 	/*
 	 * It is the responsibility of the pick_next_task() method that will
 	 * return the next task to call put_prev_task() on the @prev task or
@@ -1207,29 +1270,35 @@ struct sched_class {
 	 * May return RETRY_TASK when it finds a higher prio class has runnable
 	 * tasks.
 	 */
+	 //该函数选择接下来要运行的最合适的进程。
 	struct task_struct * (*pick_next_task) (struct rq *rq,
 						struct task_struct *prev);
-//该函数选择接下来要运行的最合适的进程。
+	/* 将进程放回运行队列 */
 	void (*put_prev_task) (struct rq *rq, struct task_struct *p);
 
 #ifdef CONFIG_SMP
+	/* 为进程选择一个合适的CPU */
 	int  (*select_task_rq)(struct task_struct *p, int task_cpu, int sd_flag, int flags);
+	/* 迁移任务到另一个CPU */
 	void (*migrate_task_rq)(struct task_struct *p);
-
+	/* 用于进程唤醒 */
 	void (*task_waking) (struct task_struct *task);
 	void (*task_woken) (struct rq *this_rq, struct task_struct *task);
-
+	/* 修改进程的CPU亲和力(affinity) */
 	void (*set_cpus_allowed)(struct task_struct *p,
 				 const struct cpumask *newmask);
-
+	/* 启动运行队列 */
 	void (*rq_online)(struct rq *rq);
+	/* 禁止运行队列 */
 	void (*rq_offline)(struct rq *rq);
 #endif
-
+	/* 当进程改变它的调度类或进程组时被调用 */
 	void (*set_curr_task) (struct rq *rq);
+	/* 该函数通常调用自 time tick 函数；它可能引起进程切换。这将驱动运行时（running）抢占 */
 	void (*task_tick) (struct rq *rq, struct task_struct *p, int queued);
-	//该函数通常调用自 time tick 函数；它可能引起进程切换。这将驱动运行时（running）抢占。
+	/* 在进程创建时调用，不同调度策略的进程初始化不一样 */
 	void (*task_fork) (struct task_struct *p);
+	/* 在进程退出时会使用 */
 	void (*task_dead) (struct task_struct *p);
 
 	/*
@@ -1237,8 +1306,10 @@ struct sched_class {
 	 * cannot assume the switched_from/switched_to pair is serliazed by
 	 * rq->lock. They are however serialized by p->pi_lock.
 	 */
+	 /* 用于进程切换 */
 	void (*switched_from) (struct rq *this_rq, struct task_struct *task);
 	void (*switched_to) (struct rq *this_rq, struct task_struct *task);
+	/* 改变优先级 */
 	void (*prio_changed) (struct rq *this_rq, struct task_struct *task,
 			     int oldprio);
 
