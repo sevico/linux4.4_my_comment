@@ -24,8 +24,12 @@
  * the anon_vma object itself: we're guaranteed no page can be
  * pointing to this anon_vma once its vma list is empty.
  */
+ 
+/* 匿名线性区描述符，每个匿名vma都会有一个这个结构 */
 struct anon_vma {
+	/* 指向此anon_vma所属的root */
 	struct anon_vma *root;		/* Root of this anon_vma tree */
+	/* 读写信号量 */
 	struct rw_semaphore rwsem;	/* W: modification, R: walking the list */
 	/*
 	 * The refcount is taken on an anon_vma when there is no
@@ -34,6 +38,8 @@ struct anon_vma {
 	 * the reference is responsible for clearing up the
 	 * anon_vma if they are the last user on release
 	 */
+	/* 红黑树中结点数量，初始化时为1，也就是只有本结点，当加入root的anon_vma的红黑树时，此值不变 */
+
 	atomic_t refcount;
 
 	/*
@@ -42,6 +48,7 @@ struct anon_vma {
 	 * This counter is used for making decision about reusing anon_vma
 	 * instead of forking new one. See comments in function anon_vma_clone.
 	 */
+	 
 	unsigned degree;
 
 	struct anon_vma *parent;	/* Parent of this anon_vma */
@@ -54,6 +61,7 @@ struct anon_vma {
 	 * is serialized by a system wide lock only visible to
 	 * mm_take_all_locks() (mm_all_locks_mutex).
 	 */
+	 /* 红黑树的根，用于存放引用了此anon_vma所属线性区中的页的其他线性区，用于匿名页反向映射 */
 	struct rb_root rb_root;	/* Interval tree of private "related" vmas */
 };
 
@@ -71,8 +79,11 @@ struct anon_vma {
  * which link all the VMAs associated with this anon_vma.
  */
 struct anon_vma_chain {
+	/* 此结构所属的vma */
 	struct vm_area_struct *vma;
+	/* 此结构加入的红黑树所属的anon_vma */
 	struct anon_vma *anon_vma;
+	/* 用于加入到所属vma的anon_vma_chain链表中 */
 	struct list_head same_vma;   /* locked by mmap_sem & page_table_lock */
 	struct rb_node rb;			/* locked by anon_vma->rwsem */
 	unsigned long rb_subtree_last;

@@ -166,41 +166,74 @@ static void anon_vma_chain_link(struct vm_area_struct *vma,
  *
  * This must be called with the mmap_sem held for reading.
  */
+ /* 为vma准备反向映射条件 
+ * 检查此vma能与前后的vma进行合并吗，如果可以，则使用能够合并的那个vma的anon_vma，如果不能够合并，则申请一个空闲的anon_vma
+ * 创建一个新的anon_vma_chain
+ * 将avc->anon_vma指向获得的vma(此vma可能是新建的，也可能是可以合并的vma的anon_vma)，avc->vma指向vma，并把avc加入到vma的anon_vma_chain中
+ */
 int anon_vma_prepare(struct vm_area_struct *vma)
 {
+	/* 获取vma的反向映射的anon_vma结构 */
 	struct anon_vma *anon_vma = vma->anon_vma;
 	struct anon_vma_chain *avc;
-
+	/* 检查是否需要睡眠 */
 	might_sleep();
+	/* 如果此vma的anon_vma为空，则进行以下处理 */
 	if (unlikely(!anon_vma)) {
+		/* 获取vma所属的mm */
 		struct mm_struct *mm = vma->vm_mm;
 		struct anon_vma *allocated;
-
+		/* 通过slab/slub分配一个struct anon_vma_chain */
 		avc = anon_vma_chain_alloc(GFP_KERNEL);
 		if (!avc)
 			goto out_enomem;
+        /* 检查vma能否与其前/后vma进行合并，如果可以，则返回能够合并的那个vma的anon_vma，如果不可以，返回NULL
+         * 主要检查vma前后的vma是否连在一起(vma->vm_end == 前/后vma->vm_start)
+         * vma->vm_policy和前/后vma->vm_policy
+         * 是否都为文件映射，除了(VM_READ|VM_WRITE|VM_EXEC|VM_SOFTDIRTY)其他标志位是否相同，如果为文件映射，前/后vma映射的文件位置是否正好等于vma映射的文件 + vma的长度
+         * 这里有个疑问，为什么匿名线性区会有vm_file不为空的时候，我也没找到原因
+         * 可以合并，则返回可合并的线性区的anon_vma
+         */
 
 		anon_vma = find_mergeable_anon_vma(vma);
 		allocated = NULL;
+		/* anon_vma为空，也就是vma不能与前后的vma合并，则会分配一个 */
 		if (!anon_vma) {
+			/* 从anon_vma_cachep这个slab中分配一个anon_vma结构，将其refcount设为1，anon_vma->root指向本身 */
 			anon_vma = anon_vma_alloc();
 			if (unlikely(!anon_vma))
 				goto out_enomem_free_avc;
+			/* 刚分配好的anon_vma存放在allocated */
 			allocated = anon_vma;
 		}
+		/* 到这里，anon_vma有可能是可以合并的vma的anon_vma，也有可能是刚分配的anon_vma */
+				
+		/* 对anon_vma->root->rwsem上写锁，如果是新分配的anon_vma则是其本身的rwsem */
 
 		anon_vma_lock_write(anon_vma);
 		/* page_table_lock to protect against threads */
+		/* 获取当前进程的线性区锁 */
 		spin_lock(&mm->page_table_lock);
+		/* 如果vma->anon_vma为空，这是很可能发生的，因为此函数开头获取的anon_vma为空才会走到这条代码路径上 */
 		if (likely(!vma->anon_vma)) {
+			/* 将vma->anon_vma设置为新分配的anon_vma，这个anon_vma也可能是前后能够合并的vma的anon_vma */
 			vma->anon_vma = anon_vma;
+			/*
+			* avc->vma = vma
+			* avc->anon_vma = anon_vma(这个可能是当前vma的anon_vma，也可能是前后可合并vma的anon_vma)
+			* 将新的avc->same_vma加入到vma的anon_vma_chain链表中
+			* 将新的avc->rb加入到anon_vma的红黑树中
+			*/
 			anon_vma_chain_link(vma, avc, anon_vma);
 			/* vma reference or self-parent link for new root */
 			anon_vma->degree++;
+			/* 这两个置空，后面就不会释放掉 */
 			allocated = NULL;
 			avc = NULL;
 		}
+		/* mm的页表的锁 */
 		spin_unlock(&mm->page_table_lock);
+		/* 释放anon_vma的写锁 */
 		anon_vma_unlock_write(anon_vma);
 
 		if (unlikely(allocated))
@@ -254,24 +287,40 @@ static inline void unlock_anon_vma_root(struct anon_vma *root)
  * good chance of avoiding scanning the whole hierarchy when it searches where
  * page is mapped.
  */
+ /* dst为子进程的vma，src为父进程的vma */
 int anon_vma_clone(struct vm_area_struct *dst, struct vm_area_struct *src)
 {
 	struct anon_vma_chain *avc, *pavc;
 	struct anon_vma *root = NULL;
+	/* 遍历父进程的每个anon_vma_chain链表中的结点，保存在pavc中 */
 
 	list_for_each_entry_reverse(pavc, &src->anon_vma_chain, same_vma) {
 		struct anon_vma *anon_vma;
+		/* 分配一个新的avc结构 */
 
 		avc = anon_vma_chain_alloc(GFP_NOWAIT | __GFP_NOWARN);
+		/* 如果分配失败 */
 		if (unlikely(!avc)) {
 			unlock_anon_vma_root(root);
 			root = NULL;
+		/* 再次分配，一定要分配成功 */
 			avc = anon_vma_chain_alloc(GFP_KERNEL);
 			if (!avc)
 				goto enomem_failure;
 		}
+		/* 获取父结点的pavc指向的anon_vma */
 		anon_vma = pavc->anon_vma;
+		/* 对anon_vma的root上锁
+         * 如果root != anon_vma->root，则对root上锁，并返回anon_vma->root
+         * 第一次循环，root = NULL
+         */
 		root = lock_anon_vma_root(root, anon_vma);
+		/* 
+         * 设置新的avc->vma指向子进程的vma
+         * 设置新的avc->anon_vma指向父进程anon_vma_chain结点指向的anon_vma(这个anon_vma不一定属于父进程)
+         * 将新的avc->same_vma加入到子进程的anon_vma_chain链表头部
+         * 将新的avc->rb加入到父进程anon_vma_chain结点指向的anon_vma
+         */
 		anon_vma_chain_link(dst, avc, anon_vma);
 
 		/*
@@ -288,6 +337,7 @@ int anon_vma_clone(struct vm_area_struct *dst, struct vm_area_struct *src)
 	}
 	if (dst->anon_vma)
 		dst->anon_vma->degree++;
+	 /* 释放根的锁 */
 	unlock_anon_vma_root(root);
 	return 0;
 
@@ -308,6 +358,8 @@ int anon_vma_clone(struct vm_area_struct *dst, struct vm_area_struct *src)
  * the corresponding VMA in the parent process is attached to.
  * Returns 0 on success, non-zero on failure.
  */
+ 
+/* vma为子进程的vma，pvma为父进程的vma，如果父进程的此vma没有anon_vma，直接返回 */
 int anon_vma_fork(struct vm_area_struct *vma, struct vm_area_struct *pvma)
 {
 	struct anon_vma_chain *avc;
@@ -315,6 +367,7 @@ int anon_vma_fork(struct vm_area_struct *vma, struct vm_area_struct *pvma)
 	int error;
 
 	/* Don't bother if the parent process has no anon_vma here. */
+	/* 父进程的此vma没有anon_vma，直接返回 */
 	if (!pvma->anon_vma)
 		return 0;
 
@@ -325,15 +378,26 @@ int anon_vma_fork(struct vm_area_struct *vma, struct vm_area_struct *pvma)
 	 * First, attach the new VMA to the parent VMA's anon_vmas,
 	 * so rmap can find non-COWed pages in child processes.
 	 */
+	 /* 这里开始先检查父进程的此vma是否有anon_vma，有则继续，而上面进行了判断，只有父进程的此vma有anon_vma才会执行到这里
+     * 这里会遍历父进程的vma的anon_vma_chain链表，对每个结点新建一个anon_vma_chain，然后
+     * 设置新的avc->vma指向子进程的vma
+     * 设置新的avc->anon_vma指向父进程anon_vma_chain结点指向的anon_vma(这个anon_vma不一定属于父进程)
+     * 将新的avc->same_vma加入到子进程的anon_vma_chain链表中
+     * 将新的avc->rb加入到父进程anon_vma_chain结点指向的anon_vma
+     */
 	error = anon_vma_clone(vma, pvma);
 	if (error)
 		return error;
 
 	/* An existing anon_vma has been reused, all done then. */
+	/* 分配一个anon_vma结构用于子进程，将其refcount设为1，anon_vma->root指向本身
+     * 即使此vma是用于映射文件的，也会分配一个anon_vma
+     */
 	if (vma->anon_vma)
 		return 0;
 
 	/* Then add our own anon_vma. */
+	
 	anon_vma = anon_vma_alloc();
 	if (!anon_vma)
 		goto out_error;
@@ -345,6 +409,7 @@ int anon_vma_fork(struct vm_area_struct *vma, struct vm_area_struct *pvma)
 	 * The root anon_vma's spinlock is the lock actually used when we
 	 * lock any of the anon_vmas in this anon_vma tree.
 	 */
+	 /* 将新的anon_vma的root指向父进程的anon_vma的root */
 	anon_vma->root = pvma->anon_vma->root;
 	anon_vma->parent = pvma->anon_vma;
 	/*
@@ -352,12 +417,20 @@ int anon_vma_fork(struct vm_area_struct *vma, struct vm_area_struct *pvma)
 	 * process it belongs to. The root anon_vma needs to be pinned until
 	 * this anon_vma is freed, because the lock lives in the root.
 	 */
+	 /* 对父进程与子进程的anon_vma共同的root的refcount进行+1 */
 	get_anon_vma(anon_vma->root);
 	/* Mark this anon_vma as the one where our new (COWed) pages go. */
 	vma->anon_vma = anon_vma;
+	/* 对这个新的anon_vma上锁 */
 	anon_vma_lock_write(anon_vma);
+	 /* 新的avc的vma指向子进程的vma
+     * 新的avc的anon_vma指向子进程vma的anon_vma
+     * 新的avc的same_vma加入到子进程vma的anon_vma_chain链表的头部
+     * 新的avc的rb加入到子进程vma的anon_vma的红黑树中
+     */
 	anon_vma_chain_link(vma, avc, anon_vma);
 	anon_vma->parent->degree++;
+	/* 对这个anon_vma解锁 */
 	anon_vma_unlock_write(anon_vma);
 
 	return 0;
@@ -1208,16 +1281,30 @@ void do_page_add_anon_rmap(struct page *page,
  * This means the inc-and-test can be bypassed.
  * Page does not have to be locked.
  */
+ /* 对一个新页进行反向映射
+ * page: 目标页
+ * vma: 访问此页的vma
+ * address: 线性地址
+ */
 void page_add_new_anon_rmap(struct page *page,
 	struct vm_area_struct *vma, unsigned long address)
 {
+	/* 地址必须处于vma中 */
 	VM_BUG_ON_VMA(address < vma->vm_start || address >= vma->vm_end, vma);
 	SetPageSwapBacked(page);
+	/* 设置此页的_mapcount = 0，说明此页正在使用，但是是非共享的(>0是共享) */
 	atomic_set(&page->_mapcount, 0); /* increment count (starts at -1) */
+	/* 如果是透明大页 */
 	if (PageTransHuge(page))
+		/* 统计 */
 		__inc_zone_page_state(page, NR_ANON_TRANSPARENT_HUGEPAGES);
 	__mod_zone_page_state(page_zone(page), NR_ANON_PAGES,
 			hpage_nr_pages(page));
+	    /* 进行反向映射
+     * 设置page->mapping最低位为1
+     * page->mapping指向此vma->anon_vma
+     * page->index存放此page在vma中的虚拟页框号，计算方法：page->index = ((address - vma->vm_start) >> PAGE_SHIFT) + vma->vm_pgoff;
+     */
 	__page_set_anon_rmap(page, vma, address, 1);
 }
 

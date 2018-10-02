@@ -1391,7 +1391,9 @@ struct tlbflush_unmap_batch {
 };
 
 struct task_struct {
+	/* 进程状态 */
 	volatile long state;	/* -1 unrunnable, 0 runnable, >0 stopped */
+	/* 指向内核栈 */
 	void *stack;
 	atomic_t usage;
 	unsigned int flags;	/* per process flags, defined below */
@@ -1447,13 +1449,13 @@ struct task_struct {
 #ifdef CONFIG_SCHED_INFO
 	struct sched_info sched_info;
 #endif
-
+	/* 用于加入进程链表 */
 	struct list_head tasks;
 #ifdef CONFIG_SMP
 	struct plist_node pushable_tasks;
 	struct rb_node pushable_dl_tasks;
 #endif
-
+	/* 指向该进程的内存区描述符 */
 	struct mm_struct *mm, *active_mm;
 	/* per-thread vma caching */
 	u32 vmacache_seqnum;
@@ -1496,8 +1498,9 @@ struct task_struct {
 	unsigned long atomic_flags; /* Flags needing atomic access. */
 
 	struct restart_block restart_block;
-
+	/* 进程ID，每个进程(线程)的PID都不同 */
 	pid_t pid;
+	/* 线程组ID，同一个线程组拥有相同的pid，与领头线程(该组中第一个轻量级进程)pid一致，保存在tgid中，线程组领头线程的pid和tgid相同 */
 	pid_t tgid;
 
 #ifdef CONFIG_CC_STACKPROTECTOR
@@ -1509,13 +1512,18 @@ struct task_struct {
 	 * older sibling, respectively.  (p->father can be replaced with
 	 * p->real_parent->pid)
 	 */
+	 /* 指向创建其的父进程，如果其父进程不存在，则指向init进程 */
 	struct task_struct __rcu *real_parent; /* real parent process */
+	/* 指向当前的父进程，通常与real_parent一致 */
 	struct task_struct __rcu *parent; /* recipient of SIGCHLD, wait4() reports */
 	/*
 	 * children/sibling forms the list of my natural children
 	 */
+	  /* 子进程链表 */
 	struct list_head children;	/* list of my children */
+	/* 兄弟进程链表 */
 	struct list_head sibling;	/* linkage in my parent's children list */
+	/* 线程组领头线程指针 */
 	struct task_struct *group_leader;	/* threadgroup leader */
 
 	/*
@@ -1527,6 +1535,7 @@ struct task_struct {
 	struct list_head ptrace_entry;
 
 	/* PID/PID hash table linkage. */
+	/* 用于连接到PID、TGID、PGRP、SESSION哈希表 */
 	struct pid_link pids[PIDTYPE_MAX];
 	struct list_head thread_group;
 	struct list_head thread_node;
@@ -1578,17 +1587,26 @@ struct task_struct {
 	unsigned long last_switch_count;
 #endif
 /* filesystem information */
+	/* 当前目录 */
 	struct fs_struct *fs;
 /* open file information */
+	/* 指向文件描述符，该进程所有打开的文件会在这里面的一个指针数组里 */
 	struct files_struct *files;
 /* namespaces */
 	struct nsproxy *nsproxy;
 /* signal handlers */
+	/* 信号描述符，用于跟踪共享挂起信号队列，被属于同一线程组的所有进程共享，也就是同一线程组的线程此指针指向同一个信号描述符 */
 	struct signal_struct *signal;
+	/* 信号处理函数描述符 */
 	struct sighand_struct *sighand;
+	　　/* sigset_t是一个位数组，每种信号对应一个位，linux中信号最大数是64
+	　　 * blocked: 被阻塞信号掩码
+	　　 * real_blocked: 被阻塞信号的临时掩码
+	　　 */
 
 	sigset_t blocked, real_blocked;
 	sigset_t saved_sigmask;	/* restored if set_restore_sigmask() was used */
+	/* 私有挂起信号队列 */
 	struct sigpending pending;
 
 	unsigned long sas_ss_sp;
@@ -1834,6 +1852,7 @@ struct task_struct {
 #endif
 	int pagefault_disabled;
 /* CPU-specific state of this task */
+/* 在进程切换时保存硬件上下文(硬件上下文一共保存在2个地方: thread_struct(保存大部分CPU寄存器值，包括内核态堆栈栈顶地址和IO许可权限位)，内核栈(保存eax,ebx,ecx,edx等通用寄存器值)) */
 	struct thread_struct thread;
 /*
  * WARNING: on x86, 'thread_struct' contains a variable-sized
