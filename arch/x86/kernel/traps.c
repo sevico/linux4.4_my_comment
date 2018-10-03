@@ -824,6 +824,7 @@ void __init early_trap_pf_init(void)
 void __init trap_init(void)
 {
 	int i;
+	/* 使用了EISA总线 */
 
 #ifdef CONFIG_EISA
 	void __iomem *p = early_ioremap(0x0FFFD9, 4);
@@ -832,6 +833,30 @@ void __init trap_init(void)
 		EISA_bus = 1;
 	early_iounmap(p, 4);
 #endif
+	/* Interrupts/Exceptions */
+	 //enum {
+	 //    X86_TRAP_DE = 0,    /*  0, 除0操作 Divide-by-zero */
+	 //    X86_TRAP_DB, 	   /*  1, 调试使用 Debug */
+	 //    X86_TRAP_NMI,		/*	2, 非屏蔽中断 Non-maskable Interrupt */
+	 //    X86_TRAP_BP, 	   /*  3, 断点 Breakpoint */
+	 //    X86_TRAP_OF, 	   /*  4, 溢出 Overflow */
+	 //    X86_TRAP_BR, 	   /*  5, 越界异常 Bound Range Exceeded */
+	 //    X86_TRAP_UD, 	   /*  6, 无效操作码 Invalid Opcode */
+	 //    X86_TRAP_NM, 	   /*  7, 无效设备 Device Not Available */
+	 //    X86_TRAP_DF, 	   /*  8, 双重故障 Double Fault */
+	 //    X86_TRAP_OLD_MF,    /*  9, 协处理器段超限 Coprocessor Segment Overrun */
+	 //    X86_TRAP_TS, 	   /* 10, 无效任务状态段(TSS) Invalid TSS */
+	 //    X86_TRAP_NP, 	   /* 11, 段不存在 Segment Not Present */
+	 //    X86_TRAP_SS, 	   /* 12, 栈段错误 Stack Segment Fault */
+	 //    X86_TRAP_GP, 	   /* 13, 保护错误 General Protection Fault */
+	 //    X86_TRAP_PF, 	   /* 14, 页错误 Page Fault */
+	 //    X86_TRAP_SPURIOUS,	 /* 15, 欺骗性中断 Spurious Interrupt */
+	 //    X86_TRAP_MF, 	   /* 16, X87 浮点数异常 Floating-Point Exception */
+	 //    X86_TRAP_AC, 	   /* 17, 对齐检查 Alignment Check */
+	 //    X86_TRAP_MC, 	   /* 18, 设备检查 Machine Check */
+	 //    X86_TRAP_XF, 	   /* 19, SIMD 浮点数异常 Floating-Point Exception */
+	 //    X86_TRAP_IRET = 32,	  /* 32, 汇编指令异常 IRET Exception */
+	 //};
 
 	set_intr_gate(X86_TRAP_DE, divide_error);
 	set_intr_gate_ist(X86_TRAP_NMI, &nmi, NMI_STACK);
@@ -859,15 +884,18 @@ void __init trap_init(void)
 	set_intr_gate(X86_TRAP_XF, simd_coprocessor_error);
 
 	/* Reserve all the builtin and the syscall vector: */
+	/* 将前32个中断号都设置为已使用状态 */
 	for (i = 0; i < FIRST_EXTERNAL_VECTOR; i++)
 		set_bit(i, used_vectors);
 
 #ifdef CONFIG_IA32_EMULATION
+	/* 设置0x80系统调用的系统中断门 */
 	set_system_intr_gate(IA32_SYSCALL_VECTOR, entry_INT80_compat);
 	set_bit(IA32_SYSCALL_VECTOR, used_vectors);
 #endif
 
 #ifdef CONFIG_X86_32
+	/* 设置0x80系统调用的系统门 */
 	set_system_trap_gate(IA32_SYSCALL_VECTOR, entry_INT80_32);
 	set_bit(IA32_SYSCALL_VECTOR, used_vectors);
 #endif
@@ -877,12 +905,14 @@ void __init trap_init(void)
 	 * "sidt" instruction will not leak the location of the kernel, and
 	 * to defend the IDT against arbitrary memory write vulnerabilities.
 	 * It will be reloaded in cpu_init() */
+	 /* 将中断描述符表设置在一个固定的只读的位置,以便“sidt”指令不会泄漏内核的位置,和保护中断描述符表可以处于任意内存写的漏洞。它将会在 cpu_init() 中被加载到idtr寄存器 */
 	__set_fixmap(FIX_RO_IDT, __pa_symbol(idt_table), PAGE_KERNEL_RO);
 	idt_descr.address = fix_to_virt(FIX_RO_IDT);
 
 	/*
 	 * Should be a barrier for any external CPU state:
 	 */
+	 /* 执行CPU的初始化，对于中断而言，在 cpu_init() 中主要是将 idt_descr 放入idtr寄存器中 */
 	cpu_init();
 
 	/*
@@ -890,11 +920,13 @@ void __init trap_init(void)
 	 * IST works only after cpu_init() loads TSS. See comments
 	 * in early_trap_init().
 	 */
+	  /* x86_init是一个定义了很多x86体系上的初始化操作，这里执行的另一个trap_init()函数为空函数，什么都不做 */
 	set_intr_gate_ist(X86_TRAP_DB, &debug, DEBUG_STACK);
 
 	x86_init.irqs.trap_init();
-
+	/* 64位操作 */
 #ifdef CONFIG_X86_64
+	/* 将 idt_table 复制到 debug_idt_table 中 */
 	memcpy(&debug_idt_table, &idt_table, IDT_ENTRIES * 16);
 	set_nmi_gate(X86_TRAP_DB, &debug);
 #endif

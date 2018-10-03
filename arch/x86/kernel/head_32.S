@@ -502,6 +502,9 @@ setup_once:
 	addl $EARLY_IDT_HANDLER_SIZE,%eax # eax += 9，指向early_idt_handlers数组下一列
 	addl $8,%edi  # edi += 8，就是下一个门描述符地址
 	loop 1b# 根据ecx是否为0进行循环
+	    # 前32个中断向量初始化结果：
+    #  |63                         48|47                   32|31                  16|15                          0|
+    #  |early_idt_handlers[i](高16位)|        0x8E00         |     __KERNEL_CS      |early_idt_handlers[i](低16位)|
 
 	movl $256 - NUM_EXCEPTION_VECTORS,%ecx  # 256 - 32 保存到ecx，进行新一轮的循环
 	movl $ignore_int,%edx  # ignore_int保存到edx
@@ -513,7 +516,9 @@ setup_once:
 	movl %edx,4(%edi)
 	addl $8,%edi  # edi += 8，就是下一个门描述符地址
 	loop 2b
-
+    # 其他中断向量初始化结果：
+    #  |63                      48|47                   32|31                  16|15                       0|
+    #  |    ignore_int(高16位)    |        0x8E00         |     __KERNEL_CS      |    ignore_int(低16位)    | 
 #ifdef CONFIG_CC_STACKPROTECTOR
 	/*
 	 * Configure the stack canary. The linker can't handle this by

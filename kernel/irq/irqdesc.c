@@ -77,19 +77,36 @@ static void desc_set_defaults(unsigned int irq, struct irq_desc *desc, int node,
 	desc->irq_common_data.msi_desc = NULL;
 
 	desc->irq_data.common = &desc->irq_common_data;
+	/* 中断号 */
 	desc->irq_data.irq = irq;
+	/* 中断描述符的中断控制器芯片为 no_irq_chip  */
 	desc->irq_data.chip = &no_irq_chip;
+	/* 中断控制器的私有数据为空 */
 	desc->irq_data.chip_data = NULL;
+	/* 设置中断状态 desc->status_use_accessors 为初始化状态_IRQ_DEFAULT_INIT_FLAGS */
 	irq_settings_clr_and_set(desc, ~0, _IRQ_DEFAULT_INIT_FLAGS);
+	/* 中断默认被禁止，设置 desc->irq_data->state_use_accessors = IRQD_IRQ_DISABLED */
 	irqd_set(&desc->irq_data, IRQD_IRQ_DISABLED);
+	/* 设置中断处理回调函数为 handle_bad_irq，handle_bad_irq作为默认的回调函数，此函数中基本上不做什么处理，就是在屏幕上打印此中断信息，并且desc->kstat_irqs++ */
 	desc->handle_irq = handle_bad_irq;
+	/* 嵌套深度为1，表示被禁止1次 */
 	desc->depth = 1;
+	/* 初始化此中断发送次数为0 */
 	desc->irq_count = 0;
+	/* 无法处理的中断次数为0 */
 	desc->irqs_unhandled = 0;
+	/* 在/proc/interrupts所显名字为空 */
 	desc->name = NULL;
+	/* owner为空 */
 	desc->owner = owner;
+	/* 初始化kstat_irqs中每个CPU项都为0 */
 	for_each_possible_cpu(cpu)
 		*per_cpu_ptr(desc->kstat_irqs, cpu) = 0;
+	/* SMP系统才使用的初始化，设置
+     * desc->irq_data.node = first_online_node 
+     * desc->irq_data.affinity = irq_default_affinity
+     * 清除desc->pending_mask
+     */
 	desc_smp_init(desc, node);
 }
 
@@ -230,6 +247,7 @@ int __init early_irq_init(void)
 {
 	int i, initcnt, node = first_online_node;
 	struct irq_desc *desc;
+	/* 初始化irq_default_affinity变量，此变量用于设置中断默认的CPU亲和力 */
 
 	init_irq_default_affinity();
 
@@ -268,19 +286,27 @@ int __init early_irq_init(void)
 {
 	int count, i, node = first_online_node;
 	struct irq_desc *desc;
+	/* 初始化irq_default_affinity变量，此变量用于设置中断默认的CPU亲和力 */
 
 	init_irq_default_affinity();
 
 	printk(KERN_INFO "NR_IRQS:%d\n", NR_IRQS);
+	/* 指向中断描述符数组irq_desc */
 
 	desc = irq_desc;
+	/* 获取中断描述符数组长度 */
 	count = ARRAY_SIZE(irq_desc);
 
 	for (i = 0; i < count; i++) {
+		/* 为kstat_irqs分配内存，每个CPU有自己独有的kstat_irqs数据，此数据用于统计 */
 		desc[i].kstat_irqs = alloc_percpu(unsigned int);
+		/* 为 desc->irq_data.affinity 和 desc->pending_mask 分配内存 */
 		alloc_masks(&desc[i], GFP_KERNEL, node);
+		/* 初始化中断描述符的锁 */
 		raw_spin_lock_init(&desc[i].lock);
+		/* 设置中断描述符的锁所属的类，此类用于防止死锁 */
 		lockdep_set_class(&desc[i].lock, &irq_desc_lock_class);
+		/* 一些变量的初始化 */
 		desc_set_defaults(i, &desc[i], node, NULL);
 	}
 	return arch_early_irq_init();

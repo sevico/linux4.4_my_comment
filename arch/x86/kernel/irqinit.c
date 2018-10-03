@@ -69,15 +69,25 @@ int vector_used_by_percpu_irq(unsigned int vector)
 
 void __init init_ISA_irqs(void)
 {
+	/* CHIP默认是i8259A_chip */
+
 	struct irq_chip *chip = legacy_pic->chip;
 	int i;
 
 #if defined(CONFIG_X86_64) || defined(CONFIG_X86_LOCAL_APIC)
+	/* 使用了CPU本地中断控制器 */
+	/* 开启virtual wire mode */
 	init_bsp_APIC();
 #endif
+	/* 其实就是调用init_8259A()，进行8259A硬件的初始化 */
+
 	legacy_pic->init(0);
 
 	for (i = 0; i < nr_legacy_irqs(); i++)
+		/* i为中断号，chip是irq_chip结构，最后是中断回调函数 
+         * 设置了中断号i的中断描述符的irq_data.irq_chip = i8259A_chip
+         * 设置了中断回调函数为handle_level_irq
+         */
 		irq_set_chip_and_handler(i, chip, handle_level_irq);
 }
 
@@ -93,9 +103,14 @@ void __init init_IRQ(void)
 	 * then this vector space can be freed and re-used dynamically as the
 	 * irq's migrate etc.
 	 */
+	 /* nr_legacy_irqs() 返回 legacy_pic->nr_legacy_irqs，为16
+	 * vector_irq是一个int型的数组，长度为中断描述符表长，其保存的是中断向量对应的中断号(如果中断向量是异常则没有中断号)
+	 * i8259A中断控制器使用IRQ0~IRQ15这16个中断号，这里将这16个中断号设置到CPU0的vector_irq数组的0x30~0x3f上。
+     */
+     
 	for (i = 0; i < nr_legacy_irqs(); i++)
 		per_cpu(vector_irq, 0)[ISA_IRQ_VECTOR(i)] = irq_to_desc(i);
-
+	/* x86_init是一个结构体，里面定义了一组X86体系下的初始化函数 */
 	x86_init.irqs.intr_init();
 }
 
@@ -169,7 +184,9 @@ void __init native_init_IRQ(void)
 	int i;
 
 	/* Execute any quirks before the call gates are initialised: */
+	/* 这里又是执行x86_init结构中的初始化函数，pre_vector_init()指向 init_ISA_irqs  */
 	x86_init.irqs.pre_vector_init();
+	/* 初始化中断描述符表中的中断控制器中默认的一些中断门初始化 */
 
 	apic_intr_init();
 
@@ -178,12 +195,19 @@ void __init native_init_IRQ(void)
 	 * us. (some of these will be overridden and become
 	 * 'special' SMP interrupts)
 	 */
+	 /* 第一个外部中断，默认是32 */
 	i = FIRST_EXTERNAL_VECTOR;
 #ifndef CONFIG_X86_LOCAL_APIC
 #define first_system_vector NR_VECTORS
 #endif
+	/* 在used_vectors变量中找出所有没有置位的中断向量，我们知道，在trap_init()中对所有异常和陷阱和系统调用中断都置位了used_vectors，没有置位的都为中断
+		 * 这里就是对所有中断设置门描述符
+		 */
 	for_each_clear_bit_from(i, used_vectors, first_system_vector) {
 		/* IA32_SYSCALL_VECTOR could be used in trap_init already. */
+	/* interrupt[]数组保存的是外部中断的中断门信息
+         * 这里将中断描述符表中空闲的中断向量设置为中断门,interrupt是一个函数指针数组，其将31~255数组元素指向interrupt[i]函数
+         */
 		set_intr_gate(i, irq_entries_start +
 				8 * (i - FIRST_EXTERNAL_VECTOR));
 	}
@@ -191,11 +215,13 @@ void __init native_init_IRQ(void)
 	for_each_clear_bit_from(i, used_vectors, NR_VECTORS)
 		set_intr_gate(i, spurious_interrupt);
 #endif
+	/* 如果外部中断控制器需要，则安装一个中断处理例程irq2到中断IRQ2上 */
 
 	if (!acpi_ioapic && !of_ioapic && nr_legacy_irqs())
 		setup_irq(2, &irq2);
 
 #ifdef CONFIG_X86_32
+	/* 在x86_32模式下，会为当前CPU分配一个中断使用的栈空间 */
 	irq_ctx_init(smp_processor_id());
 #endif
 }

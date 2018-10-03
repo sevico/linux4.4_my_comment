@@ -345,13 +345,15 @@ static inline void _set_gate(int gate, unsigned type, void *addr,
 			     unsigned dpl, unsigned ist, unsigned seg)
 {
 	gate_desc s;
-
+	/* 设置一个任务门 */
 	pack_gate(&s, type, (unsigned long)addr, dpl, ist, seg);
 	/*
 	 * does not need to be atomic because it is only done once at
 	 * setup time
 	 */
+	 /* 将新的门描述符写入中断描述符表中的gate项，使用memcpy进行写入 */
 	write_idt_entry(idt_table, gate, &s);
+	/* 用于跟踪? 暂时还不清楚这个 trace_idt_table 的用途 */
 	write_trace_idt_entry(gate, &s);
 }
 
@@ -367,6 +369,10 @@ static inline void _set_gate(int gate, unsigned type, void *addr,
 		_set_gate(n, GATE_INTERRUPT, (void *)addr, 0, 0,	\
 			  __KERNEL_CS);					\
 	} while (0)
+	/* 设置一个中断门
+	 * n：中断号 
+	 * addr:中断处理程序入口地址
+	 */
 
 #define set_intr_gate(n, addr)						\
 	do {								\
@@ -399,24 +405,26 @@ static inline void alloc_system_vector(int vector)
 /*
  * This routine sets up an interrupt gate at directory privilege level 3.
  */
+ 
+/* 设置一个系统中断门 */
 static inline void set_system_intr_gate(unsigned int n, void *addr)
 {
 	BUG_ON((unsigned)n > 0xFF);
 	_set_gate(n, GATE_INTERRUPT, addr, 0x3, 0, __KERNEL_CS);
 }
-
+/* 设置一个系统门 */
 static inline void set_system_trap_gate(unsigned int n, void *addr)
 {
 	BUG_ON((unsigned)n > 0xFF);
 	_set_gate(n, GATE_TRAP, addr, 0x3, 0, __KERNEL_CS);
 }
-
+/* 设置一个陷阱门 */
 static inline void set_trap_gate(unsigned int n, void *addr)
 {
 	BUG_ON((unsigned)n > 0xFF);
 	_set_gate(n, GATE_TRAP, addr, 0, 0, __KERNEL_CS);
 }
-
+/* 设置一个任务门 */
 static inline void set_task_gate(unsigned int n, unsigned int gdt_entry)
 {
 	BUG_ON((unsigned)n > 0xFF);
@@ -495,10 +503,13 @@ static inline void load_trace_idt(void)
 static inline void load_current_idt(void)
 {
 	if (is_debug_idt_enabled())
+		/* 开启了中断调试，用的是 debug_idt_descr 和 debug_idt_table */
 		load_debug_idt();
 	else if (is_trace_idt_enabled())
+		/* 开启了中断跟踪，用的是 trace_idt_descr 和 trace_idt_table */
 		load_trace_idt();
 	else
+		/* 普通情况，用的是 idt_descr 和 idt_table */
 		load_idt((const struct desc_ptr *)&idt_descr);
 }
 #endif /* _ASM_X86_DESC_H */
