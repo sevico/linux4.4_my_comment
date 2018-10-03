@@ -2210,53 +2210,88 @@ int sysctl_numa_balancing(struct ctl_table *table, int write,
 /*
  * fork()/clone()-time setup:
  */
+ /*
+ 
+获取当前CPU号
+禁止内核抢占(这里基本就是关闭了抢占，因为执行到这里已经是内核态，又禁止了被抢占)
+初始化进程p的一些变量(实时进程和普通进程通用的那些变量)
+设置进程p的状态为TASK_RUNNING(这一步很关键，因为只有处于TASK_RUNNING状态下的进程才会被调度器放入队列中)
+根据父进程和clone_flags参数设置进程p的优先级和权重。
+根据进程p的优先级设置其调度类(实时进程优先级:0~99　　普通进程优先级:100~139)
+根据调度类进行进程p类型相关的初始化(这里就实现了实时进程和普通进程独有的变量进行初始化)
+设置进程p的当前CPU为此CPU。
+初始化进程p禁止内核抢占(因为当CPU执行到进程p时，进程p还需要进行一些初始化)
+使能内核抢占
+*/
 int sched_fork(unsigned long clone_flags, struct task_struct *p)
 {
 	unsigned long flags;
+	/* 获取当前CPU，并且禁止抢占 */
 	int cpu = get_cpu();
-
+	/* 初始化跟调度相关的值，比如调度实体，运行时间等 */
 	__sched_fork(clone_flags, p);
 	/*
 	 * We mark the process as running here. This guarantees that
 	 * nobody will actually run it, and a signal or other external
 	 * event cannot wake it up and insert it on the runqueue either.
 	 */
+	 /*
+	  * 标记为运行状态，表明此进程正在运行或准备好运行，实际上没有真正在CPU上运行，这里只是导致了外部信号和事件不能够唤醒此进程，之后将它插入到运行队列中
+	  */
 	p->state = TASK_RUNNING;
 
 	/*
 	 * Make sure we do not leak PI boosting priority to the child.
 	 */
+	 /*
+	  * 根据父进程的运行优先级设置设置进程的优先级
+	  */
 	p->prio = current->normal_prio;
 
 	/*
 	 * Revert to default priority/policy on fork if requested.
 	 */
+	 /*
+	 * 更新该进程优先级
+	 */
+	 /* 如果需要重新设置优先级 */
 	if (unlikely(p->sched_reset_on_fork)) {
+		/* 如果是dl调度或者实时调度 */
 		if (task_has_dl_policy(p) || task_has_rt_policy(p)) {
+			/* 调度策略为SCHED_NORMAL，这个选项将使用CFS调度 */
 			p->policy = SCHED_NORMAL;
+			/* 根据默认nice值设置静态优先级 */
 			p->static_prio = NICE_TO_PRIO(0);
+			/* 实时优先级为0 */
 			p->rt_priority = 0;
 		} else if (PRIO_TO_NICE(p->static_prio) < 0)
+			/* 根据默认nice值设置静态优先级 */
 			p->static_prio = NICE_TO_PRIO(0);
 
 		p->prio = p->normal_prio = __normal_prio(p);
+		/* 设置进程权重 */
 		set_load_weight(p);
 
 		/*
 		 * We don't need the reset flag anymore after the fork. It has
 		 * fulfilled its duty:
 		 */
+		 /* sched_reset_on_fork成员在之后已经不需要使用了，直接设为0 */
 		p->sched_reset_on_fork = 0;
 	}
 
 	if (dl_prio(p->prio)) {
+		/* 使能抢占 */
 		put_cpu();
 		return -EAGAIN;
 	} else if (rt_prio(p->prio)) {
+		/* 根据优先级判断，如果是实时进程，设置其调度类为rt_sched_class */
 		p->sched_class = &rt_sched_class;
 	} else {
+		/* 如果是普通进程，设置其调度类为fair_sched_class */
 		p->sched_class = &fair_sched_class;
 	}
+	/* 调用调用类的task_fork函数 */
 
 	if (p->sched_class->task_fork)
 		p->sched_class->task_fork(p);
@@ -2269,6 +2304,7 @@ int sched_fork(unsigned long clone_flags, struct task_struct *p)
 	 * Silence PROVE_RCU.
 	 */
 	raw_spin_lock_irqsave(&p->pi_lock, flags);
+	/* 设置新进程的CPU为当前CPU */
 	set_task_cpu(p, cpu);
 	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
 
@@ -2279,12 +2315,13 @@ int sched_fork(unsigned long clone_flags, struct task_struct *p)
 #if defined(CONFIG_SMP)
 	p->on_cpu = 0;
 #endif
+	/* 初始化该进程为内核禁止抢占 */
 	init_task_preempt_count(p);
 #ifdef CONFIG_SMP
 	plist_node_init(&p->pushable_tasks, MAX_PRIO);
 	RB_CLEAR_NODE(&p->pushable_dl_tasks);
 #endif
-
+	/* 使能抢占 */
 	put_cpu();
 	return 0;
 }
@@ -2409,13 +2446,20 @@ void wake_up_new_task(struct task_struct *p)
 	 *  - cpus_allowed can change in the fork path
 	 *  - any previously selected cpu might disappear through hotplug
 	 */
+	 /* 为进程选择一个合适的CPU */
 	set_task_cpu(p, select_task_rq(p, task_cpu(p), SD_BALANCE_FORK, 0));
 #endif
+	/* 上锁 */
 
 	rq = __task_rq_lock(p);
+	/* 将进程加入到CPU的运行队列 */
+
 	activate_task(rq, p, 0);
+	/* 标记进程p处于队列中 */
 	p->on_rq = TASK_ON_RQ_QUEUED;
+	/* 跟调试有关 */
 	trace_sched_wakeup_new(p);
+	/* 检查是否需要切换当前进程 */
 	check_preempt_curr(rq, p, WF_FORK);
 #ifdef CONFIG_SMP
 	if (p->sched_class->task_woken) {
@@ -7424,11 +7468,13 @@ LIST_HEAD(task_groups);
 #endif
 
 DECLARE_PER_CPU(cpumask_var_t, load_balance_mask);
+/* 执行到此时内核只有一个进程init_task，current就为init_task。之后的init进程在初始化到最后的rest_init中启动 */
 
 void __init sched_init(void)
 {
 	int i, j;
 	unsigned long alloc_size = 0, ptr;
+	/* 计算所需要分配的数据结构空间 */
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
 	alloc_size += 2 * nr_cpu_ids * sizeof(void **);
@@ -7437,12 +7483,14 @@ void __init sched_init(void)
 	alloc_size += 2 * nr_cpu_ids * sizeof(void **);
 #endif
 	if (alloc_size) {
+		/* 分配内存 */
 		ptr = (unsigned long)kzalloc(alloc_size, GFP_NOWAIT);
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
+		/* 设置 root_task_group 每个CPU上的调度实体指针se */
 		root_task_group.se = (struct sched_entity **)ptr;
 		ptr += nr_cpu_ids * sizeof(void **);
-
+		/* 设置 root_task_group 每个CPU上的CFS运行队列指针cfs_rq */
 		root_task_group.cfs_rq = (struct cfs_rq **)ptr;
 		ptr += nr_cpu_ids * sizeof(void **);
 
@@ -7462,6 +7510,7 @@ void __init sched_init(void)
 			cpumask_size(), GFP_KERNEL, cpu_to_node(i));
 	}
 #endif /* CONFIG_CPUMASK_OFFSTACK */
+	/* 初始化实时进程的带宽限制，用于设置实时进程在CPU中所占用比的 */
 
 	init_rt_bandwidth(&def_rt_bandwidth,
 			global_rt_period(), global_rt_runtime());
@@ -7469,31 +7518,44 @@ void __init sched_init(void)
 			global_rt_period(), global_rt_runtime());
 
 #ifdef CONFIG_SMP
+	/* 初始化默认的调度域，调度域包含一个或多个CPU，负载均衡是在调度域内执行的，相互之间隔离 */
+
 	init_defrootdomain();
 #endif
 
 #ifdef CONFIG_RT_GROUP_SCHED
+	/* 初始化实时进程的带宽限制，用于设置实时进程在CPU中所占用比的 */
+
 	init_rt_bandwidth(&root_task_group.rt_bandwidth,
 			global_rt_period(), global_rt_runtime());
 #endif /* CONFIG_RT_GROUP_SCHED */
 
 #ifdef CONFIG_CGROUP_SCHED
+	/* 将分配好空间的 root_task_group 加入 task_groups 链表 */
+
 	list_add(&root_task_group.list, &task_groups);
 	INIT_LIST_HEAD(&root_task_group.children);
 	INIT_LIST_HEAD(&root_task_group.siblings);
+	/* 自动分组初始化，每个tty(控制台)动态的创建进程组，这样就可以降低高负载情况下的桌面延迟 */
 	autogroup_init(&init_task);
 
 #endif /* CONFIG_CGROUP_SCHED */
-
+	/* 遍历设置每一个CPU */
 	for_each_possible_cpu(i) {
 		struct rq *rq;
-
+		/* 获取CPUi的rq队列 */
 		rq = cpu_rq(i);
+		/* 初始化rq队列的自旋锁 */
 		raw_spin_lock_init(&rq->lock);
+		/* CPU运行队列中调度实体(sched_entity)数量为0 */
 		rq->nr_running = 0;
+		/* CPU负载 */
 		rq->calc_load_active = 0;
+		/* 负载下次更新时间 */
 		rq->calc_load_update = jiffies + LOAD_FREQ;
+		/* 初始化CFS运行队列 */
 		init_cfs_rq(&rq->cfs);
+		/* 初始化实时进程运行队列 */
 		init_rt_rq(&rq->rt);
 		init_dl_rq(&rq->dl);
 #ifdef CONFIG_FAIR_GROUP_SCHED
@@ -7518,6 +7580,7 @@ void __init sched_init(void)
 		 * We achieve this by letting root_task_group's tasks sit
 		 * directly in rq->cfs (i.e root_task_group->se[] = NULL).
 		 */
+		 /* 初始化CFS的带宽限制，用于设置普通进程在CPU中所占用比的 */
 		init_cfs_bandwidth(&root_task_group.cfs_bandwidth);
 		init_tg_cfs_entry(&root_task_group, &rq->cfs, NULL, i, NULL);
 #endif /* CONFIG_FAIR_GROUP_SCHED */
@@ -7526,13 +7589,15 @@ void __init sched_init(void)
 #ifdef CONFIG_RT_GROUP_SCHED
 		init_tg_rt_entry(&root_task_group, &rq->rt, NULL, i, NULL);
 #endif
-
+		/* 初始化该队列所保存的每个CPU的负载情况 */
 		for (j = 0; j < CPU_LOAD_IDX_MAX; j++)
 			rq->cpu_load[j] = 0;
-
+		/* 该队列最后一次更新cpu_load的时间值为当前 */
 		rq->last_load_update_tick = jiffies;
 
 #ifdef CONFIG_SMP
+		/* 这些参数都是负载均衡使用的 */
+
 		rq->sd = NULL;
 		rq->rd = NULL;
 		rq->cpu_capacity = rq->cpu_capacity_orig = SCHED_CAPACITY_SCALE;
@@ -7547,22 +7612,28 @@ void __init sched_init(void)
 		rq->max_idle_balance_cost = sysctl_sched_migration_cost;
 
 		INIT_LIST_HEAD(&rq->cfs_tasks);
-
+		/* 将CPU运行队列加入到默认调度域中 */
 		rq_attach_root(rq, &def_root_domain);
 #ifdef CONFIG_NO_HZ_COMMON
+		/* 动态时钟使用的标志位，初始时动态时钟是不使用的 */
 		rq->nohz_flags = 0;
 #endif
 #ifdef CONFIG_NO_HZ_FULL
+		/* 也是动态时钟才使用的标志位，用于保存上次调度tick发生时间 */
 		rq->last_sched_tick = 0;
 #endif
 #endif
+		/* 初始化运行队列定时器，这个是高精度定时器，但是只是初始化，这时并没有使用 */
 		init_rq_hrtick(rq);
 		atomic_set(&rq->nr_iowait, 0);
 	}
+	/* 设置 init_task 进程的权重 */
 
 	set_load_weight(&init_task);
 
 #ifdef CONFIG_PREEMPT_NOTIFIERS
+	/* 初始化通知链 */
+
 	INIT_HLIST_HEAD(&init_task.preempt_notifiers);
 #endif
 
@@ -7575,6 +7646,7 @@ void __init sched_init(void)
 	/*
 	 * During early bootup we pretend to be a normal task:
 	 */
+	 /* 设置idle进程使用CFS调度策略 */
 	current->sched_class = &fair_sched_class;
 
 	/*
@@ -7583,7 +7655,9 @@ void __init sched_init(void)
 	 * but because we are the idle thread, we just pick up running again
 	 * when this runqueue becomes "idle".
 	 */
+	 /* 将当前进程初始化为idle进程，idle进程用于当CPU没有进程可运行时运行，空转 */
 	init_idle(current, smp_processor_id());
+	/* 下次负载更新时间(是一个相对时间) */
 
 	calc_load_update = jiffies + LOAD_FREQ;
 
@@ -7596,6 +7670,7 @@ void __init sched_init(void)
 	set_cpu_rq_start_time();
 #endif
 	init_sched_fair_class();
+	/* 这里只是标记调度器开始运行了，但是此时系统只有一个init_task(idle)进程，并且定时器都还没启动。并不会调度到其他进程，也没有其他进程可供调度 */
 
 	scheduler_running = 1;
 }
