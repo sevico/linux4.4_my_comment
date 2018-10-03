@@ -8,7 +8,9 @@
 #define NR_IPI	8
 
 typedef struct {
+	/* 表示挂起的软中断，每一位表示一个软中断，为1表示挂起 */
 	unsigned int __softirq_pending;
+	/* 硬中断统计. */
 #ifdef CONFIG_SMP
 	unsigned int ipi_irqs[NR_IPI];
 #endif

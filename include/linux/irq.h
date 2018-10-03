@@ -344,21 +344,33 @@ static inline irq_hw_number_t irqd_to_hwirq(struct irq_data *d)
  * @flags:		chip specific flags
  */
 struct irq_chip {
+	/* 中断控制器的名字 */
 	const char	*name;
+	/* 控制器初始化函数 */
 	unsigned int	(*irq_startup)(struct irq_data *data);
+	/* 控制器关闭函数 */
 	void		(*irq_shutdown)(struct irq_data *data);
+	/* 使能irq操作，通常是直接调用irq_unmask()，通过data参数指明irq */
 	void		(*irq_enable)(struct irq_data *data);
+	/* 禁止irq操作，通常是直接调用irq_mask，严格意义上，他俩其实代表不同的意义，disable表示中断控制器根本就不响应该irq，而mask时，中断控制器可能响应该irq，只是不通知CPU */
 	void		(*irq_disable)(struct irq_data *data);
-
+	/* 用于CPU对该irq的回应，通常表示cpu希望要清除该irq的pending状态，准备接受下一个irq请求 */
 	void		(*irq_ack)(struct irq_data *data);
+	/* 屏蔽irq操作，通过data参数表明指定irq */
 	void		(*irq_mask)(struct irq_data *data);
+	/* 相当于irq_mask() + irq_ack() */
 	void		(*irq_mask_ack)(struct irq_data *data);
+	/* 取消屏蔽指定irq操作 */
 	void		(*irq_unmask)(struct irq_data *data);
+	/* 某些中断控制器需要在cpu处理完该irq后发出eoi信号 */
 	void		(*irq_eoi)(struct irq_data *data);
+	/*	用于设置该irq和cpu之间的亲和力，就是通知中断控制器，该irq发生时，那些cpu有权响应该irq */
 
 	int		(*irq_set_affinity)(struct irq_data *data, const struct cpumask *dest, bool force);
 	int		(*irq_retrigger)(struct irq_data *data);
+	/* 设置irq的电气触发条件，例如 IRQ_TYPE_LEVEL_HIGH(电平触发) 或 IRQ_TYPE_EDGE_RISING(边缘触发) */
 	int		(*irq_set_type)(struct irq_data *data, unsigned int flow_type);
+	/* 通知电源管理子系统，该irq是否可以用作系统的唤醒源 */
 	int		(*irq_set_wake)(struct irq_data *data, unsigned int on);
 
 	void		(*irq_bus_lock)(struct irq_data *data);

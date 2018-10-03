@@ -46,44 +46,67 @@ struct pt_regs;
 struct irq_desc {
 	struct irq_common_data	irq_common_data;
 	struct irq_data		irq_data;
+	/* irq的统计信息，在proc中可查到 */
 	unsigned int __percpu	*kstat_irqs;
+	/* 回调函数，当此中断产生中断时，会调用handle_irq，在handle_irq中进行遍历irqaction链表
+     * handle_simple_irq  用于简单处理；
+     * handle_level_irq  用于电平触发中断的流控处理；
+     * handle_edge_irq  用于边沿触发中断的流控处理；
+     * handle_fasteoi_irq  用于需要响应eoi的中断控制器；
+     * handle_percpu_irq  用于只在单一cpu响应的中断；
+     * handle_nested_irq  用于处理使用线程的嵌套中断；
+     */
 	irq_flow_handler_t	handle_irq;
 #ifdef CONFIG_IRQ_PREFLOW_FASTEOI
 	irq_preflow_handler_t	preflow_handler;
 #endif
+	/* 中断服务例程链表 */
 	struct irqaction	*action;	/* IRQ action list */
+	/* 状态 */
 	unsigned int		status_use_accessors;
+	/* 函数调用中使用，另一个名称为istate */
 	unsigned int		core_internal_state__do_not_mess_with_it;
+	/* 嵌套深度，中断线被激活显示0，如果为正数，表示被禁止次数 */
 	unsigned int		depth;		/* nested irq disables */
 	unsigned int		wake_depth;	/* nested wake enables */
+	/* 此中断线上发生的中断次数 */
 	unsigned int		irq_count;	/* For detecting broken IRQs */
+	/* 上次发生未处理中断时的jiffies值 */
 	unsigned long		last_unhandled;	/* Aging timer for unhandled count */
+	/* 中断线上无法处理的中断次数，如果当第100000次中断发生时，有超过99900次是意外中断，系统会禁止这条中断线 */
 	unsigned int		irqs_unhandled;
 	atomic_t		threads_handled;
 	int			threads_handled_last;
+	/* 锁 */
 	raw_spinlock_t		lock;
 	struct cpumask		*percpu_enabled;
 #ifdef CONFIG_SMP
+	/* CPU亲和力关系，其实就是每个CPU是占一个bit长度，某CPU上置为1表明该CPU可以进行这个中断的处理 */
 	const struct cpumask	*affinity_hint;
 	struct irq_affinity_notify *affinity_notify;
 #ifdef CONFIG_GENERIC_PENDING_IRQ
+	/* 用于调整irq在各个cpu之间的平衡 */
 	cpumask_var_t		pending_mask;
 #endif
 #endif
 	unsigned long		threads_oneshot;
 	atomic_t		threads_active;
+	/* 用于synchronize_irq()，等待该irq所有线程完成 */
 	wait_queue_head_t       wait_for_threads;
 #ifdef CONFIG_PM_SLEEP
+	/* irqaction数量 */
 	unsigned int		nr_actions;
 	unsigned int		no_suspend_depth;
 	unsigned int		cond_suspend_depth;
 	unsigned int		force_resume_depth;
 #endif
 #ifdef CONFIG_PROC_FS
+	/* 指向与IRQn相关的/proc/irq/n目录的描述符 */
 	struct proc_dir_entry	*dir;
 #endif
 	int			parent_irq;
 	struct module		*owner;
+	/* 在/proc/interrupts所显示名称 */
 	const char		*name;
 } ____cacheline_internodealigned_in_smp;
 

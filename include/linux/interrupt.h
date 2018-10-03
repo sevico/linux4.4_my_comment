@@ -108,18 +108,26 @@ typedef irqreturn_t (*irq_handler_t)(int, void *);
  * @dir:	pointer to the proc/irq/NN/name entry
  */
 struct irqaction {
+	/* 此中断服务例程的中断处理函数 */
 	irq_handler_t		handler;
+	/* 设备ID，一般用于指向中断处理时需要的数据结构传入handler */
 	void			*dev_id;
+	/* 此中断服务例程在CPU上所对应的设备ID */
 	void __percpu		*percpu_dev_id;
+	/* 链表中下一个中断服务例程 */
 	struct irqaction	*next;
+	/* 进行中断处理的内核线程执行函数 */
 	irq_handler_t		thread_fn;
+	/* 一个内核线程，用于执行中断处理 */
 	struct task_struct	*thread;
 	struct irqaction	*secondary;
+	/* IRQ线，IRQ号 */
 	unsigned int		irq;
 	unsigned int		flags;
 	unsigned long		thread_flags;
 	unsigned long		thread_mask;
 	const char		*name;
+	/* 指向/proc/irq/n目录的描述符 */
 	struct proc_dir_entry	*dir;
 } ____cacheline_internodealigned_in_smp;
 

@@ -48,14 +48,14 @@ enum {
  * IRQS_SUSPENDED		- irq is suspended
  */
 enum {
-	IRQS_AUTODETECT		= 0x00000001,
-	IRQS_SPURIOUS_DISABLED	= 0x00000002,
-	IRQS_POLL_INPROGRESS	= 0x00000008,
-	IRQS_ONESHOT		= 0x00000020,
-	IRQS_REPLAY		= 0x00000040,
-	IRQS_WAITING		= 0x00000080,
-	IRQS_PENDING		= 0x00000200,
-	IRQS_SUSPENDED		= 0x00000800,
+	IRQS_AUTODETECT		= 0x00000001, /* 该IRQ线用来进行硬件设备探测 */
+	IRQS_SPURIOUS_DISABLED	= 0x00000002, /* 该IRQ线被禁止，是由于产生了欺骗性中断 */
+	IRQS_POLL_INPROGRESS	= 0x00000008,/* 该IRQ进行轮询检查是否发生中断 */
+	IRQS_ONESHOT		= 0x00000020,/* 此IRQ没有在主处理函数中进行unmasked处理 */
+	IRQS_REPLAY		= 0x00000040,/* IRQ线已被禁止，但前一个出现的中断还没有被应答 */
+	IRQS_WAITING		= 0x00000080,/* 进行硬件设备探测时，会将所有没有挂载中断服务程序的IRQ线状态设置为IRQS_WAITING，如果该IRQ上有中断产生，就清除这个状态，可以推断哪些引脚产生过中断 */
+	IRQS_PENDING		= 0x00000200,/* IRQ已经被应答(挂起)，但是内核还没有进行处理 */
+	IRQS_SUSPENDED		= 0x00000800,/* 此IRQ被延迟 */
 };
 
 #include "debug.h"
