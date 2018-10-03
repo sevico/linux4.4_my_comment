@@ -22,7 +22,7 @@ extern pmd_t level2_ident_pgt[512];
 extern pte_t level1_fixmap_pgt[512];
 extern pgd_t init_level4_pgt[];
 
-#define swapper_pg_dir init_level4_pgt
+#define swapper_pg_dir init_level4_pgt   //主内核页全局目录指针，cr3寄存器中保存的内核页全局目录地址就是从这个变量而来。
 
 extern void paging_init(void);
 

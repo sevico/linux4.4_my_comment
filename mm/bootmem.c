@@ -30,9 +30,9 @@ struct pglist_data __refdata contig_page_data = {
 EXPORT_SYMBOL(contig_page_data);
 #endif
 
-unsigned long max_low_pfn;
+unsigned long max_low_pfn;  //低端内存中最后一个页框号。
 unsigned long min_low_pfn;
-unsigned long max_pfn;
+unsigned long max_pfn; //物理内存中最后一个页框号
 
 bootmem_data_t bootmem_node_data[MAX_NUMNODES] __initdata;
 

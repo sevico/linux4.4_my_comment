@@ -66,23 +66,30 @@ bool __read_mostly __vmalloc_start_set = false;
  * given global directory entry. This only returns the gd entry
  * in non-PAE compilation mode, since the middle layer is folded.
  */
+ /* 根据页全局目录项获取第一个页中间目录所在页地址，注意页上级目录(pud)在32位和一些64位下是为空的， */
 static pmd_t * __init one_md_table_init(pgd_t *pgd)
 {
 	pud_t *pud;
 	pmd_t *pmd_table;
 
 #ifdef CONFIG_X86_PAE
+	/* 32位下开启了PAE的情况，页上级目录是空的，但是页中间目录需要存在 */
 	if (!(pgd_val(*pgd) & _PAGE_PRESENT)) {
+		/* 如果该页中间目录不存在，这里会分配一个页框用于这个页中间目录 */
 		pmd_table = (pmd_t *)alloc_low_page();
 		paravirt_alloc_pmd(&init_mm, __pa(pmd_table) >> PAGE_SHIFT);
+	/* 设置页全局目录项的值为此新的页中间目录 */
 		set_pgd(pgd, __pgd(__pa(pmd_table) | _PAGE_PRESENT));
+	/* 检查是否设置成功，成功的情况下pud中获取的第一个pmd应该等于pmd_table */
 		pud = pud_offset(pgd, 0);
 		BUG_ON(pmd_table != pmd_offset(pud, 0));
 
 		return pmd_table;
 	}
 #endif
+	/* 获取第一个页上级目录 */
 	pud = pud_offset(pgd, 0);
+	/* 获取页上级目录中第一个页中间目录 */
 	pmd_table = pmd_offset(pud, 0);
 
 	return pmd_table;
@@ -136,9 +143,10 @@ page_table_range_init_count(unsigned long start, unsigned long end)
 		return 0;
 
 	vaddr = start;
+	/* 根据线性地址vaddr，计算该地址所对应的页全局目录表项的偏移量 */
 	pgd_idx = pgd_index(vaddr);
 	pmd_idx = pmd_index(vaddr);
-
+	/* 计算使用的页表数量 */
 	for ( ; (pgd_idx < PTRS_PER_PGD) && (vaddr != end); pgd_idx++) {
 		for (; (pmd_idx < PTRS_PER_PMD) && (vaddr != end);
 							pmd_idx++) {
@@ -164,7 +172,9 @@ static pte_t *__init page_table_kmap_check(pte_t *pte, pmd_t *pmd,
 	 * to become nonlinear. Attempt to fix it, and if it
 	 * is still nonlinear then we have to bug.
 	 */
+	 /* 获取固定映射区域开始地址在页中间目录中的偏移量 */
 	int pmd_idx_kmap_begin = fix_to_virt(FIX_KMAP_END) >> PMD_SHIFT;
+	/* 获取固定映射区域结束地址在页中间目录中的偏移量 */
 	int pmd_idx_kmap_end = fix_to_virt(FIX_KMAP_BEGIN) >> PMD_SHIFT;
 
 	if (pmd_idx_kmap_begin != pmd_idx_kmap_end
@@ -172,18 +182,22 @@ static pte_t *__init page_table_kmap_check(pte_t *pte, pmd_t *pmd,
 	    && (vaddr >> PMD_SHIFT) <= pmd_idx_kmap_end) {
 		pte_t *newpte;
 		int i;
-
+		/* 这个函数需要在释放掉bootmem分配器后使用 */
 		BUG_ON(after_bootmem);
 		newpte = *adr;
+		/* 将页表复制到adr的页框中 */
 		for (i = 0; i < PTRS_PER_PTE; i++)
 			set_pte(newpte + i, pte[i]);
+		/* adr指向下一个页框 */
 		*adr = (void *)(((unsigned long)(*adr)) + PAGE_SIZE);
 
 		paravirt_alloc_pte(&init_mm, __pa(newpte) >> PAGE_SHIFT);
+		 /* 修改页中间目录项pmd让其对应的页表为newpte */
 		set_pmd(pmd, __pmd(__pa(newpte)|_PAGE_TABLE));
 		BUG_ON(newpte != pte_offset_kernel(pmd, 0));
+		/* 刷新tlb */
 		__flush_tlb_all();
-
+		/* 释放掉pte对应的页表 */
 		paravirt_release_pte(__pa(pte) >> PAGE_SHIFT);
 		pte = newpte;
 	}
@@ -191,6 +205,7 @@ static pte_t *__init page_table_kmap_check(pte_t *pte, pmd_t *pmd,
 	       && vaddr > fix_to_virt(FIX_KMAP_END)
 	       && lastpte && lastpte + PTRS_PER_PTE != pte);
 #endif
+	/* 返回初始化好的页表 */
 	return pte;
 }
 
@@ -203,6 +218,7 @@ static pte_t *__init page_table_kmap_check(pte_t *pte, pmd_t *pmd,
  * so we can cache the place of the first one and move around without
  * checking the pgd every time.
  */
+ /* 初始化pgd_base指向的页全局目录中start到end这个范围的线性地址，整个函数结束后只是初始化好了页中间目录项对应的页表，但是页表中的页表项并没有初始化 */
 static void __init
 page_table_range_init(unsigned long start, unsigned long end, pgd_t *pgd_base)
 {
@@ -211,22 +227,28 @@ page_table_range_init(unsigned long start, unsigned long end, pgd_t *pgd_base)
 	pgd_t *pgd;
 	pmd_t *pmd;
 	pte_t *pte = NULL;
+	/* 计算start到end这段线性地址区域所使用的页表数,见后面 */
 	unsigned long count = page_table_range_init_count(start, end);
 	void *adr = NULL;
-
+	/* 为这些页表分配连续物理页框 */
 	if (count)
 		adr = alloc_low_pages(count);
 
 	vaddr = start;
+	/* 找到vaddr线性地址对应的页全局目录中的偏移量 */
 	pgd_idx = pgd_index(vaddr);
+	/* 找到vaddr线性地址对应的页中间目录中的偏移量 */
 	pmd_idx = pmd_index(vaddr);
 	pgd = pgd_base + pgd_idx;
 
 	for ( ; (pgd_idx < PTRS_PER_PGD) && (vaddr != end); pgd++, pgd_idx++) {
+		/* 根据页全局目录项获取页中间目录所在页地址，见后面 */
 		pmd = one_md_table_init(pgd);
+		/* 获取页中间目录项 */
 		pmd = pmd + pmd_index(vaddr);
 		for (; (pmd_idx < PTRS_PER_PMD) && (vaddr != end);
 							pmd++, pmd_idx++) {
+			/* 初始化整个页中间目录项和页表，必要时会为不存在的页表分配页框，不过页表初始化后是空的，具体见后面 */
 			pte = page_table_kmap_check(one_page_table_init(pmd),
 						    pmd, vaddr, pte, &adr);
 
@@ -248,6 +270,9 @@ static inline int is_kernel_text(unsigned long addr)
  * of max_low_pfn pages, by creating page tables starting from address
  * PAGE_OFFSET:
  */
+  /* 将内核的物理地址start到end映射到线性地址上，page_size_mask是页大小，分别有4K，2MB，1G三种大小
+  * start和end都是物理地址
+  */
 unsigned long __init
 kernel_physical_mapping_init(unsigned long start,
 			     unsigned long end,
@@ -264,8 +289,9 @@ kernel_physical_mapping_init(unsigned long start,
 	pte_t *pte;
 	unsigned pages_2m, pages_4k;
 	int mapping_iter;
-
+	/* 根据start获取其对应的页框号，由于页大小为4KB，所以在地址里占用12位，其余的就是页框号了，这里就是start右移12位 */
 	start_pfn = start >> PAGE_SHIFT;
+	/* 根据end获取其对应的页框号 */
 	end_pfn = end >> PAGE_SHIFT;
 
 	/*
@@ -282,6 +308,7 @@ kernel_physical_mapping_init(unsigned long start,
 	 *      that would change, for any linear address, both the page size
 	 *      and either the page frame or attributes."
 	 */
+	 /* 设置为1，表示此时是第一次迭代。在这个函数中需要进行两次迭代，这两次迭代不同的就是设置的表项属性不同 */
 	mapping_iter = 1;
 
 	if (!cpu_has_pse)
@@ -289,35 +316,50 @@ kernel_physical_mapping_init(unsigned long start,
 
 repeat:
 	pages_2m = pages_4k = 0;
+	 /* 等于start地址对应的页框号 */
 	pfn = start_pfn;
+	 /* 根据页框号pfn获取此页框在页全局目录(pgd)项中的偏移量(pgd_idx)，注意后面加了个PAGE_OFFSET(0xC0000000)，所以这就会让线性地址0xC0000000与物理地址0x00000000相应 */
 	pgd_idx = pgd_index((pfn<<PAGE_SHIFT) + PAGE_OFFSET);
+	 /* 指向该页全局目录项，如果pfn为0 */
 	pgd = pgd_base + pgd_idx;
+	 /* 
+	 * 这里会从pgd的第pgd_idx项向后遍历所有的页全局目录项，直到页框号pfn大于end_pfn为止 
+	 * 这里就会将start到end这段线性地址中所有页框对应的页表项都遍历了一遍
+	 */
 	for (; pgd_idx < PTRS_PER_PGD; pgd++, pgd_idx++) {
+		/* 根据页全局目录项获取页中间目录所在页地址 */
 		pmd = one_md_table_init(pgd);
 
 		if (pfn >= end_pfn)
 			continue;
 #ifdef CONFIG_X86_PAE
+		/* 根据页框对应的线性地址获取相应的页中间目录项pmd偏移量 */
 		pmd_idx = pmd_index((pfn<<PAGE_SHIFT) + PAGE_OFFSET);
 		pmd += pmd_idx;
 #else
+		/* 在32位未开启PAE的情况下，pmd是空的 */
 		pmd_idx = 0;
 #endif
+		/* PTRS_PER_PMD代表一个页中间目录有多少项，对于没有启动物理地址扩展的32系统下，其项数为1，其他情况下为512项 */
 		for (; pmd_idx < PTRS_PER_PMD && pfn < end_pfn;
 		     pmd++, pmd_idx++) {
+			 /* 获取页框号pfn对应的物理地址 */
 			unsigned int addr = pfn * PAGE_SIZE + PAGE_OFFSET;
 
 			/*
 			 * Map with big pages if possible, otherwise
 			 * create normal page tables:
 			 */
+			 * 如果使用了PSE，则页框大小会变成4MB，但是这里却是用pages_2m来保存，2MB大小的页框应该是PAE技术使用的，并不是PSE，这里不太明白，可能PAE代替了PSE */
 			if (use_pse) {
 				unsigned int addr2;
+				/* prot设置为PAGE_KERNEL_LARGE，这个值只有在第二次迭代时才会有效 */
 				pgprot_t prot = PAGE_KERNEL_LARGE;
 				/*
 				 * first pass will use the same initial
 				 * identity mapping attribute + _PAGE_PSE.
 				 */
+				  /* init_prot是第一次迭代时会设置到对应的页表项中 */
 				pgprot_t init_prot =
 					__pgprot(PTE_IDENT_ATTR |
 						 _PAGE_PSE);
@@ -325,12 +367,14 @@ repeat:
 				pfn &= PMD_MASK >> PAGE_SHIFT;
 				addr2 = (pfn + PTRS_PER_PTE-1) * PAGE_SIZE +
 					PAGE_OFFSET + PAGE_SIZE-1;
-
+				/* 检查地址是否处于内核启动所占用的内存区域 */
 				if (is_kernel_text(addr) ||
 				    is_kernel_text(addr2))
 					prot = PAGE_KERNEL_LARGE_EXEC;
-
+				/* 2MB大小的页框计数器 */
 				pages_2m++;
+				/* 设置页表项为此页框，pfn_pte直接将页框号(pfn)强制转换为物理地址，而我们也知道pfn有start屏蔽页大小占用的位数得来，这里也就实现了直接映射(0xC0000000 映射到 0x00000000) */
+				/* 注意第一次迭代传入的是init_prot，第二次是prot */
 				if (mapping_iter == 1)
 					set_pmd(pmd, pfn_pmd(pfn, init_prot));
 				else
@@ -339,27 +383,40 @@ repeat:
 				pfn += PTRS_PER_PTE;
 				continue;
 			}
+			/* 
+			* 以下是建立普通大小的页表(4K) 
+			*/
+			/* 根据页中间目录项获取页表 */
 			pte = one_page_table_init(pmd);
-
+			/* 根据页框号获取页表项的偏移量 */
 			pte_ofs = pte_index((pfn<<PAGE_SHIFT) + PAGE_OFFSET);
+			/* 根据页表和页表项的偏移量获取到该pfn对应的页框的页表项 */
 			pte += pte_ofs;
 			for (; pte_ofs < PTRS_PER_PTE && pfn < end_pfn;
 			     pte++, pfn++, pte_ofs++, addr += PAGE_SIZE) {
+				  /* 遍历此此页表中当前页表项及其之后的所有页表项 */
+				 /* pgprot_t是一个64位(PAE开启)或32位(PAE禁止)的数据类型，表示这个页的保护标志 */
+				  /* 这个值会在第二次迭代时设置到页框号对应的页表项中 */
+				  
 				pgprot_t prot = PAGE_KERNEL;
 				/*
 				 * first pass will use the same initial
 				 * identity mapping attribute.
 				 */
+				 /* 初始化这个页的pgprot_t，这个是第一遍迭代时会设置到页表项中 */
 				pgprot_t init_prot = __pgprot(PTE_IDENT_ATTR);
-
+				/* 如果该页框保存着系统的代码，则设置其标志PAGE_KERNEL_EXEC */
 				if (is_kernel_text(addr))
 					prot = PAGE_KERNEL_EXEC;
-
+				/* 4KB大小的页框计数器 */
 				pages_4k++;
 				if (mapping_iter == 1) {
+					 /* 设置页表项为此页框，pfn_pte直接将页框号(pfn)强制转换为物理地址，而我们也知道pfn有start屏蔽页大小占用的位数得来，这里也就实现了直接映射(0xC0000000 映射到 0x00000000) */
 					set_pte(pte, pfn_pte(pfn, init_prot));
+					 /* last_map_addr保存最近映射的地址，就是我们刚映射完的页框地址 */
 					last_map_addr = (pfn << PAGE_SHIFT) + PAGE_SIZE;
 				} else
+					/* 第二次迭代时调用到，传入prot */
 					set_pte(pte, pfn_pte(pfn, prot));
 			}
 		}
@@ -369,19 +426,24 @@ repeat:
 		 * update direct mapping page count only in the first
 		 * iteration.
 		 */
+		 /* direct_pages_count[PG_LEVEL_2M] += pages_2m;   这里是做个统计 */
 		update_page_count(PG_LEVEL_2M, pages_2m);
+		/* direct_pages_count[PG_LEVEL_4K] += pages_4k;   这里也是做个统计 */
 		update_page_count(PG_LEVEL_4K, pages_4k);
 
 		/*
 		 * local global flush tlb, which will flush the previous
 		 * mappings present in both small and large page TLB's.
 		 */
+		 /* 刷新一下tlb，内核页表改变了都要刷新一次tlb */
 		__flush_tlb_all();
 
 		/*
 		 * Second iteration will set the actual desired PTE attributes.
 		 */
+		 /* 准备开始第二次迭代，第一次迭代设置到页表项中的pgprot_t为init_prot变量，第二次迭代设置到页表项中的是prot变量，它们的值是不同的 */
 		mapping_iter = 2;
+		/* 开始第二次迭代 */
 		goto repeat;
 	}
 	return last_map_addr;
@@ -410,6 +472,10 @@ static void __init kmap_init(void)
 }
 
 #ifdef CONFIG_HIGHMEM
+/* 在pagetable_init中调用，pgd_base的地址是swapper_pg_dir，也就是页全局目录地址
+ * 这个函数初始化了高端内存区中的永久内核映射区，这个区只需要一个页表就可以概括整个区的线性地址，这个页表地址保存在 pkmap_page_table 变量中方便使用
+ */
+
 static void __init permanent_kmaps_init(pgd_t *pgd_base)
 {
 	unsigned long vaddr;
@@ -417,7 +483,9 @@ static void __init permanent_kmaps_init(pgd_t *pgd_base)
 	pud_t *pud;
 	pmd_t *pmd;
 	pte_t *pte;
-
+    /* kmap/unkmap系统调用是用来映射高端物理内存页到内核地址空间的api函数
+     * 他们分配的内核虚拟地址范围属于 [PKMAP_BASE，FIXADDR_START]，大小是2M或4M的虚拟空间
+     */
 	vaddr = PKMAP_BASE;
 	page_table_range_init(vaddr, vaddr + PAGE_SIZE*LAST_PKMAP, pgd_base);
 
@@ -425,6 +493,7 @@ static void __init permanent_kmaps_init(pgd_t *pgd_base)
 	pud = pud_offset(pgd, vaddr);
 	pmd = pmd_offset(pud, vaddr);
 	pte = pte_offset_kernel(pmd, vaddr);
+	/* pkmap_page_table保存了页表地址，之后如果用到永久内核映射区就很方便 */
 	pkmap_page_table = pte;
 }
 
@@ -525,9 +594,13 @@ void __init early_ioremap_page_table_range_init(void)
 	 * Fixed mappings, only the page table structure has to be
 	 * created - mappings will be set by set_fixmap():
 	 */
+	 /* 固定映射区开始地址 */
 	vaddr = __fix_to_virt(__end_of_fixed_addresses - 1) & PMD_MASK;
+	/* 固定映射区结束地址 */
 	end = (FIXADDR_TOP + PMD_SIZE - 1) & PMD_MASK;
+	/* 初始化内核的页全局目录中vaddr到end这个范围的线性地址 */
 	page_table_range_init(vaddr, end, pgd_base);
+	/* 重新启动一下固定映射区 */
 	early_ioremap_reset();
 }
 
