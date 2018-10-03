@@ -33,13 +33,15 @@ static inline pte_t get_fixmap_pte(unsigned long vaddr)
 
 	return *ptep;
 }
-
+/*高端内存映射，运用数组进行操作分配情况 
+分配好后需要加入哈希表中；*/ 
 void *kmap(struct page *page)
 {
 	might_sleep();
+	/*如果页框不属于高端内存*/
 	if (!PageHighMem(page))
 		return page_address(page);
-	return kmap_high(page);
+	return kmap_high(page);/*页框确实属于高端内存*/
 }
 EXPORT_SYMBOL(kmap);
 

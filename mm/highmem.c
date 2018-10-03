@@ -126,7 +126,13 @@ unsigned int nr_free_highpages (void)
 
 	return pages;
 }
-
+/* 
+高端映射区逻辑页面的分配结构用分配表(pkmap_count)来描述，它有1024项， 
+对应于映射区内不同的逻辑页面。当分配项的值等于零时为自由项，等于1时为 
+缓冲项，大于1时为映射项。映射页面的分配基于分配表的扫描，当所有的自由 
+项都用完时，系统将清除所有的缓冲项，如果连缓冲项都用完时，系 
+统将进入等待状态。 
+*/ 
 static int pkmap_count[LAST_PKMAP];
 static  __cacheline_aligned_in_smp DEFINE_SPINLOCK(kmap_lock);
 
@@ -213,6 +219,13 @@ void kmap_flush_unused(void)
 	flush_all_zero_pkmaps();
 	unlock_kmap();
 }
+/*
+1.从最后使用的位置（保存在全局变量last_pkmap_nr中）开始，反向扫描pkmap_count数组, 直至找到一个空闲位置. 如果没有空闲位置，该函数进入睡眠状态，直至内核的另一部分执行解除映射操作腾出空位. 在到达pkmap_count的最大索引值时,  搜索从位置0开始. 在这种情况下,  还调用flush_all_zero_pkmaps函数刷出CPU高速缓存（读者稍后会看到这一点）。
+2.修改内核的页表，将该页映射在指定位置。但尚未更新TLB.
+3.新位置的使用计数器设置为1。如上所述，这意味着该页已分配但无法使用，因为TLB项未更新.
+4.set_page_address将该页添加到持久内核映射的数据结构。 
+该函数返回新映射页的虚拟地址. 在不需要高端内存页的体系结构上（或没有设置CONFIG_HIGHMEM），则使用通用版本的kmap返回页的地址，且不修改虚拟内存
+*/
 
 static inline unsigned long map_new_virtual(struct page *page)
 {
@@ -225,7 +238,12 @@ start:
 	count = get_pkmap_entries_count(color);
 	/* Find an empty entry */
 	for (;;) {
-		last_pkmap_nr = get_next_pkmap_nr(color);
+		last_pkmap_nr = get_next_pkmap_nr(color);/*加1，防止越界*/ 
+		/* 接下来判断什么时候last_pkmap_nr等于０，等于０就表示1023（LAST_PKMAP(1024)-1）个页表项已经被分配了 
+        ,这时候就需要调用flush_all_zero_pkmaps()函数,把所有pkmap_count[] 计数为1的页表项在TLB里面的entry给flush掉 
+        ，并重置为0，这就表示该页表项又可以用了，可能会有疑惑为什么不在把pkmap_count置为1的时候也 
+        就是解除映射的同时把TLB也flush呢？ 
+        个人感觉有可能是为了效率的问题吧，毕竟等到不够的时候再刷新，效率要好点吧。*/ 
 		if (no_more_pkmaps(last_pkmap_nr, color)) {
 			flush_all_zero_pkmaps();
 			count = get_pkmap_entries_count(color);
@@ -242,7 +260,7 @@ start:
 			DECLARE_WAITQUEUE(wait, current);
 			wait_queue_head_t *pkmap_map_wait =
 				get_pkmap_wait_queue_head(color);
-
+			  //睡眠等待
 			__set_current_state(TASK_UNINTERRUPTIBLE);
 			add_wait_queue(pkmap_map_wait, &wait);
 			unlock_kmap();
@@ -258,11 +276,17 @@ start:
 			goto start;
 		}
 	}
+	/*返回这个页表项对应的线性地址vaddr.*/  
 	vaddr = PKMAP_ADDR(last_pkmap_nr);
+	/*设置页表项*/ 
 	set_pte_at(&init_mm, vaddr,
 		   &(pkmap_page_table[last_pkmap_nr]), mk_pte(page, kmap_prot));
-
+		/*接下来把pkmap_count[last_pkmap_nr]置为1，1不是表示不可用吗， 
+		既然映射已经建立好了，应该赋值为2呀，其实这个操作 
+		是在他的上层函数kmap_high里面完成的(pkmap_count[PKMAP_NR(vaddr)]++).*/  
 	pkmap_count[last_pkmap_nr] = 1;
+		    /*到此为止，整个映射就完成了，再把page和对应的线性地址 
+    加入到page_address_htable哈希链表里面就可以了*/ 
 	set_page_address(page, (void *)vaddr);
 
 	return vaddr;
@@ -284,14 +308,20 @@ void *kmap_high(struct page *page)
 	 * For highmem pages, we can't trust "virtual" until
 	 * after we have the lock.
 	 */
-	lock_kmap();
+	lock_kmap();/*保护页表免受多处理器系统上的并发访问*/  
+	/*检查是否已经被映射*/
 	vaddr = (unsigned long)page_address(page);
+	/*  如果没有被映射  */ 
 	if (!vaddr)
+		/*把页框的物理地址插入到pkmap_page_table的 
+        一个项中并在page_address_htable散列表中加入一个 
+        元素*/
 		vaddr = map_new_virtual(page);
+	 /*分配计数加一，此时流程都正确应该是2了*/ 
 	pkmap_count[PKMAP_NR(vaddr)]++;
 	BUG_ON(pkmap_count[PKMAP_NR(vaddr)] < 2);
 	unlock_kmap();
-	return (void*) vaddr;
+	return (void*) vaddr;/*返回地址*/ 
 }
 
 EXPORT_SYMBOL(kmap_high);
@@ -341,14 +371,14 @@ void kunmap_high(struct page *page)
 	lock_kmap_any(flags);
 	vaddr = (unsigned long)page_address(page);
 	BUG_ON(!vaddr);
-	nr = PKMAP_NR(vaddr);
+	nr = PKMAP_NR(vaddr);/*永久内存区域开始的第几个页面*/  
 
 	/*
 	 * A count must never go down to zero
 	 * without a TLB flush!
 	 */
 	need_wakeup = 0;
-	switch (--pkmap_count[nr]) {
+	switch (--pkmap_count[nr]) { /*减小这个值，因为在映射的时候对其进行了加2*/ 
 	case 0:
 		BUG();
 	case 1:
@@ -385,7 +415,7 @@ EXPORT_SYMBOL(kunmap_high);
 struct page_address_map {
 	struct page *page;
 	void *virtual;
-	struct list_head list;
+	struct list_head list; //散列表
 };
 
 static struct page_address_map page_address_maps[LAST_PKMAP];
@@ -414,18 +444,24 @@ void *page_address(const struct page *page)
 	unsigned long flags;
 	void *ret;
 	struct page_address_slot *pas;
-
+	/*如果页框不在高端内存中*/  
 	if (!PageHighMem(page))
+		/*线性地址总是存在，通过计算页框下标 
+            然后将其转换成物理地址，最后根据相应的 
+            /物理地址得到线性地址*/
 		return lowmem_page_address(page);
-
+	/*从page_address_htable散列表中得到pas*/
 	pas = page_slot(page);
 	ret = NULL;
 	spin_lock_irqsave(&pas->lock, flags);
 	if (!list_empty(&pas->lh)) {
+		/*如果对应的链表不空， 
+    该链表中存放的是page_address_map结构*/
 		struct page_address_map *pam;
-
+		/*对每个链表中的元素*/
 		list_for_each_entry(pam, &pas->lh, list) {
 			if (pam->page == page) {
+				/*返回线性地址*/
 				ret = pam->virtual;
 				goto done;
 			}
