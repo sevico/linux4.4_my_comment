@@ -229,6 +229,8 @@ static inline void lockdep_softirq_end(bool in_hardirq) { }
 
 asmlinkage __visible void __do_softirq(void)
 {
+	/* 为了防止软中断执行时间太长，设置了一个软中断结束时间 */
+
 	unsigned long end = jiffies + MAX_SOFTIRQ_TIME;
 	unsigned long old_flags = current->flags;
 	int max_restart = MAX_SOFTIRQ_RESTART;
@@ -243,44 +245,60 @@ asmlinkage __visible void __do_softirq(void)
 	 * again if the socket is related to swap
 	 */
 	current->flags &= ~PF_MEMALLOC;
+	/* 获取此CPU的__softirq_pengding变量值 */
 
 	pending = local_softirq_pending();  //1：获得local cpu上softirq pending情况
+	/* 用于统计进程被软中断使用时间 */
 	account_irq_enter_time(current);
-
+	/* 增加preempt_count软中断计数器，也表明禁止了调度 */
 	__local_bh_disable_ip(_RET_IP_, SOFTIRQ_OFFSET);  //标识下面的代码是正在处理softirq
 	in_hardirq = lockdep_softirq_start(); //2:将local cpu的__preempt_count中softirq计数加1
+/* 循环10次的入口，每次循环都会把所有挂起需要执行的软中断执行一遍 */
 
 restart:
 	/* Reset the pending bitmask before enabling irqs */
+	/* 该CPU的__softirq_pending清零，当前的__softirq_pending保存在pending变量中 */
+	/* 这样做就保证了新的软中断会在下次循环中执行 */
+
 	set_softirq_pending(0); //3:local cpu的softirq pending值清零
+	/* 开中断 */
 
 	local_irq_enable(); //立刻开启local硬件中断，这样在softirq processing过程中，有可能被新的硬件中断所中断，
 					//而新的硬件中断中也可能raise了softirq,而此时因为softirq已经为0了，
 					//那么raise操作就可以顺利的pending新的softirq
+	/* h指向软中断数组头 */
 
 	h = softirq_vec;
+	/* 每次获取最高优先级的已挂起软中断 */
 
 	while ((softirq_bit = ffs(pending))) {
 		unsigned int vec_nr;  //4.在while循环中从右至左对pending变量中为1的bit所对应的softirq进行处理，
 							  //处理方法是调用安装在softirq_vec中对应的处理函数
 		int prev_count;
+		/* 获取此软中断描述符地址 */
 
 		h += softirq_bit - 1;
+		/* 减去软中断描述符数组首地址，获得软中断号 */
 
 		vec_nr = h - softirq_vec;
+		/* 获取preempt_count的值 */
 		prev_count = preempt_count();
+		/* 增加统计中该软中断发生次数 */
 
 		kstat_incr_softirqs_this_cpu(vec_nr);
 
 		trace_softirq_entry(vec_nr);
+		/* 执行该软中断的action操作 */
 		h->action(h);
 		trace_softirq_exit(vec_nr);
+		/* 之前保存的preempt_count并不等于当前的preempt_count的情况处理，也是简单的把之前的复制到当前的preempt_count上，这样做是防止最后软中断计数不为0导致系统不能够执行调度 */
 		if (unlikely(prev_count != preempt_count())) {
 			pr_err("huh, entered softirq %u %s %p with preempt_count %08x, exited with %08x?\n",
 			       vec_nr, softirq_to_name[vec_nr], h->action,
 			       prev_count, preempt_count());
 			preempt_count_set(prev_count);
 		}
+		/* h指向下一个软中断，但下个软中断并不一定需要执行，这里只是配合softirq_bit做到一个处理 */
 		h++;
 		pending >>= softirq_bit;
 	}
@@ -288,20 +306,26 @@ restart:
 	rcu_bh_qs();
 	local_irq_disable(); //5:禁止local硬件中断，再次通过local_softirq_pending函数获得softirq pending情况,
 						//如果满足条件，再次跳转到restart,回到3
+	/* 循环结束后再次获取CPU的__softirq_pending变量，为了检查是否还有软中断未执行 */
 
 	pending = local_softirq_pending();
+	/* 还有软中断需要执行 */
 	if (pending) {
+		/* 在还有软中断需要执行的情况下，如果时间片没有执行完，并且循环次数也没到10次，继续执行软中断 */
 		if (time_before(jiffies, end) && !need_resched() &&
 		    --max_restart)
 			goto restart;
-
+		/* 这里是有软中断挂起，但是软中断时间和循环次数已经用完，通知调度器唤醒软中断线程去执行挂起的软中断，软中断线程是ksoftirqd，这里只起到一个通知作用，因为在中断上下文中是禁止调度的 */
 		wakeup_softirqd(); //否则调用wakeup_softirq函数唤醒local cpu的ksoftirqd线程，由调度器来调度其执行
 	}
 
 	lockdep_softirq_end(in_hardirq);
+	/* 用于统计进程被软中断使用时间 */
 	account_irq_exit_time(current);
+	/* 减少preempt_count中的软中断计数器 */
 	__local_bh_enable(SOFTIRQ_OFFSET);
 	WARN_ON_ONCE(in_interrupt());
+	/* 还原进程标志 */
 	tsk_restore_flags(current, old_flags, PF_MEMALLOC);
 }
 
@@ -351,6 +375,7 @@ static inline void invoke_softirq(void)
 		 * it is the irq stack, because it should be near empty
 		 * at this stage.
 		 */
+		 /* 软中断处理函数 */
 		__do_softirq();
 #else
 		/*
@@ -361,6 +386,7 @@ static inline void invoke_softirq(void)
 		do_softirq_own_stack();
 #endif
 	} else {
+	/* 如果强制使用软中断线程进行软中断处理，会通知调度器唤醒软中断线程ksoftirqd */
 		wakeup_softirqd();
 	}
 }
@@ -388,9 +414,12 @@ void irq_exit(void)
 #else
 	WARN_ON_ONCE(!irqs_disabled());
 #endif
-
+	
 	account_irq_exit_time(current);
+	/* 减少preempt_count的硬中断计数器 */
 	preempt_count_sub(HARDIRQ_OFFSET);
+	/* in_interrupt()会检查preempt_count上的软中断计数器和硬中断计数器来判断是否处于中断嵌套中 */
+	/* local_softirq_pending()则会检查该CPU的__softirq_pending变量，是否有软中断挂起 */
 	if (!in_interrupt() && local_softirq_pending())
 		invoke_softirq();
 
@@ -433,6 +462,7 @@ void __raise_softirq_irqoff(unsigned int nr)
 	trace_softirq_raise(nr);
 	or_softirq_pending(1UL << nr);
 }
+/* 开启软中断 */
 
 void open_softirq(int nr, void (*action)(struct softirq_action *))
 {
@@ -491,33 +521,45 @@ static void tasklet_action(struct softirq_action *a)
 	struct tasklet_struct *list;
 
 	local_irq_disable();
+	/* 将tasklet链表从该CPU中拿出来 */
 	list = __this_cpu_read(tasklet_vec.head);
+	/* 将该CPU的此软中断的tasklet链表清空 */
 	__this_cpu_write(tasklet_vec.head, NULL);
 	__this_cpu_write(tasklet_vec.tail, this_cpu_ptr(&tasklet_vec.head));
 	local_irq_enable();
+	/* 链表已经处于list中，并且该CPU的tasklet_vec链表为空 */
 
 	while (list) {
 		struct tasklet_struct *t = list;
 
 		list = list->next;
+		/* 检查并设置该tasklet为TASKLET_STATE_RUN状态 */
 
 		if (tasklet_trylock(t)) {
+			/* 检查是否被禁止 */
 			if (!atomic_read(&t->count)) {
+				/* 清除其TASKLET_STATE_SCHED状态 */
 				if (!test_and_clear_bit(TASKLET_STATE_SCHED,
 							&t->state))
 					BUG();
+				 /* 执行该tasklet的func处理函数 */
 				t->func(t->data);
+				 /* 清除该tasklet的TASKLET_STATE_RUN状态 */
 				tasklet_unlock(t);
 				continue;
 			}
 			tasklet_unlock(t);
 		}
-
+		/* 以下为tasklet为TASKLET_STATE_RUN状态下的处理 */
+		/* 禁止中断 */
 		local_irq_disable();
+		/* 将此tasklet添加的该CPU的tasklet_vec链表尾部 */
 		t->next = NULL;
 		*__this_cpu_read(tasklet_vec.tail) = t;
 		__this_cpu_write(tasklet_vec.tail, &(t->next));
+		 /* 设置该CPU的此软中断处于挂起状态，设置irq_cpustat_t的__sofirq_pending变量，这样在软中断的下次执行中会再次执行此tasklet */
 		__raise_softirq_irqoff(TASKLET_SOFTIRQ);
+		 /* 开启中断 */
 		local_irq_enable();
 	}
 }
@@ -645,8 +687,10 @@ void __init softirq_init(void)
 		per_cpu(tasklet_hi_vec, cpu).tail =
 			&per_cpu(tasklet_hi_vec, cpu).head;
 	}
+	/* 开启常规tasklet */
 
 	open_softirq(TASKLET_SOFTIRQ, tasklet_action);
+	/* 开启高优先级tasklet */
 	open_softirq(HI_SOFTIRQ, tasklet_hi_action);
 }
 
@@ -654,20 +698,26 @@ static int ksoftirqd_should_run(unsigned int cpu)
 {
 	return local_softirq_pending();
 }
-
+/* 在smpboot_thread_fun的一个死循环中被调用 */
 static void run_ksoftirqd(unsigned int cpu)
 {
+	/* 禁止中断，在__do_softirq()中会开启 */
 	local_irq_disable();
+	/* 检查该CPU的__softirq_pending是否有软中断被挂起 */
 	if (local_softirq_pending()) {
 		/*
 		 * We can safely run softirq on inline stack, as we are not deep
 		 * in the task stack here.
 		 */
+		 /* 执行软中断 */
 		__do_softirq();
+		/* 开中断 */
 		local_irq_enable();
+	/* 检查是否需要调度 */
 		cond_resched_rcu_qs();
 		return;
 	}
+	/* 开中断 */
 	local_irq_enable();
 }
 

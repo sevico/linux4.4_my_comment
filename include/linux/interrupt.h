@@ -415,17 +415,18 @@ extern bool force_irqthreads;
 
 enum
 {
-	HI_SOFTIRQ=0,
-	TIMER_SOFTIRQ,
-	NET_TX_SOFTIRQ,
-	NET_RX_SOFTIRQ,
-	BLOCK_SOFTIRQ,
-	BLOCK_IOPOLL_SOFTIRQ,
-	TASKLET_SOFTIRQ,
-	SCHED_SOFTIRQ,
+	HI_SOFTIRQ=0, /* 高优先级tasklet */
+	/* 优先级最高 */
+	TIMER_SOFTIRQ,/* 时钟相关的软中断 */
+	NET_TX_SOFTIRQ,/* 将数据包传送到网卡 */
+	NET_RX_SOFTIRQ,/* 从网卡接收数据包 */
+	BLOCK_SOFTIRQ,/* 块设备的软中断 */
+	BLOCK_IOPOLL_SOFTIRQ,/* 支持IO轮询的块设备软中断 */
+	TASKLET_SOFTIRQ,/* 常规tasklet */
+	SCHED_SOFTIRQ,/* 调度程序软中断 */
 	HRTIMER_SOFTIRQ, /* Unused, but kept as tools rely on the
-			    numbering. Sigh! */
-	RCU_SOFTIRQ,    /* Preferable RCU should always be the last softirq */
+			    numbering. Sigh! *//* 高精度计时器软中断 */
+	RCU_SOFTIRQ,    /* Preferable RCU should always be the last softirq *//* RCU锁软中断，该软中断总是最后一个软中断 */
 
 	NR_SOFTIRQS
 };
@@ -435,14 +436,17 @@ enum
 /* map softirq index to softirq name. update 'softirq_to_name' in
  * kernel/softirq.c when adding a new softirq.
  */
+ /* 10个软中断描述符都保存在此数组 */
 extern const char * const softirq_to_name[NR_SOFTIRQS];
 
 /* softirq mask and active fields moved to irq_cpustat_t in
  * asm/hardirq.h to get better cache usage.  KAO
  */
+/* 用于描述一个软中断 */
 
 struct softirq_action
 {
+	/* 此软中断的处理函数 */
 	void	(*action)(struct softirq_action *);
 };
 
@@ -494,11 +498,16 @@ static inline struct task_struct *this_cpu_ksoftirqd(void)
 
 struct tasklet_struct
 {
-	struct tasklet_struct *next;
-	unsigned long state;
-	atomic_t count;
-	void (*func)(unsigned long);
-	unsigned long data;
+	struct tasklet_struct *next;/* 指向链表下一个tasklet */
+	/*
+	
+	TASKLET_STATE_SCHED:这种状态表示此tasklet处于某个tasklet链表之上(可能是tasklet_vec也可能是tasklet_hi_vec)。
+	TASKLET_STATE_RUN:表示此tasklet正在运行中。
+	*/
+	unsigned long state;/* tasklet状态 */
+	atomic_t count; /* 禁止计数器，调用tasklet_disable()会增加此数，tasklet_enable()减少此数 */
+	void (*func)(unsigned long); /* 处理函数 */
+	unsigned long data;/* 处理函数使用的数据 */
 };
 
 #define DECLARE_TASKLET(name, func, data) \
