@@ -150,10 +150,12 @@ void do_softirq_own_stack(void)
 
 bool handle_irq(struct irq_desc *desc, struct pt_regs *regs)
 {
+	/* 检查栈是否溢出 */
 	int overflow = check_stack_overflow();
-
+	/*检测是否出错*/
 	if (IS_ERR_OR_NULL(desc))
 		return false;
+	/* 检查使用的栈，有两种情况，如果进程的内核栈配置为8K，则使用进程的内核栈，如果为4K，系统会专门为所有中断分配一个4K的栈专门用于硬中断处理栈，一个4K专门用于软中断处理栈，还有一个4K专门用于异常处理栈 */
 
 	if (user_mode(regs) || !execute_on_irq_stack(overflow, desc)) {
 		if (unlikely(overflow))

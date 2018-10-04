@@ -137,29 +137,36 @@ irqreturn_t handle_irq_event_percpu(struct irq_desc *desc)
 	irqreturn_t retval = IRQ_NONE;
 	unsigned int flags = 0, irq = desc->irq_data.irq;
 	struct irqaction *action = desc->action;
+	/* desc中的action是一个链表，每个节点包含一个处理函数，这个循环是遍历一次action链表，分别执行一次它们的处理函数 */
 
 	/* action might have become NULL since we dropped the lock */
 	while (action) {
 		irqreturn_t res;
-
+		/* 用于中断跟踪 */
 		trace_irq_handler_entry(irq, action);
+	/* 执行处理，在驱动中定义的中断处理最后就是被赋值到中断服务例程action的handler指针上，这里就执行了驱动中定义的中断处理 */
 		res = action->handler(irq, action->dev_id);
 		trace_irq_handler_exit(irq, action, res);
 
 		if (WARN_ONCE(!irqs_disabled(),"irq %u handler %pF enabled interrupts\n",
 			      irq, action->handler))
 			local_irq_disable();
+		/* 中断返回值处理 */
 
 		switch (res) {
+			/* 需要唤醒该中断处理例程的中断线程 */
 		case IRQ_WAKE_THREAD:
 			/*
 			 * Catch drivers which return WAKE_THREAD but
 			 * did not set up a thread function
 			 */
+			 
+		/* 该中断服务例程没有中断线程 */
 			if (unlikely(!action->thread_fn)) {
 				warn_no_thread(irq, action);
 				break;
 			}
+			/* 唤醒线程 */
 
 			__irq_wake_thread(desc, action);
 
@@ -173,10 +180,12 @@ irqreturn_t handle_irq_event_percpu(struct irq_desc *desc)
 		}
 
 		retval |= res;
+		/* 下一个中断服务例程 */
 		action = action->next;
 	}
 
 	add_interrupt_randomness(irq, flags);
+	/* 中断调试会使用 */
 
 	if (!noirqdebug)
 		note_interrupt(desc, retval);
@@ -188,12 +197,15 @@ irqreturn_t handle_irq_event(struct irq_desc *desc)
 	irqreturn_t ret;
 
 	desc->istate &= ~IRQS_PENDING;
+	/* 设置该中断处理正在执行，设置此中断号的状态为IRQD_IRQ_INPROGRESS */
 	irqd_set(&desc->irq_data, IRQD_IRQ_INPROGRESS);
 	raw_spin_unlock(&desc->lock);
+	/* 主要，具体看 */
 
 	ret = handle_irq_event_percpu(desc);
 
 	raw_spin_lock(&desc->lock);
+	/* 取消此中断号的IRQD_IRQ_INPROGRESS状态 */
 	irqd_clear(&desc->irq_data, IRQD_IRQ_INPROGRESS);
 	return ret;
 }

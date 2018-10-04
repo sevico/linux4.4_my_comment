@@ -256,7 +256,7 @@ __visible unsigned int __irq_entry do_IRQ(struct pt_regs *regs)
 	/* 硬中断计数器减少 */
 	exiting_irq();
 	/* 这里开始允许调度 */
-	v
+	
 
 	set_irq_regs(old_regs);
 	return 1;

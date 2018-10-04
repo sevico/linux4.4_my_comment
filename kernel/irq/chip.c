@@ -453,27 +453,36 @@ static void cond_unmask_irq(struct irq_desc *desc)
  *	it after the associated handler has acknowledged the device, so the
  *	interrupt line is back to inactive.
  */
+ /* 用于电平中断，电平中断特点:
+ * 只要设备的中断请求引脚（中断线）保持在预设的触发电平，中断就会一直被请求，所以，为了避免同一中断被重复响应，必须在处理中断前先把mask irq，然后ack irq，以便复位设备的中断请求引脚，响应完成后再unmask irq
+ */
 void handle_level_irq(struct irq_desc *desc)
 {
 	raw_spin_lock(&desc->lock);
+	/* 通知中断控制器屏蔽该中断线，并设置中断描述符屏蔽该中断 */
 	mask_ack_irq(desc);
+	/* 检查此irq是否处于运行状态，也就是检查IRQD_IRQ_INPROGRESS标志和IRQD_WAKEUP_ARMED标志。大家可以看看，还会检查poll */
 
 	if (!irq_may_run(desc))
 		goto out_unlock;
 
 	desc->istate &= ~(IRQS_REPLAY | IRQS_WAITING);
+	/* 增加此中断号所在proc中的中断次数 */
 	kstat_incr_irqs_this_cpu(desc);
 
 	/*
 	 * If its disabled or no action available
 	 * keep it masked and get out of here
 	 */
+	 /* 判断IRQ是否有中断服务例程(irqaction)和是否被系统禁用 */
 	if (unlikely(!desc->action || irqd_irq_disabled(&desc->irq_data))) {
 		desc->istate |= IRQS_PENDING;
 		goto out_unlock;
 	}
+	/* 在里面执行中断服务例程 */
 
 	handle_irq_event(desc);
+	/* 通知中断控制器恢复此中断线 */
 
 	cond_unmask_irq(desc);
 
