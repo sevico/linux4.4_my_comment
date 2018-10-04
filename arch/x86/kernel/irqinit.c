@@ -144,6 +144,7 @@ static void __init apic_intr_init(void)
 	smp_intr_init();
 
 #ifdef CONFIG_X86_THERMAL_VECTOR
+	/* 中断号为: 0xfa，处理函数为: thermal_interrupt */
 	alloc_intr_gate(THERMAL_APIC_VECTOR, thermal_interrupt);
 #endif
 #ifdef CONFIG_X86_MCE_THRESHOLD

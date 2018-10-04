@@ -631,7 +631,10 @@ extern void irq_exit(void);
 
 static inline void entering_irq(void)
 {
+	/* 硬中断计数器增加，硬中断计数器保存在preempt_count */
+
 	irq_enter();
+	/* 退出idle进程(如果当前进程是idle进程的情况下) */
 	exit_idle();
 }
 

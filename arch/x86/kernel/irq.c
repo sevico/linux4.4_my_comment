@@ -212,9 +212,12 @@ u64 arch_irq_stat(void)
  */
 __visible unsigned int __irq_entry do_IRQ(struct pt_regs *regs)
 {
+	* 将栈顶地址保存到全局变量__irq_regs中，old_regs用于保存现在的__irq_regs值，这一行代码很重要，实现了嵌套中断情况下的现场保存与还原 */
+
 	struct pt_regs *old_regs = set_irq_regs(regs);
 	struct irq_desc * desc;
 	/* high bit used in ret_from_ code  */
+	 /* 获取中断向量号，因为中断向量号是以取反方式保存的，这里再次取反 */
 	unsigned vector = ~regs->orig_ax;
 
 	/*
@@ -233,22 +236,27 @@ __visible unsigned int __irq_entry do_IRQ(struct pt_regs *regs)
 
 	/* entering_irq() tells RCU that we're not quiescent.  Check it. */
 	RCU_LOCKDEP_WARN(!rcu_is_watching(), "IRQ failed to wake up RCU");
+	* 根据中断向量号获取中断描述符 */
 
 	desc = __this_cpu_read(vector_irq[vector]);
-
+	/* 主要函数是handle_irq，进行中断服务例程的处理 */
 	if (!handle_irq(desc, regs)) {
+		/* EIO模式的应答 */
 		ack_APIC_irq();
-
+		/* 该中断号并没有发生过多次触发 */
 		if (desc != VECTOR_RETRIGGERED) {
 			pr_emerg_ratelimited("%s: %d.%d No irq handler for vector\n",
 					     __func__, smp_processor_id(),
 					     vector);
 		} else {
+			/* 将此中断向量号对应的vector_irq设置为未定义 */
 			__this_cpu_write(vector_irq[vector], VECTOR_UNUSED);
 		}
 	}
-
+	/* 硬中断计数器减少 */
 	exiting_irq();
+	/* 这里开始允许调度 */
+	v
 
 	set_irq_regs(old_regs);
 	return 1;

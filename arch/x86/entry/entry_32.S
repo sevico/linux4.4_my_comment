@@ -474,6 +474,7 @@ ENDPROC(entry_INT80_32)
 ENTRY(irq_entries_start)
     vector=FIRST_EXTERNAL_VECTOR
     .rept (FIRST_SYSTEM_VECTOR - FIRST_EXTERNAL_VECTOR)
+    # 先会执行这一句，将中断向量号取反然后加上0x80压入栈中
 	pushl	$(~vector+0x80)			/* Note: always in signed byte range */
     vector=vector+1
 	jmp	common_interrupt
@@ -488,12 +489,13 @@ END(irq_entries_start)
 	.p2align CONFIG_X86_L1_CACHE_SHIFT
 common_interrupt:
 	ASM_CLAC
+	 # 此时栈顶是(~vector + 0x80)，这里再加上-0x80，实际就是中断向量号取反，用于区别系统调用，系统调用是正数，中断向量是负数
 	addl	$-0x80, (%esp)			/* Adjust vector into the [-256, -1] range */
-	SAVE_ALL
-	TRACE_IRQS_OFF
-	movl	%esp, %eax
-	call	do_IRQ
-	jmp	ret_from_intr
+	SAVE_ALL# 保存现场，将寄存器值压入栈中
+	TRACE_IRQS_OFF# 关闭中断跟踪
+	movl	%esp, %eax# 将栈指针保存到eax寄存器，供do_IRQ使用
+	call	do_IRQ# 调用do_IRQ
+	jmp	ret_from_intr# 跳转到ret_from_intr，进行中断返回的一些处理
 ENDPROC(common_interrupt)
 
 #define BUILD_INTERRUPT3(name, nr, fn)	\
