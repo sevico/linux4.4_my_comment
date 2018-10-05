@@ -76,18 +76,26 @@ int tick_is_oneshot_available(void)
 /*
  * Periodic tick
  */
+ /* tick_device 周期性调用此函数
+ * 更新jffies和当前进程
+ * 只有一个CPU是负责更新jffies的，其他的CPU只会更新当前自己的进程
+ */
 static void tick_periodic(int cpu)
 {
 	if (tick_do_timer_cpu == cpu) {
+		/* 当前CPU负责更新时间 */
 		write_seqlock(&jiffies_lock);
 
 		/* Keep track of the next tick event */
 		tick_next_period = ktime_add(tick_next_period, tick_period);
+		/* 更新 jiffies计数，jiffies += 1 */
 
 		do_timer(1);
 		write_sequnlock(&jiffies_lock);
+		/* 更新墙上时间，就是我们生活中的时间 */
 		update_wall_time();
 	}
+	/* 更新当前进程信息，调度器主要函数 */
 
 	update_process_times(user_mode(get_irq_regs()));
 	profile_tick(CPU_PROFILING);
@@ -98,7 +106,9 @@ static void tick_periodic(int cpu)
  */
 void tick_handle_periodic(struct clock_event_device *dev)
 {
+	/* 获取当前CPU */
 	int cpu = smp_processor_id();
+	/* 获取下次时钟中断执行时间 */
 	ktime_t next = dev->next_event;
 
 	tick_periodic(cpu);
@@ -112,15 +122,18 @@ void tick_handle_periodic(struct clock_event_device *dev)
 	if (dev->event_handler != tick_handle_periodic)
 		return;
 #endif
-
+	/* 如果是周期触发模式，直接返回 */
 	if (!clockevent_state_oneshot(dev))
 		return;
+	/* 为了防止当该函数被调用时，clock_event_device中的计时实际上已经经过了不止一个tick周期，这时候，tick_periodic可能被多次调用，使得jiffies和时间可以被正确地更新。 */
 	for (;;) {
 		/*
 		 * Setup the next period for devices, which do not have
 		 * periodic mode:
 		 */
+		 /* 计算下一次触发时间 */
 		next = ktime_add(next, tick_period);
+		/* 设置下一次触发时间，返回0表示成功 */
 
 		if (!clockevents_program_event(dev, next, false))
 			return;

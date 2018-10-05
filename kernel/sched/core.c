@@ -571,23 +571,30 @@ void wake_up_q(struct wake_q_head *head)
  * might also involve a cross-CPU call to trigger the scheduler on
  * the target CPU.
  */
+ /* 标记当前进程需要调度，将当前进程的thread_info->flags设置TIF_NEED_RESCHED标记 */
 void resched_curr(struct rq *rq)
 {
 	struct task_struct *curr = rq->curr;
 	int cpu;
 
 	lockdep_assert_held(&rq->lock);
+	/* 检查当前进程是否已经设置了调度标志，如果是，则不用再设置一遍，直接返回 */
 
 	if (test_tsk_need_resched(curr))
 		return;
+	/* 根据rq获取CPU */
 
 	cpu = cpu_of(rq);
+	/* 如果CPU = 当前CPU，则设置当前进程需要调度标志 */
 
 	if (cpu == smp_processor_id()) {
+	 /* 设置当前进程需要被调度出去的标志，这个标志保存在进程的thread_info结构上 */
 		set_tsk_need_resched(curr);
+	 /* 设置CPU的内核抢占 */
 		set_preempt_need_resched();
 		return;
 	}
+	/* 如果不是处于当前CPU上，则设置当前进程需要调度，并通知其他CPU */
 
 	if (set_nr_and_not_polling(curr))
 		smp_send_reschedule(cpu);
@@ -2750,14 +2757,22 @@ context_switch(struct rq *rq, struct task_struct *prev,
 	arch_start_context_switch(prev);
 
 	if (!mm) {
+		/* 如果新进程的内存描述符为空，说明新进程为内核线程 */
 		next->active_mm = oldmm;
 		atomic_inc(&oldmm->mm_count);
+	/* 通知底层不需要切换虚拟地址空间
+	*     if (this_cpu_read(cpu_tlbstate.state) == TLBSTATE_OK)
+	*        this_cpu_write(cpu_tlbstate.state, TLBSTATE_LAZY);
+	*/
 		enter_lazy_tlb(oldmm, next);
 	} else
+		/* 切换虚拟地址空间 */
 		switch_mm_irqs_off(oldmm, mm, next);
 
 	if (!prev->mm) {
+		/* 如果被切换出去的进程是内核线程 */
 		prev->active_mm = NULL;
+		/* 归还借用的oldmm  */
 		rq->prev_mm = oldmm;
 	}
 	/*
@@ -2770,7 +2785,9 @@ context_switch(struct rq *rq, struct task_struct *prev,
 	spin_release(&rq->lock.dep_map, 1, _THIS_IP_);
 
 	/* Here we just switch the register state and the stack. */
+	/* 切换寄存器和内核栈，还会重新设置current为切换进去的进程 */
 	switch_to(prev, next, prev);
+	/* 同步 */
 	barrier();
 
 	return finish_task_switch(prev);
@@ -2930,15 +2947,22 @@ unsigned long long task_sched_runtime(struct task_struct *p)
  */
 void scheduler_tick(void)
 {
+	/* 获取当前CPU的ID */
+
 	int cpu = smp_processor_id();
+	/* 获取当前CPU的rq队列 */
 	struct rq *rq = cpu_rq(cpu);
+	/* 获取当前CPU的当前运行程序，实际上就是current */
 	struct task_struct *curr = rq->curr;
+	/* 更新CPU调度统计中的本次调度时间 */
 
 	sched_clock_tick();
 
 	raw_spin_lock(&rq->lock);
+	/* 更新该CPU的rq运行时间 */
 	update_rq_clock(rq);
 	curr->sched_class->task_tick(rq, curr, 0);
+	/* 更新CPU的负载 */
 	update_cpu_load_active(rq);
 	calc_global_load_tick(rq);
 	raw_spin_unlock(&rq->lock);
@@ -3108,6 +3132,7 @@ pick_next_task(struct rq *rq, struct task_struct *prev)
 	 */
 	if (likely(prev->sched_class == class &&
 		   rq->nr_running == rq->cfs.h_nr_running)) {
+		   /* 所有进程都处于CFS运行队列中，所以就直接使用cfs的调度类 */
 		p = fair_sched_class.pick_next_task(rq, prev);
 		if (unlikely(p == RETRY_TASK))
 			goto again;
@@ -3119,6 +3144,7 @@ pick_next_task(struct rq *rq, struct task_struct *prev)
 		return p;
 	}
 	// 遍历调度类
+	 /* 在其他调度类中包含有其他进程，从最高优先级的调度类迭代到最低优先级的调度类，并选择最优的进程运行 */
 again:
 	for_each_class(class) {
 		p = class->pick_next_task(rq, prev);
@@ -3173,12 +3199,16 @@ again:
  */
 static void __sched notrace __schedule(bool preempt)
 {
+	/* prev保存换出进程(也就是当前进程)，next保存换进进程 */
+
 	struct task_struct *prev, *next;
 	unsigned long *switch_count;
 	struct rq *rq;
 	int cpu;
+	/* 获取当前CPU ID */
 
 	cpu = smp_processor_id();
+	/* 获取当前CPU运行队列 */
 	rq = cpu_rq(cpu);
 	rcu_note_context_switch();
 	prev = rq->curr;
@@ -3205,16 +3235,28 @@ static void __sched notrace __schedule(bool preempt)
 	 * done by the caller to avoid the race with signal_wake_up().
 	 */
 	smp_mb__before_spinlock();
+	/* 队列上锁 */
 	raw_spin_lock_irq(&rq->lock);
 	lockdep_pin_lock(&rq->lock);
 
 	rq->clock_skip_update <<= 1; /* promote REQ to ACT */
+	/* 当前进程非自愿切换次数 */
 
 	switch_count = &prev->nivcsw;
+	/*
+	* 当内核抢占时会置位thread_info的preempt_count的PREEMPT_ACTIVE位，调用schedule()之后会清除，PREEMPT_ACTIVE置位表明是从内核抢占进入到此的(改为参数preempt)
+	 * preempt_count()是判断thread_info的preempt_count整体是否为0
+	 * prev->state大于0表明不是TASK_RUNNING状态
+	 *
+	 */
 	if (!preempt && prev->state) {
+		/* 当前进程不为TASK_RUNNING状态并且不是通过内核态抢占进入调度 */
 		if (unlikely(signal_pending_state(prev->state, prev))) {
+			/* 有信号需要处理，置为TASK_RUNNING */
 			prev->state = TASK_RUNNING;
 		} else {
+		 /* 没有信号挂起需要处理，会将此进程移除运行队列 */
+		/* 如果代码执行到此，说明当前进程要么准备退出，要么是处于即将睡眠状态 */
 			deactivate_task(rq, prev, DEQUEUE_SLEEP);
 			prev->on_rq = 0;
 
@@ -3224,6 +3266,7 @@ static void __sched notrace __schedule(bool preempt)
 			 * concurrency.
 			 */
 			if (prev->flags & PF_WQ_WORKER) {
+				/* 如果当前进程处于一个工作队列中 */
 				struct task_struct *to_wakeup;
 
 				to_wakeup = wq_worker_sleeping(prev, cpu);
@@ -3233,6 +3276,7 @@ static void __sched notrace __schedule(bool preempt)
 		}
 		switch_count = &prev->nvcsw;
 	}
+	/* 更新rq运行队列时间 */
 
 	if (task_on_rq_queued(prev))
 		update_rq_clock(rq);
@@ -3243,15 +3287,20 @@ static void __sched notrace __schedule(bool preempt)
 	rq->clock_skip_update = 0;
 
 	if (likely(prev != next)) {
+		/* 该CPU进程切换次数加1 */
 		rq->nr_switches++;
+		/* 该CPU当前执行进程为新进程 */
 		rq->curr = next;
 		++*switch_count;
 		//完成进程切换 
 
 		trace_sched_switch(preempt, prev, next);
+		/* 这里进行了进程上下文的切换 */
 		rq = context_switch(rq, prev, next); /* unlocks the rq */
+		/* 新的进程有可能在其他CPU上运行，重新获取一次CPU和rq */
 		cpu = cpu_of(rq);
 	} else {
+		/* 这里意味着下个调度的进程就是当前进程，释放锁不做任何处理 */
 		lockdep_unpin_lock(&rq->lock);
 		raw_spin_unlock_irq(&rq->lock);
 	}

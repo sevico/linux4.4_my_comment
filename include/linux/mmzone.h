@@ -36,9 +36,10 @@
 #define PAGE_ALLOC_COSTLY_ORDER 3
 
 enum {
-	MIGRATE_UNMOVABLE,
-	MIGRATE_MOVABLE,
-	MIGRATE_RECLAIMABLE,
+	MIGRATE_UNMOVABLE,/* 不可移动页 */
+	MIGRATE_MOVABLE,/* 可回收页 */
+	MIGRATE_RECLAIMABLE,/* 可移动页 */
+	/* 用来表示每CPU页框高速缓存的数据结构中的链表的可移动类型数目 */
 	MIGRATE_PCPTYPES,	/* the number of types on the pcp lists */
 	MIGRATE_HIGHATOMIC = MIGRATE_PCPTYPES,
 #ifdef CONFIG_CMA
@@ -58,6 +59,8 @@ enum {
 	MIGRATE_CMA,
 #endif
 #ifdef CONFIG_MEMORY_ISOLATION
+	/* 不能从这个链表分配页框，因为这个链表专门用于NUMA结点移动物理内存页，将物理内存页移动到使用这个页最频繁的CPU */
+
 	MIGRATE_ISOLATE,	/* can't allocate from here */
 #endif
 	MIGRATE_TYPES
@@ -88,9 +91,13 @@ static inline int get_pfnblock_migratetype(struct page *page, unsigned long pfn)
 	return get_pfnblock_flags_mask(page, pfn, PB_migrate_end,
 					MIGRATETYPE_MASK);
 }
+/* 伙伴系统的一个块，描述1,2,4,8,16,32,64,128,256,512或1024个连续页框的块 */
 
 struct free_area {
+	/* 指向这个块中所有空闲小块的第一个页描述符，这些小块会按照MIGRATE_TYPES类型存放在不同指针里 */
+
 	struct list_head	free_list[MIGRATE_TYPES];
+	/* 空闲小块的个数 */
 	unsigned long		nr_free;
 };
 
@@ -251,15 +258,20 @@ enum zone_watermarks {
 #define high_wmark_pages(z) (z->watermark[WMARK_HIGH])
 
 struct per_cpu_pages {
+	/* 当前CPU高速缓存中页框个数 */
 	int count;		/* number of pages in the list */
+	/* 上界，当此CPU高速缓存中页框个数大于high，则会将batch个页框放回伙伴系统 */
 	int high;		/* high watermark, emptying needed */
+	/* 在高速缓存中将要添加或被删去的页框个数 */
 	int batch;		/* chunk size for buddy add/remove */
 
 	/* Lists of pages, one per migrate type stored on the pcp-lists */
+	/* 页框的链表，如果需要冷高速缓存，从链表尾开始获取页框，如果需要热高速缓存，从链表头开始获取页框 */
 	struct list_head lists[MIGRATE_PCPTYPES];
 };
-
+/* 描述一个CPU页框高速缓存 */
 struct per_cpu_pageset {
+	/* 高速缓存页框结构 */
 	struct per_cpu_pages pcp;
 #ifdef CONFIG_NUMA
 	s8 expire;

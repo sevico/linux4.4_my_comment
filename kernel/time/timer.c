@@ -1423,12 +1423,15 @@ void update_process_times(int user_tick)
 
 	/* Note: this timer irq context must be accounted for as well. */
 	account_process_tick(p, user_tick);  //更新进程的用户态/和心态占用率
+	/* 检查有没有定时器到期，有就运行到期定时器的处理 */
 	run_local_timers();  //执行软时间中断(softirq)
 	rcu_check_callbacks(user_tick);
 #ifdef CONFIG_IRQ_WORK
 	if (in_irq())
 		irq_work_tick();
 #endif
+	/* 调度器的tick */
+
 	scheduler_tick();
 	run_posix_cpu_timers(p);
 }

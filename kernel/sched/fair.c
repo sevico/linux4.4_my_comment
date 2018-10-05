@@ -3193,23 +3193,39 @@ dequeue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 /*
  * Preempt the current task with a newly woken task if needed:
  */
+ /*
+ * 检查当前进程是否需要被抢占
+ * 判断方法有两种，一种就是判断当前进程是否超过了CPU分配给它的实际运行时间
+ * 另一种就是判断当前进程的虚拟运行时间是否大于下个进程的虚拟运行时间
+ */
 static void
 check_preempt_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr)
 {
+	/* ideal_runtime为进程应该运行的时间
+	* delta_exec为进程增加的实际运行时间
+	* 如果delta_exec超过了ideal_runtime，表示该进程应该让出CPU给其他进程
+	*/
+
 	unsigned long ideal_runtime, delta_exec;
 	struct sched_entity *se;
 	s64 delta;
 	//这里sched_slice跟上面讲过的sched_vslice很象，不过sched_vslice换算成了vruntime，  
 	 //而这里这个就是实际时间，没有经过换算，返回值的就是此进程在一个调度周期中应该运行的时间  
+	/* slice为CFS队列中所有进程运行一遍需要的实际时间 */
+	/* ideal_runtime保存的是CPU分配给当前进程一个周期内实际的运行时间，计算公式为:  一个周期内进程应当运行的时间 = 一个周期内队列中所有进程运行一遍需要的时间 * 当前进程权重 / 队列总权重
+	* delta_exec保存的是当前进程增加使用的实际运行时间
+	*/
 
 	ideal_runtime = sched_slice(cfs_rq, curr);
 	delta_exec = curr->sum_exec_runtime - curr->prev_sum_exec_runtime; //得到本次调度已经运行的实际时间
 	if (delta_exec > ideal_runtime) {
+		/* 增加的实际运行实际 > 应该运行实际，说明需要调度出去 */
 		resched_curr(rq_of(cfs_rq));   //设置TIF_NEED_RESCHED标志值
 		/*
 		 * The current task ran long enough, ensure it doesn't get
 		 * re-elected due to buddy favours.
 		 */
+		 /* 如果cfs_rq队列的last，next，skip指针中的某个等于当前进程，则清空cfs_rq队列中的相应指针 */
 		clear_buddies(cfs_rq, curr);
 		return;
 	}
@@ -3221,14 +3237,18 @@ check_preempt_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr)
 	 */
 	if (delta_exec < sysctl_sched_min_granularity)
 		return;
+	/* 获取下一个调度进程的se */
 
 	se = __pick_first_entity(cfs_rq);
+	/* 当前进程的虚拟运行时间 - 下个进程的虚拟运行时间 */
 	delta = curr->vruntime - se->vruntime;
+	/* 当前进程的虚拟运行时间 大于 下个进程的虚拟运行时间，说明这个进程还可以继续运行 */
 
 	if (delta < 0)
 		return;
 
 	if (delta > ideal_runtime)
+		/* 当前进程的虚拟运行时间 小于 下个进程的虚拟运行时间，说明下个进程比当前进程更应该被CPU使用，resched_curr()函数用于标记当前进程需要被调度出去 */
 		resched_curr(rq_of(cfs_rq));
 }
 
@@ -3359,6 +3379,7 @@ entity_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr, int queued)
 	/*
 	 * Update run-time statistics of the 'current'.
 	 */
+	 /* 更新当前进程运行时间，包括虚拟运行时间 */
 	update_curr(cfs_rq); //更新当前进程的时间值
 
 	/*
@@ -3372,7 +3393,9 @@ entity_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr, int queued)
 	 * queued ticks are scheduled to match the slice, so don't bother
 	 * validating it and just reschedule.
 	 */
+	 /* 若queued为1，则当前运行队列的运行进程需要调度 */
 	if (queued) {
+		/* 标记当前进程需要被调度出去 */
 		resched_curr(rq_of(cfs_rq));
 		return;
 	}
@@ -3383,6 +3406,7 @@ entity_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr, int queued)
 			hrtimer_active(&rq_of(cfs_rq)->hrtick_timer))
 		return;
 #endif
+	/* 检查是否需要调度 */
 
 	if (cfs_rq->nr_running > 1)
 		check_preempt_tick(cfs_rq, curr);  //判断是否需要设置重新调度标志
@@ -7981,9 +8005,11 @@ static void task_tick_fair(struct rq *rq, struct task_struct *curr, int queued)
 {
 	struct cfs_rq *cfs_rq;
 	struct sched_entity *se = &curr->se;
+	/* 向上更新进程组时间片 */
 
 	for_each_sched_entity(se) {
 		cfs_rq = cfs_rq_of(se);
+		/* 更新当前进程运行时间，并判断是否需要调度此进程 */
 		entity_tick(cfs_rq, se, queued);
 	}
 
