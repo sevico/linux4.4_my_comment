@@ -41,6 +41,7 @@ struct mem_cgroup;
  * allows the use of atomic double word operations on the flags/mapping
  * and lru list pointers also.
  */
+ /* 页描述符，描述一个页框，也会用于描述一个SLAB，相当于同时是页描述符，也是SLAB描述符 */
 struct page {
 	/* First double word block */
     /* 用于页描述符，一组标志(如PG_locked、PG_error)，同时页框所在的管理区和node的编号也保存在当中 */
@@ -48,6 +49,7 @@ struct page {
      * PG_active: 表示此页当前是否活跃，当放到active_lru链表时，被置位
      * PG_referenced: 表示此页最近是否被访问，每次页面访问都会被置位
      */
+     /* 用于页描述符，一组标志(如PG_locked、PG_error)，也对页框所在的管理区和node进行编号 */
 	unsigned long flags;		/* Atomic flags, some possibly
 					 * updated asynchronously */
 	union {
@@ -56,6 +58,7 @@ struct page {
          * 不为空，如果最低位为1，该页为匿名页，指向对应的anon_vma(分配时需要对齐)
          * 不为空，如果最低位为0，则该页为文件页，指向文件的address_space
          */
+         /* 用于页描述符，当页被插入页高速缓存中时使用，或者当页属于匿名区时使用 */
 
 		struct address_space *mapping;	/* If low bit clear, points to
 						 * inode address_space, or NULL.
@@ -65,6 +68,7 @@ struct page {
 						 * see PAGE_MAPPING_ANON below.
 						 */
 		/* 用于SLAB描述符，指向第一个对象的地址 */
+		/* 用于SLAB描述符，用于执行第一个对象的地址 */
 		void *s_mem;			/* slab first object */
 	};
 
@@ -77,8 +81,10 @@ struct page {
 		 */
 
 		union {
+		/* 作为不同的含义被几种内核成分使用。例如，它在页磁盘映像或匿名区中标识存放在页框中的数据的位置，或者它存放一个换出页标识符 */
 			pgoff_t index;		/* Our offset within mapping. */
 		 /* 用于SLAB和SLUB描述符，指向空闲对象链表 */
+			/* 用于SLAB描述符，指向第一个空闲对象地址 */
 			void *freelist;		/* sl[aou]b first free object */
 		};
 
@@ -86,6 +92,7 @@ struct page {
 #if defined(CONFIG_HAVE_CMPXCHG_DOUBLE) && \
 	defined(CONFIG_HAVE_ALIGNED_STRUCT_PAGE)
 			/* Used for cmpxchg_double in slub */
+			/* SLUB使用 */
 			unsigned long counters;
 #else
 			/*
@@ -93,6 +100,7 @@ struct page {
 			 * As the rest of the double word is protected by
 			 * slab_lock but _count is not.
 			 */
+			 /* SLaB使用 */
 			unsigned counters;
 #endif
 
@@ -115,17 +123,21 @@ struct page {
 					 * never succeed on tail
 					 * pages.
 					 */
+					 /* 页框中的页表项计数，如果没有为-1，如果为PAGE_BUDDY_MAPCOUNT_VALUE(-128)，说明此页及其后的一共2的private次方个数页框处于伙伴系统中，正在使用时应该是0 */
 					atomic_t _mapcount;
 
 					struct { /* SLUB */
+						/* SLUB使用 */
 						unsigned inuse:16;
 						unsigned objects:15;
 						unsigned frozen:1;
 					};
 					int units;	/* SLOB */
 				};
+				/* 页框的引用计数，如果为-1，则此页框空闲，并可分配给任一进程或内核；如果大于或等于0，则说明页框被分配给了一个或多个进程，或用于存放内核数据。page_count()返回_count加1的值，也就是该页的使用者数目 */
 				atomic_t _count;		/* Usage count, see below. */
 			};
+			/* 用于SLAB描述符 */
 			unsigned int active;	/* SLAB */
 		};
 	};
@@ -138,11 +150,13 @@ struct page {
 	 * avoid collision and false-positive PageTail().
 	 */
 	union {
+	/* 包含到页的最近最少使用(LRU)双向链表的指针，用于插入伙伴系统的空闲链表中，只有块中头页框要被插入 */
 		struct list_head lru;	/* Pageout list, eg. active_list
 					 * protected by zone->lru_lock !
 					 * Can be used as a generic list
 					 * by the page owner.
 					 */
+		 /* SLAB使用 */
 		struct {		/* slub per cpu partial pages */
 			struct page *next;	/* Next partial slab */
 #ifdef CONFIG_64BIT
@@ -190,6 +204,7 @@ struct page {
 
 	/* Remainder is not double word aligned */
 	union {
+	 /* 可用于正在使用页的内核成分(例如: 在缓冲页的情况下它是一个缓冲器头指针，如果页是空闲的，则该字段由伙伴系统使用，在给伙伴系统使用时，表明的是块的2的次方数，只有块的第一个页框会使用) */
 		unsigned long private;		/* Mapping-private opaque data:
 					 	 * usually used for buffer_heads
 						 * if PagePrivate set; used for
@@ -204,6 +219,8 @@ struct page {
 		spinlock_t ptl;
 #endif
 #endif
+		/* SLAB描述符使用，指向SLAB的高速缓存 */
+
 		struct kmem_cache *slab_cache;	/* SL[AU]B: Pointer to slab */
 	};
 
@@ -222,6 +239,8 @@ struct page {
 	 * WANT_PAGE_VIRTUAL in asm/page.h
 	 */
 #if defined(WANT_PAGE_VIRTUAL)
+	/* 此页框第一个物理地址对应的线性地址，如果是没有映射的高端内存的页框，则为空 */
+
 	void *virtual;			/* Kernel virtual address (NULL if
 					   not kmapped, ie. highmem) */
 #endif /* WANT_PAGE_VIRTUAL */
