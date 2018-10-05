@@ -635,17 +635,24 @@ extern struct page *mem_map;
  * per-zone basis.
  */
 struct bootmem_data;
+/* 内存结点描述符，所有的结点描述符保存在 struct pglist_data *node_data[MAX_NUMNODES] 中 */
+
 typedef struct pglist_data {
+	/* 管理区描述符的数组 */
 	struct zone node_zones[MAX_NR_ZONES];
+	/* 页分配器使用的zonelist数据结构的数组，将所有结点的管理区按一定的关联链接成一个链表，分配内存时会按照此链表的顺序进行分配 */
 	struct zonelist node_zonelists[MAX_ZONELISTS];
+	/* 结点中管理区的个数 */
 	int nr_zones;
 #ifdef CONFIG_FLAT_NODE_MEM_MAP	/* means !SPARSEMEM */
+	/* 结点中页描述符的数组，包含了此结点中所有页框描述符，实际分配是是一个指针数组 */
 	struct page *node_mem_map;
 #ifdef CONFIG_PAGE_EXTENSION
 	struct page_ext *node_page_ext;
 #endif
 #endif
 #ifndef CONFIG_NO_BOOTMEM
+	/* 用在内核初始化阶段 */
 	struct bootmem_data *bdata;
 #endif
 #ifdef CONFIG_MEMORY_HOTPLUG
@@ -659,21 +666,32 @@ typedef struct pglist_data {
 	 *
 	 * Nests above zone->lock and zone->span_seqlock
 	 */
+	 /* 自旋锁 */
 	spinlock_t node_size_lock;
 #endif
+	/* 结点中第一个页框的下标，在numa系统中，页框会有两个序号，所有页框的一个序号，还有就是在此结点中的一个序号
+		 * 比如结点2中的页框1，它在结点2中的序号是1，但是在所有页框中的序号是1001，这个变量就是保存这个结点首页框的序号1000，用于方便转换*/
+
 	unsigned long node_start_pfn;
+	/* 内存结点的大小，不包括洞(以页框为单位) */
 	unsigned long node_present_pages; /* total number of physical pages */
+	/* 结点的大小，包括洞(以页框为单位) */
 	unsigned long node_spanned_pages; /* total size of physical page
 					     range, including holes */
+	/* 结点标识符 */
 	int node_id;
+	/* kswaped页换出守护进程使用的等待队列 */
 	wait_queue_head_t kswapd_wait;   /*  交换守护进程的等待队列，在将页帧换出结点时会用到。*/
 	wait_queue_head_t pfmemalloc_wait;
+	/* 指针指向kswapd内核线程的进程描述符 */
 	struct task_struct *kswapd;	/* Protected by
 					   mem_hotplug_begin/end() */
+	/* kswapd将要创建的空闲块大小取对数的值 */
 	int kswapd_max_order; /*  定义需要释放的区域的长度  */
 	enum zone_type classzone_idx;
 #ifdef CONFIG_NUMA_BALANCING
 	/* Lock serializing the migrate rate limiting window */
+	/* 以下用于NUMA的负载均衡 */
 	spinlock_t numabalancing_migrate_lock;
 
 	/* Rate limiting time interval */
