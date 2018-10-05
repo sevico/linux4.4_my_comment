@@ -328,11 +328,16 @@ enum zone_type {
 };
 
 #ifndef __GENERATING_BOUNDS_H
-
+/* 内存管理区描述符 */
 struct zone {
 	/* Read-mostly fields */
 
 	/* zone watermarks, access with *_wmark_pages(zone) macros */
+	/* 包括pages_min,pages_low,pages_high
+	* pages_min: 管理区中保留页的数目
+     * pages_low: 回收页框使用的下界，同时也被管理区分配器作为阀值使用，一般这个数字是pages_min的5/4
+     * pages_high: 回收页框使用的上界，同时也被管理区分配器作为阀值使用，一般这个数字是pages_min的3/2
+     */
 	unsigned long watermark[NR_WMARK];
 
 	unsigned long nr_reserved_highatomic;
@@ -346,6 +351,7 @@ struct zone {
 	 * recalculated at runtime if the sysctl_lowmem_reserve_ratio sysctl
 	 * changes.
 	 */
+	 /* 指明在处理内存不足的临界情况下管理区必须保留的页框数目，同时也用于在中断或临界区发出的原子内存分配请求(就是禁止阻塞的内存分配请求) */
 	long lowmem_reserve[MAX_NR_ZONES];
 
 #ifdef CONFIG_NUMA
@@ -357,8 +363,9 @@ struct zone {
 	 * this zone's LRU.  Maintained by the pageout code.
 	 */
 	unsigned int inactive_ratio;
-
+	/* 指向此管理区属于的结点 */
 	struct pglist_data	*zone_pgdat;
+	/* 实现每CPU页框高速缓存，里面包含每个CPU的单页框的链表 */
 	struct per_cpu_pageset __percpu *pageset;
 
 	/*
@@ -384,6 +391,7 @@ struct zone {
 #endif /* CONFIG_NUMA */
 
 	/* zone_start_pfn == zone_start_paddr >> PAGE_SHIFT */
+	/* 管理区第一个页框下标 */
 	unsigned long		zone_start_pfn;
 
 	/*
@@ -427,10 +435,13 @@ struct zone {
 	 * adjust_managed_page_count() should be used instead of directly
 	 * touching zone->managed_pages and totalram_pages.
 	 */
+	 /* 所有正常情况下可用的页，总页数(不包括洞)减去保留的页数 */
 	unsigned long		managed_pages;
+	/* 管理区总大小(页为单位)，包括洞 */
 	unsigned long		spanned_pages;
+	/* 管理区总大小(页为单位)，不包括洞 */
 	unsigned long		present_pages;
-
+	/* 指向管理区的传统名称，"DMA" "NORMAL" "HighMem" */
 	const char		*name;
 
 #ifdef CONFIG_MEMORY_ISOLATION
@@ -439,6 +450,7 @@ struct zone {
 	 * freepage counting problem due to racy retrieving migratetype
 	 * of pageblock. Protected by zone->lock.
 	 */
+	 /* 在内存隔离中表示隔离的页框块数量 */
 	unsigned long		nr_isolate_pageblock;
 #endif
 
@@ -471,18 +483,25 @@ struct zone {
 	 * primary users of these fields, and in mm/page_alloc.c
 	 * free_area_init_core() performs the initialization of them.
 	 */
+	 /* 进程等待队列的hash表，这些进程在等待管理区中的某页 */
 	wait_queue_head_t	*wait_table;
+	/* 等待队列散列表的大小 */
 	unsigned long		wait_table_hash_nr_entries;
+	/* 等待队列散列表数组大小 */
 	unsigned long		wait_table_bits;
 
 	ZONE_PADDING(_pad1_)
 	/* free areas of different sizes */
+	/* 标识出管理区中的空闲页框块，用于伙伴系统 */
+    /* MAX_ORDER为11，分别代表包含大小为1,2,4,8,16,32,64,128,256,512,1024个连续页框的链表 */
 	struct free_area	free_area[MAX_ORDER];
 
 	/* zone flags, see below */
+	/* 管理区标识 */
 	unsigned long		flags;
 
 	/* Write-intensive fields used from the page allocator */
+	/* 保护该描述符的自旋锁 */
 	spinlock_t		lock;
 
 	ZONE_PADDING(_pad2_)
@@ -490,6 +509,7 @@ struct zone {
 	/* Write-intensive fields used by page reclaim */
 
 	/* Fields commonly accessed by the page reclaim scanner */
+	/* 活动及非活动链表使用的自旋锁 */
 	spinlock_t		lru_lock;
 	struct lruvec		lruvec;
 
@@ -528,6 +548,8 @@ struct zone {
 
 	ZONE_PADDING(_pad3_)
 	/* Zone statistics */
+	/* 管理区的一些统计数据 */
+
 	atomic_long_t		vm_stat[NR_VM_ZONE_STAT_ITEMS];
 } ____cacheline_internodealigned_in_smp;
 
