@@ -187,10 +187,16 @@ static bool pfmemalloc_active __read_mostly;
  *
  */
 struct array_cache {
+	/* 可用对象数目 */
+
 	unsigned int avail;
+	/* 可拥有的最大对象数目，和kmem_cache中一样 */
 	unsigned int limit;
+	 /* 同kmem_cache，要转移进本地高速缓存或从本地高速缓存中转移出去的对象的数量 */
 	unsigned int batchcount;
+	  /* 是否在收缩后被访问过 */
 	unsigned int touched;
+	  /* 伪数组，初始没有任何数据项，之后会增加并保存释放的对象指针 */
 	void *entry[];	/*
 			 * Must have this definition in here for the proper
 			 * alignment of array_cache. Also simplifies accessing

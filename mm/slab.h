@@ -323,19 +323,33 @@ static inline struct kmem_cache *cache_from_obj(struct kmem_cache *s, void *x)
 /*
  * The slab lists for all objects.
  */
+ /* SLAB链表结构 */
 struct kmem_cache_node {
-	spinlock_t list_lock;
+	/* 锁 */
 
+	spinlock_t list_lock;
+/* SLAB用 */
 #ifdef CONFIG_SLAB
+	/* 只使用了部分对象的SLAB描述符的双向循环链表 */
+
 	struct list_head slabs_partial;	/* partial list first, better asm code */
+	/* 不包含空闲对象的SLAB描述符的双向循环链表 */
+
 	struct list_head slabs_full;
+	/* 只包含空闲对象的SLAB描述符的双向循环链表 */
 	struct list_head slabs_free;
+	/* 高速缓存中空闲对象个数(包括slabs_partial链表中和slabs_free链表中所有的空闲对象) */
 	unsigned long free_objects;
+	/* 高速缓存中空闲对象的上限 */
 	unsigned int free_limit;
+	/* 下一个被分配的SLAB使用的颜色 */
 	unsigned int colour_next;	/* Per-node cache coloring */
+	/* 指向这个结点上所有CPU共享的一个本地高速缓存 */
 	struct array_cache *shared;	/* shared per node */
 	struct alien_cache **alien;	/* on other nodes */
+	/* 两次缓存收缩时的间隔，降低次数，提高性能 */
 	unsigned long next_reap;	/* updated without locking */
+	/* 0:收缩  1:获取一个对象 */
 	int free_touched;		/* updated without locking */
 #endif
 
