@@ -15,16 +15,25 @@ struct vm_area_struct;
 #define ___GFP_DMA32		0x04u
 #define ___GFP_MOVABLE		0x08u
 #define ___GFP_RECLAIMABLE	0x10u
+/* 允许内核访问保留的页框池 */
 #define ___GFP_HIGH		0x20u
+/* 允许内核在低端内存页上执行IO传输 */
 #define ___GFP_IO		0x40u
+/* 如果清0，则不允许内核执行依赖于文件系统的操作 */
 #define ___GFP_FS		0x80u
+/* 所请求的页框可能是"冷"的 */
 #define ___GFP_COLD		0x100u
+/* 一次内存分配失败将不会产生警告 */
 #define ___GFP_NOWARN		0x200u
 #define ___GFP_REPEAT		0x400u
+/* 同上 */
 #define ___GFP_NOFAIL		0x800u
+/* 一次分配失败后不再重试 */
 #define ___GFP_NORETRY		0x1000u
 #define ___GFP_MEMALLOC		0x2000u
+/* 属于扩展页的页框 */
 #define ___GFP_COMP		0x4000u
+/* 任何返回的页框必须被填满0 */
 #define ___GFP_ZERO		0x8000u
 #define ___GFP_NOMEMALLOC	0x10000u
 #define ___GFP_HARDWALL		0x20000u
@@ -412,6 +421,8 @@ static inline struct page *
 __alloc_pages(gfp_t gfp_mask, unsigned int order,
 		struct zonelist *zonelist)
 {
+	/* 最后调用到的函数 */
+
 	return __alloc_pages_nodemask(gfp_mask, order, zonelist, NULL);
 }
 
@@ -425,6 +436,7 @@ __alloc_pages_node(int nid, gfp_t gfp_mask, unsigned int order)
 	VM_BUG_ON(nid < 0 || nid >= MAX_NUMNODES);
 	VM_WARN_ON(!node_online(nid));
 
+    /* 根据node号获取此node相应的zonelist，因为如果此node上没法分配出多余的内存，会从zonelist的其他node的zone中分配 */
 	return __alloc_pages(gfp_mask, order, node_zonelist(nid, gfp_mask));
 }
 
@@ -438,12 +450,17 @@ static inline struct page *alloc_pages_node(int nid, gfp_t gfp_mask,
 {
 	if (nid == NUMA_NO_NODE)
 		nid = numa_mem_id();
+	/* 根据node号获取此node相应的zonelist，因为如果此node上没法分配出多余的内存，会从zonelist的其他node的zone中分配 */
 
 	return __alloc_pages_node(nid, gfp_mask, order);
 }
 
 #ifdef CONFIG_NUMA
 extern struct page *alloc_pages_current(gfp_t gfp_mask, unsigned order);
+/* 分配页框
+ * gfp_mask: 标志
+ * order: 需求2的次方个数页框
+ */
 
 static inline struct page *
 alloc_pages(gfp_t gfp_mask, unsigned int order)
@@ -456,6 +473,11 @@ extern struct page *alloc_pages_vma(gfp_t gfp_mask, int order,
 #define alloc_hugepage_vma(gfp_mask, vma, addr, order)	\
 	alloc_pages_vma(gfp_mask, order, vma, addr, numa_node_id(), true)
 #else
+		/* 分配页框
+		 * gfp_mask: 标志
+		 * order: 需求2的次方个数页框
+		 */
+
 #define alloc_pages(gfp_mask, order) \
 		alloc_pages_node(numa_node_id(), gfp_mask, order)
 #define alloc_pages_vma(gfp_mask, order, vma, addr, node, false)\
