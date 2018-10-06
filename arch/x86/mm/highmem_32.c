@@ -103,6 +103,7 @@ void __kunmap_atomic(void *kvaddr)
 	preempt_enable();
 }
 EXPORT_SYMBOL(__kunmap_atomic);
+/* 所有高端内存管理区初始化，将所有node的所有zone的managed_pages置为0，并将他们的页框回收到页框分配器中 */
 
 void __init set_highmem_pages_init(void)
 {
@@ -113,19 +114,27 @@ void __init set_highmem_pages_init(void)
 	 * Explicitly reset zone->managed_pages because set_highmem_pages_init()
 	 * is invoked before free_all_bootmem()
 	 */
+	 /* 将所有node的所有zone的managed_pages置为0，即将所有管理区的所管理页数量设置为0 */
 	reset_all_zones_managed_pages();
+	/* 遍历所有管理区，这里只初始化高端内存区 */
 	for_each_zone(zone) {
 		unsigned long zone_start_pfn, zone_end_pfn;
+		/* 如果不是高端内存区，则下一个 */
+		/* 判断方法: 当前zone描述符地址 - 所属node的zone描述符数组基地址 == 高端内存区偏移量 */
 
 		if (!is_highmem(zone))
 			continue;
+		/* 该管理区开始页框号 */
 
 		zone_start_pfn = zone->zone_start_pfn;
+		/* 该管理区结束页框号 */
 		zone_end_pfn = zone_start_pfn + zone->spanned_pages;
+		/* 该管理区所属的node结点号 */
 
 		nid = zone_to_nid(zone);
 		printk(KERN_INFO "Initializing %s for node %d (%08lx:%08lx)\n",
 				zone->name, nid, zone_start_pfn, zone_end_pfn);
+		/* 将start_pfn到end_pfn中所有页框回收，并放入页框分配器 */
 
 		add_highpages_with_active_regions(nid, zone_start_pfn,
 				 zone_end_pfn);

@@ -496,20 +496,25 @@ static void __init permanent_kmaps_init(pgd_t *pgd_base)
 	/* pkmap_page_table保存了页表地址，之后如果用到永久内核映射区就很方便 */
 	pkmap_page_table = pte;
 }
+/* 将start_pfn到end_pfn中所有页框回收，并放入页框分配器 */
 
 void __init add_highpages_with_active_regions(int nid,
 			 unsigned long start_pfn, unsigned long end_pfn)
 {
 	phys_addr_t start, end;
 	u64 i;
+	/* 遍历所有memblock.memory，此结构有e820传递的数据初始化成，每个node会是其中一个这种结构 */
 
 	for_each_free_mem_range(i, nid, MEMBLOCK_NONE, &start, &end, NULL) {
+	/* 修正后第一个页框号，因为有可能页框号不在node上 */
 		unsigned long pfn = clamp_t(unsigned long, PFN_UP(start),
 					    start_pfn, end_pfn);
+	/* 修正后最后一个页框号 */
 		unsigned long e_pfn = clamp_t(unsigned long, PFN_DOWN(end),
 					      start_pfn, end_pfn);
 		for ( ; pfn < e_pfn; pfn++)
 			if (pfn_valid(pfn))
+				/* 这里会将页框回收到页框分配器中 */
 				free_highmem_page(pfn_to_page(pfn));
 	}
 }
@@ -585,6 +590,7 @@ void __init native_pagetable_init(void)
  * be partially populated, and so it avoids stomping on any existing
  * mappings.
  */
+ /* 固定映射区的初始化，只初始化好了页中间目录项和页表，页表项并没初始化 */
 void __init early_ioremap_page_table_range_init(void)
 {
 	pgd_t *pgd_base = swapper_pg_dir;

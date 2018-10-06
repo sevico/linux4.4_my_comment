@@ -1062,21 +1062,29 @@ static void __free_pages_ok(struct page *page, unsigned int order)
 static void __init __free_pages_boot_core(struct page *page,
 					unsigned long pfn, unsigned int order)
 {
+	/* 需要释放的页数量 */
+
 	unsigned int nr_pages = 1 << order;
 	struct page *p = page;
 	unsigned int loop;
+	/* 预取指令，该指令用于把将要使用到的数据从内存提前装入缓存中，以减少访问主存的指令执行时的延迟 */
 
 	prefetchw(p);
 	for (loop = 0; loop < (nr_pages - 1); loop++, p++) {
+		/* 预取下一个页描述符 */
 		prefetchw(p + 1);
 		__ClearPageReserved(p);
+	/* 设置page->_count = 0 */
 		set_page_count(p, 0);
 	}
 	__ClearPageReserved(p);
 	set_page_count(p, 0);
+	/* 管理区的managed_pages加上这些页数量 */
 
 	page_zone(page)->managed_pages += nr_pages;
+	/* 将首页框的_count设置为1，代表被使用，因为被使用的页框才能够释放 */
 	set_page_refcounted(page);
+	 /* 释放到管理区的伙伴系统 */
 	__free_pages(page, order);
 }
 
@@ -4575,6 +4583,7 @@ void __meminit memmap_init_zone(unsigned long size, int nid, unsigned long zone,
 		 * check here not to call set_pageblock_migratetype() against
 		 * pfn out of zone.
 		 */
+		 /* 该区所有页都设置为MIGRATE_MOVABLE */
 		if (!(pfn & (pageblock_nr_pages - 1))) {
 			struct page *page = pfn_to_page(pfn);
 
@@ -4585,6 +4594,7 @@ void __meminit memmap_init_zone(unsigned long size, int nid, unsigned long zone,
 		}
 	}
 }
+/* 将管理区ZONE的伙伴系统置空 */
 
 static void __meminit zone_init_free_lists(struct zone *zone)
 {
@@ -5886,8 +5896,11 @@ EXPORT_SYMBOL(free_reserved_area);
 void free_highmem_page(struct page *page)
 {
 	__free_reserved_page(page);
+	/* 系统中总页数量++ */
 	totalram_pages++;
+	/* 页所属的管理区的managed_pages++ */
 	page_zone(page)->managed_pages++;
+	/* 高端内存页数量++ */
 	totalhigh_pages++;
 }
 #endif

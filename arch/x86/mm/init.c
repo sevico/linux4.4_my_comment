@@ -637,6 +637,8 @@ void __init init_mem_mapping(void)
 #else
 	end = max_low_pfn << PAGE_SHIFT;
 #endif
+	/* end为低端内存(ZONE_MDA和ZONE_NORMAL)的最大页框号 */
+
 
 	/* the ISA range is always mapped regardless of memory holes */
 	/* 0 ~ 1MB，一般内核启动时被安装在1MB开始处

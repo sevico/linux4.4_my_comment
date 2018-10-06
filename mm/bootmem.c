@@ -168,25 +168,32 @@ void __init free_bootmem_late(unsigned long physaddr, unsigned long size)
 		totalram_pages++;
 	}
 }
+/* 释放bdata启动内存块中所有页框到页框分配器 */
 
 static unsigned long __init free_all_bootmem_core(bootmem_data_t *bdata)
 {
 	struct page *page;
 	unsigned long *map, start, end, pages, cur, count = 0;
+	/* 此bootmem没有位图，也就是没有管理内存 */
 
 	if (!bdata->node_bootmem_map)
 		return 0;
+	/* 此bootmem的位图 */
 
 	map = bdata->node_bootmem_map;
+	 /* 此bootmem包含的开始页框 */
 	start = bdata->node_min_pfn;
+	 /* 此bootmem包含的结束页框 */
 	end = bdata->node_low_pfn;
 
 	bdebug("nid=%td start=%lx end=%lx\n",
 		bdata - bootmem_node_data, start, end);
+	/* 释放 bdata->node_min_pfn 到 bdata->node_low_pfn 之间空闲的页框到伙伴系统 */
 
 	while (start < end) {
 		unsigned long idx, vec;
 		unsigned shift;
+		/* 一次循环检查long所占位数长度的页框数量(32或64) */
 
 		idx = start - bdata->node_min_pfn;
 		shift = idx & (BITS_PER_LONG - 1);
@@ -194,6 +201,7 @@ static unsigned long __init free_all_bootmem_core(bootmem_data_t *bdata)
 		 * vec holds at most BITS_PER_LONG map bits,
 		 * bit 0 corresponds to start.
 		 */
+		 /* 做个整理，因为有可能start并不是按long位数对其的，有可能出现在了vec的中间位数 */
 		vec = ~map[idx / BITS_PER_LONG];
 
 		if (shift) {
@@ -207,19 +215,27 @@ static unsigned long __init free_all_bootmem_core(bootmem_data_t *bdata)
 		 * BITS_PER_LONG block of pages in front of us, free
 		 * it in one go.
 		 */
+		  /* 如果检查的这一块内存块全是空的，则一次性释放 */
 		if (IS_ALIGNED(start, BITS_PER_LONG) && vec == ~0UL) {
+			/* 这一块长度的内存块都为空闲的，计算这块内存的order，如果这块内存块长度是8个页框，那order就是3(2的3次方) */
 			int order = ilog2(BITS_PER_LONG);
+			/* 从start开始，释放2的order次方的页框到伙伴系统 */
 
 			__free_pages_bootmem(pfn_to_page(start), start, order);
+		/* count用来记录总共释放的页框 */
 			count += BITS_PER_LONG;
+		/* 开始位置向后移动 */
 			start += BITS_PER_LONG;
 		} else {
+			/* 内存块中有部分是页框是空的，一页一页释放 */
 			cur = start;
 
 			start = ALIGN(start + 1, BITS_PER_LONG);
 			while (vec && cur != start) {
 				if (vec & 1) {
+					/* 获取页框描述符，页框号实际上就是页描述符在mem_map的偏移量 */
 					page = pfn_to_page(cur);
+					/* 将此页释放到伙伴系统 */
 					__free_pages_bootmem(page, cur, 0);
 					count++;
 				}
@@ -271,17 +287,24 @@ void __init reset_all_zones_managed_pages(void)
  *
  * Returns the number of pages actually released.
  */
+ 
+/* 释放所有启动后不需要的内存到页框分配器 */
 unsigned long __init free_all_bootmem(void)
 {
 	unsigned long total_pages = 0;
+	 /* 系统会为每个node分配一个这种结构，这个管理着node中所有页框，可以叫做bootmem分配器 */
 	bootmem_data_t *bdata;
+	/* 设置所有node的所有zone的managed_pages = 0，该函数在启动时只会调用一次，如果初始化高端内存的伙伴系统时调用过，这里就不会再次调用了 */
 
 	reset_all_zones_managed_pages();
-
+	/* 遍历所有需要释放的启动内存数据块 */
 	list_for_each_entry(bdata, &bdata_list, list)
+	/* 释放bdata启动内存块中所有页框到页框分配器 */
 		total_pages += free_all_bootmem_core(bdata);
+	/* 所有内存页数量 */
 
 	totalram_pages += total_pages;
+	/* 返回总共释放的页数量 */
 
 	return total_pages;
 }
