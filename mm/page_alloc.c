@@ -3146,6 +3146,27 @@ static inline bool is_thp_gfp_mask(gfp_t gfp_mask)
 	return (gfp_mask & (GFP_TRANSHUGE | __GFP_KSWAPD_RECLAIM)) == GFP_TRANSHUGE;
 }
 
+/*
+从开始到最后都没有成功，所走的路径是：
+
+遍历zonelist，从zonelist中获取一个zone
+检查zone如果分配后，空闲页框是否会低于allow_low
+对此zone回收一些文件映射页和slab使用的页
+再次检查zone如果分配后，空闲页框是否会低于allow_low
+尝试从此zone分配页框(1个页优先从每CPU高速缓存分配，连续页框优先从需要的类型(migratetype)分配，如果不行再从其他migratetype分配)
+跳到第1步，遍历zonelist结束则到下一步
+再重新遍历zonelist一次，如果重新遍历过则到下一步
+进入慢速分配
+唤醒所有kswapd内核线程
+再次尝试一次1~7步骤进行分配
+如果有ALLOC_NO_WATERMARKS，则尝试分配预留的内存
+进行异步内存压缩，然后尝试分配内存
+尝试调用__alloc_pages__direct_reclaim()进行内存回收，然后尝试分配内存
+使用oom杀掉oom_score较大的进程，每个进程都有一个oom_score(在/proc/PID/oom_score)
+尝试轻同步内存压缩，然后尝试分配内存
+压缩后再次尝试1~7步骤进行分配
+*/
+
 static inline struct page *
 __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
 						struct alloc_context *ac)
@@ -3165,6 +3186,7 @@ __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
 	 * be using allocators in order of preference for an area that is
 	 * too large.
 	 */
+	 /* order不能大于10或11 */
 	if (order >= MAX_ORDER) {
 		WARN_ON_ONCE(!(gfp_mask & __GFP_NOWARN));
 		return NULL;
@@ -3183,10 +3205,17 @@ __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
 	 * fail early.  There's no need to wakeup kswapd or retry for a
 	 * speculative node-specific allocation.
 	 */
+	     /* 调用者指定了GFP_THISNODE标志，表示不能进行内存回收
+     * 上层调用者应当在指定了GFP_THISNODE失败后，使用其他标志进行分配
+     */
 	if (IS_ENABLED(CONFIG_NUMA) && (gfp_mask & __GFP_THISNODE) && !can_direct_reclaim)
 		goto nopage;
 
 retry:
+    /* 如果调用者的标志没有禁止kswapd线程标志，则会唤醒这个线程用于页框回收，这里会唤醒所有node结点中的kswap线程，每个node都有一个自己的kswap线程
+     * 里面会遍历zonelist链表的zone区域，只有zone区域的空闲页框数量低于高警戒值才会唤醒zone对应的node的kswapd线程
+     */
+
 	if (gfp_mask & __GFP_KSWAPD_RECLAIM)
 		wake_all_kswapds(order, ac);
 
@@ -3195,12 +3224,22 @@ retry:
 	 * reclaim. Now things get more complex, so set up alloc_flags according
 	 * to how we want to proceed.
 	 */
+	 /* 根据传入标志确定其他的一些标志 
+     * 这里会默认使用min阀值进行内存分配
+     * 如果gfp_mask是GFP_ATOMIC，那么这个alloc_flags应该是__GFP_HIGH | __GFP_HARDER
+     *
+     * 如果标记有__GFP_MEMALLOC，或者
+     * 处于软中断中，并且当前进程被设为允许使用保留内存，或者
+     * 不在中断中，并且当前进程 被设置为允许使用保留内存 或者是正在被oom的进程
+     * 那么就会标记ALLOC_NO_WATERMARKS，表示忽略阀值进行分配
+     */
 	alloc_flags = gfp_to_alloc_flags(gfp_mask);
 
 	/*
 	 * Find the true preferred zone if the allocation is unconstrained by
 	 * cpusets.
 	 */
+	 /* 如果不受CPUSET的限制，则找出优先用于分配的管理区 */
 	if (!(alloc_flags & ALLOC_CPUSET) && !ac->nodemask) {
 		struct zoneref *preferred_zoneref;
 		preferred_zoneref = first_zones_zonelist(ac->zonelist,
@@ -3209,18 +3248,30 @@ retry:
 	}
 
 	/* This is the last chance, in general, before the goto nopage. */
+	/* 这里会用min阀值再次尝试获取页框，如果这次尝试还是没申请到页框，就要走漫长的步骤了 */
 	page = get_page_from_freelist(gfp_mask, order,
 				alloc_flags & ~ALLOC_NO_WATERMARKS, ac);
 	if (page)
 		goto got_pg;
 
 	/* Allocate without watermarks if the context allows */
+	 /* 如果标记了不关注阀值进行分配，这样会有可能使用预留的内存进行分配 
+     * 如果标记有__GFP_MEMALLOC，或者
+     * 处于软中断中，并且当前进程被设为允许使用保留内存，或者
+     * 不在中断中，并且当前进程 被设置为允许使用保留内存 或者是正在被oom的进程
+     * 那么就会进行这种分配
+     * 而平常可能用到的GFP_ATOMIC，则不是这种分配，GFP_ATOMIC会在zone_watermark_ok()中通过降低阀值进行判断，它不会用到预留的内存
+     */
 	if (alloc_flags & ALLOC_NO_WATERMARKS) {
 		/*
 		 * Ignore mempolicies if ALLOC_NO_WATERMARKS on the grounds
 		 * the allocation is high priority and these type of
 		 * allocations are system rather than user orientated
 		 */
+		 /* 这里就是还是没有获取到，尝试忽略阀值再次进行获取页框 */
+		 /* 尝试获取页框，这里不调用zone_watermark_ok()，也就是忽略了阀值，使用管理区预留的页框 
+         * 当没有获取到时，如果标记有__GFP_NOFAIL，则进行循环不停地分配，直到获取到页框
+         */
 		page = __alloc_pages_high_priority(gfp_mask, order, ac);
 
 		if (page) {
@@ -3229,6 +3280,7 @@ retry:
 	}
 
 	/* Caller is not willing to reclaim, we can't balance anything */
+	/* 还是没有分配到，如果调用者不希望等待获取内存，就返回退出 */
 	if (!can_direct_reclaim) {
 		/*
 		 * All existing users of the deprecated __GFP_NOFAIL are
@@ -3240,6 +3292,7 @@ retry:
 	}
 
 	/* Avoid recursion of direct reclaim */
+	/* 调用者本身就是内存回收进程，不能执行后面的内存回收流程，是为了防止死锁 */
 	if (current->flags & PF_MEMALLOC)
 		goto nopage;
 
@@ -3251,6 +3304,10 @@ retry:
 	 * Try direct compaction. The first pass is asynchronous. Subsequent
 	 * attempts after direct reclaim are synchronous
 	 */
+	 /* 通过压缩看能否有多余的页框，通过页面迁移实现，这里的内存压缩是异步模式，要进入这里，有个前提就是分配内存的标志中必须允许阻塞(__GFP_WAIT)，大多数情况分配都允许阻塞
+     * 只会对MIRGATE_MOVABLE和MIGRATE_CMA类型的页进行移动，并且不允许阻塞
+     * 对zonelist的每个zone进行一次异步内存压缩
+     */
 	page = __alloc_pages_direct_compact(gfp_mask, order, alloc_flags, ac,
 					migration_mode,
 					&contended_compaction,
@@ -3294,10 +3351,17 @@ retry:
 	 * fault, so use asynchronous memory compaction for THP unless it is
 	 * khugepaged trying to collapse.
 	 */
+	     /* 设置第二次内存压缩为轻同步模式，当第一次内存压缩后还是没有分配到足够页框时会使用
+     * 轻同步内存压缩两有一种情况会发生
+     * 在申请内存时内存不足，通过第一次异步内存压缩后，还是不足以分配连续页框后
+     * 1.明确禁止处理透明大页的时候，可以进行轻同步内存压缩
+     * 2.如果是内核线程，可以进行轻同步内存压缩(即使没有禁止处理透明大页的情况)
+     */
 	if (!is_thp_gfp_mask(gfp_mask) || (current->flags & PF_KTHREAD))
 		migration_mode = MIGRATE_SYNC_LIGHT;
 
 	/* Try direct reclaim and then allocating */
+	/* 进行直接内存回收 */
 	page = __alloc_pages_direct_reclaim(gfp_mask, order, alloc_flags, ac,
 							&did_some_progress);
 	if (page)
@@ -3308,15 +3372,20 @@ retry:
 		goto noretry;
 
 	/* Keep reclaiming pages as long as there is reasonable progress */
+	 /* 回收到了一部分，这里检查是否继续尝试回收 */
 	pages_reclaimed += did_some_progress;
 	if ((did_some_progress && order <= PAGE_ALLOC_COSTLY_ORDER) ||
 	    ((gfp_mask & __GFP_REPEAT) && pages_reclaimed < (1 << order))) {
 		/* Wait for some write requests to complete then retry */
+		 /* 需要，这里会阻塞一段时间，然后重试 */
 		wait_iff_congested(ac->preferred_zone, BLK_RW_ASYNC, HZ/50);
 		goto retry;
 	}
 
 	/* Reclaim has failed us, start killing things */
+	/* 杀死其他进程后再尝试，里面会使用high阀值进行尝试分配
+      * 是希望通过杀死进程获取比较多的内存?
+       */
 	page = __alloc_pages_may_oom(gfp_mask, order, ac, &did_some_progress);
 	if (page)
 		goto got_pg;
@@ -3331,6 +3400,11 @@ noretry:
 	 * direct reclaim and reclaim/compaction depends on compaction
 	 * being called after reclaim so call directly if necessary
 	 */
+	/* 如果是在内核线程中，或者分配的不是透明大页的情况下，会对zonelist中的每个zone进行轻同步内存压缩，否则还是异步模式
+	 * 此模式下允许进行大多数操作的阻塞，但不会对隔离出来需要移动的脏页进行回写操作，也不会等待正在回写的脏页回写完成，会阻塞去获取锁
+	* 回收的数量保存在did_some_progress中，有可能回收到了页框，但是并不够分配
+	*/
+
 	page = __alloc_pages_direct_compact(gfp_mask, order, alloc_flags,
 					    ac, migration_mode,
 					    &contended_compaction,
@@ -3338,6 +3412,8 @@ noretry:
 	if (page)
 		goto got_pg;
 nopage:
+	/* 没有分配到内存 */
+
 	warn_alloc_failed(gfp_mask, order, NULL);
 got_pg:
 	return page;
