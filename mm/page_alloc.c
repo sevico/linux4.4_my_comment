@@ -1479,17 +1479,23 @@ struct page *__rmqueue_smallest(struct zone *zone, unsigned int order,
 	struct page *page;
 
 	/* Find a page of the appropriate size in the preferred list */
+	/* 循环遍历这层之后的空闲链表 */
 	for (current_order = order; current_order < MAX_ORDER; ++current_order) {
 		area = &(zone->free_area[current_order]);
+		 /* 如果当前空闲链表为空，则从更高一级的链表中获取空闲页框 */
 		if (list_empty(&area->free_list[migratetype]))
 			continue;
-
+		/* 获取空闲链表中第一个结点所代表的连续页框 */
 		page = list_entry(area->free_list[migratetype].next,
 							struct page, lru);
+		/* 将页框从空闲链表中删除 */
 		list_del(&page->lru);
+		/* 将首页框的private设置为0 */
 		rmv_page_order(page);
 		area->nr_free--;
+		/* 如果从更高级的页框的链表中分配，这里会将多余的页框放回伙伴系统的链表中，比如我们只需要2个页框，但是这里是从8个连续页框的链表分配给我们的，那其他6个就要拆分为2和4个分别放入链表中 */
 		expand(zone, page, order, current_order, area, migratetype);
+		 /* 设置页框的类型与migratetype一致 */
 		set_pcppage_migratetype(page, migratetype);
 		return page;
 	}
@@ -1681,6 +1687,7 @@ int find_suitable_fallback(struct free_area *area, unsigned int order,
 		return -1;
 
 	*can_steal = false;
+	 /* 遍历order链表中对应fallbacks优先级的类型链表 */
 	for (i = 0;; i++) {
 		fallback_mt = fallbacks[migratetype][i];
 		if (fallback_mt == MIGRATE_TYPES)
@@ -1810,6 +1817,10 @@ static void unreserve_highatomic_pageblock(const struct alloc_context *ac)
 }
 
 /* Remove an element from the buddy allocator from the fallback list */
+/* 根据fallbacks数组中定义的优先级，从其他migratetype类型的链表中获取连续页框，返回第一个页框的页描述符 
+ * start_migratetype是申请页框时需要但是又缺少的类型
+ */
+
 static inline struct page *
 __rmqueue_fallback(struct zone *zone, unsigned int order, int start_migratetype)
 {
@@ -1820,22 +1831,40 @@ __rmqueue_fallback(struct zone *zone, unsigned int order, int start_migratetype)
 	bool can_steal;
 
 	/* Find the largest possible block of pages in the other list */
+	/* 遍历不同order的链表，如果需要分配2个连续页框，则会遍历1024,512,256,128,64,32,16,8,4,2,1这几个链表，注意这里是倒着遍历的 */
 	for (current_order = MAX_ORDER-1;
 				current_order >= order && current_order <= MAX_ORDER-1;
 				--current_order) {
+		//获取当前free_area的位置
 		area = &(zone->free_area[current_order]);
 		fallback_mt = find_suitable_fallback(area, current_order,
 				start_migratetype, false, &can_steal);
 		if (fallback_mt == -1)
 			continue;
+		/* 有空余的内存，即将分配 */
+		/* 从链表中获取第一个节点，但是注意，这里分配的内存可能大于我们需要的数量(从其他order链表中获取的连续页框)，之后会调用expand把多余的放回去 */
 
 		page = list_entry(area->free_list[fallback_mt].next,
 						struct page, lru);
+		     /* 在当前start_migratetype中没有足够的页进行分配时，则会将获取到的migratetype类型的pageblock中的所有空闲页框移动到start_migratetype中，返回获取的页框本来所属的类型  
+             * 只有系统禁止了page_group_by_mobility_disabled或者order > pageblock_order / 2，才会这样做(在find_suitable_fallback->can_steal_fallback中判断，pageblock_order为最大页的大小，或者1024)
+             * 在调用前，page一定是migratetype类型的
+             * 里面的具体做法是:
+             * page是属于migratetype类型的pageblock中的一个页，然后函数中会根据page获取其所在的pageblock
+             * 从pageblock开始的第一页遍历到此pageblock的最后一页
+             * 然后根据page->_mapcount是否等于-1，如果等于-1，说明此页在伙伴系统中，不等于-1则下一页
+             * 对page->_mapcount == -1的页获取order值，order值保存在page->private中，然后将这一段连续空闲页框移动到start_type类型的free_list中
+             * 对这段连续空闲页框首页设置为start_type类型，这样就能表示此段连续空闲页框都是此类型了，通过page->index = start_type设置
+             * 继续遍历，直到整个pageblock遍历结束，这样整个pageblock中的空闲页框都被移动到start_type类型中了
+             */
 		if (can_steal)
 			steal_suitable_fallback(zone, page, start_migratetype);
 
 		/* Remove the page from the freelists */
 		area->nr_free--;
+		/* 从伙伴系统中拿出来，因为在try_to_steal_freepages已经将新的页框放到了需要的start_mirgatetype的链表中
+             * 并且此order并不一定是所需要order的上级，因为order是倒着遍历了，比如我们需要32个MIGRATE_UNMOVABLE页框，但是移动的是1024个MIGRATE_MOVABLE页框到MIGRATE_UNMOVABLE的order=10的链表中。
+             */
 		list_del(&page->lru);
 		rmv_page_order(page);
 
@@ -1863,17 +1892,26 @@ __rmqueue_fallback(struct zone *zone, unsigned int order, int start_migratetype)
  * Do the hard work of removing an element from the buddy allocator.
  * Call me with the zone->lock already held.
  */
+ /* 从伙伴系统中获取2的order次方个页框，返回第一个页框的描述符
+ * zone: 管理区描述符
+ * order: 需要页面的2的次方数
+ * migratetype: 从此类型中获取，这时传入的时需求的页框类型
+ */
 static struct page *__rmqueue(struct zone *zone, unsigned int order,
 				int migratetype, gfp_t gfp_flags)
 {
 	struct page *page;
+	/* 直接从migratetype类型的链表中获取了2的order次方个页框 */
 
 	page = __rmqueue_smallest(zone, order, migratetype);
+	/* 如果page为空，没有在需要的migratetype类型中分配获得页框，说明当前需求类型(migratetype)的页框没有空闲，会根据fallback数组中定义好的优先级从其他类型的页框中获取页框，一次移动一个pageblock */
 	if (unlikely(!page)) {
 		if (migratetype == MIGRATE_MOVABLE)
+			//尝试从CMA区域获取内存
 			page = __rmqueue_cma_fallback(zone, order);
 
 		if (!page)
+			/* 根据fallbacks数组从其他migratetype类型的链表中获取内存 */
 			page = __rmqueue_fallback(zone, order, migratetype);
 	}
 
@@ -2273,13 +2311,17 @@ struct page *buffered_rmqueue(struct zone *preferred_zone,
 	bool cold = ((gfp_flags & __GFP_COLD) != 0);
 
 	if (likely(order == 0)) {
+		/* 这里是只需要分配一个页框，会从每CPU高速缓存中分配 */
 		struct per_cpu_pages *pcp;
 		struct list_head *list;
 
 		local_irq_save(flags);
+		/* 获取此zone的每CPU高速缓存 */
 		pcp = &this_cpu_ptr(zone->pageset)->pcp;
+		/* 获取需要的类型的页框的高速缓存链表，高速缓存中也区分migratetype类型的链表，链表中保存的页框对应的页描述符 */
 		list = &pcp->lists[migratetype];
 		if (list_empty(list)) {
+			 /* 如果当前migratetype的每CPU高速缓存链表中没有空闲的页框，从伙伴系统中获取batch个页框加入到这个链表中，batch保存在每CPU高速缓存描述符中，在rmqueue_bulk中是每次要1个页框，要batch次，也就是这些页框是离散的 */
 			pcp->count += rmqueue_bulk(zone, 0,
 					pcp->batch, list,
 					migratetype, cold);
@@ -2288,13 +2330,17 @@ struct page *buffered_rmqueue(struct zone *preferred_zone,
 		}
 
 		if (cold)
+			/* 需要冷的高速缓存，则从每CPU高速缓存的双向链表的后面开始分配 */
 			page = list_entry(list->prev, struct page, lru);
 		else
+			 /* 需要热的高速缓存，则从每CPU高速缓存的双向链表的前面开始分配，因为释放时会从链表头插入，所以链表头是热的高速缓存 */
 			page = list_entry(list->next, struct page, lru);
+		/* 从每CPU高速缓存链表中拿出来 */
 
 		list_del(&page->lru);
 		pcp->count--;
 	} else {
+		/* 需要多个页框，从伙伴系统中分配，但是申请多个页框时是有可能会发生失败的情况的，而分配时又表明__GFP_NOFAIL不允许发生失败，所以这里给出一个警告 */
 		if (unlikely(gfp_flags & __GFP_NOFAIL)) {
 			/*
 			 * __GFP_NOFAIL is not to be used in new code.
@@ -2311,6 +2357,7 @@ struct page *buffered_rmqueue(struct zone *preferred_zone,
 		spin_lock_irqsave(&zone->lock, flags);
 
 		page = NULL;
+		/* 从伙伴系统中获取连续页框，返回第一个页的页描述符 */
 		if (alloc_flags & ALLOC_HARDER) {
 			page = __rmqueue_smallest(zone, order, MIGRATE_HIGHATOMIC);
 			if (page)
@@ -2321,6 +2368,7 @@ struct page *buffered_rmqueue(struct zone *preferred_zone,
 		spin_unlock(&zone->lock);
 		if (!page)
 			goto failed;
+		/* 统计，减少zone的free_pages数量统计，因为里面使用加法，所以这里传进负数 */
 		__mod_zone_freepage_state(zone, -(1 << order),
 					  get_pcppage_migratetype(page));
 	}
@@ -2331,13 +2379,16 @@ struct page *buffered_rmqueue(struct zone *preferred_zone,
 		set_bit(ZONE_FAIR_DEPLETED, &zone->flags);
 
 	__count_zone_vm_events(PGALLOC, zone, 1 << order);
+	 /* 统计 */
 	zone_statistics(preferred_zone, zone, gfp_flags);
 	local_irq_restore(flags);
 
 	VM_BUG_ON_PAGE(bad_range(zone, page), page);
+	/* 返回第一个页描述符 */
 	return page;
 
 failed:
+	 /* 分配失败 */
 	local_irq_restore(flags);
 	return NULL;
 }
