@@ -287,6 +287,7 @@ struct tss_struct {
 	/*
 	 * The hardware state:
 	 */
+	  /* 存放寄存器的值的结构体，保存有栈顶指针SP寄存器的值 */
 	struct x86_hw_tss	x86_tss;
 
 	/*
@@ -295,11 +296,13 @@ struct tss_struct {
 	 * bitmap. The extra byte must be all 1 bits, and must
 	 * be within the limit.
 	 */
+	 /* 当前进程的IO许可权限位 */
 	unsigned long		io_bitmap[IO_BITMAP_LONGS + 1];
 
 	/*
 	 * Space for the temporary SYSENTER stack:
 	 */
+	 /* 紧急内核栈 */
 	unsigned long		SYSENTER_stack[64];
 
 } ____cacheline_aligned;
