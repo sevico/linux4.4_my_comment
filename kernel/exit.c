@@ -593,7 +593,7 @@ static void exit_notify(struct task_struct *tsk, int group_dead)
 	LIST_HEAD(dead);
 
 	write_lock_irq(&tasklist_lock);
-	forget_original_parent(tsk, &dead);
+	forget_original_parent(tsk, &dead); //给子进程设置新的父进程
 
 	if (group_dead)
 		kill_orphaned_pgrp(tsk->group_leader, NULL);
@@ -605,9 +605,13 @@ static void exit_notify(struct task_struct *tsk, int group_dead)
 			tsk->exit_signal : SIGCHLD;
 		autoreap = do_notify_parent(tsk, sig);
 	} else if (thread_group_leader(tsk)) {
+		/*线程组组长只有在全部线程都已退出的情况下，
+		*才能调用do_notify_parent通知父进程*/
 		autoreap = thread_group_empty(tsk) &&
-			do_notify_parent(tsk, tsk->exit_signal);
+			do_notify_parent(tsk, tsk->exit_signal); //通知进程的父进程
 	} else {
+		 /*如果是线程组的非组长线程，可以立即调用release_task，        
+		 *释放残余的资源，因为通知父进程这件事和它没有关系*/
 		autoreap = true;
 	}
 
@@ -1470,6 +1474,9 @@ static int child_wait_callback(wait_queue_t *wait, unsigned mode,
 
 void __wake_up_parent(struct task_struct *p, struct task_struct *parent)
 {
+/*父进程调用wait系列函数时，会创建一个wait_opts结构体，
+并把该结构体挂入parent->signal->wait_chldexit中
+*/
 	__wake_up_sync_key(&parent->signal->wait_chldexit,
 				TASK_INTERRUPTIBLE, 1, p);
 }
@@ -1480,7 +1487,7 @@ static long do_wait(struct wait_opts *wo)
 	int retval;
 
 	trace_sched_process_wait(wo->wo_pid);
-
+	 /*挂入等待队列*/
 	init_waitqueue_func_entry(&wo->child_wait, child_wait_callback);
 	wo->child_wait.private = current;
 	add_wait_queue(&current->signal->wait_chldexit, &wo->child_wait);
@@ -1512,6 +1519,9 @@ repeat:
 			break;
 	} while_each_thread(current, tsk);
 	read_unlock(&tasklist_lock);
+/*找了一圈，没有找到满足等待条件的的子进程，下一步的行为将取决于WNOHANG标志位
+*如果将WNOHANG标志位置位，则表示不等了，直接退出，
+*如果没有置位，则让出CPU，醒来后继续再找一圈*/
 
 notask:
 	retval = wo->notask_error;

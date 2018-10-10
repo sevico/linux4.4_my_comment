@@ -617,6 +617,7 @@ static inline u64 calc_delta_fair(u64 delta, struct sched_entity *se)
  */
 static u64 __sched_period(unsigned long nr_running)
 {
+	　/*进程个数过多，无法保证调度延迟，只能保证调度最小粒度*/
 	if (unlikely(nr_running > sched_nr_latency))
 		return nr_running * sysctl_sched_min_granularity;
 	else
@@ -631,7 +632,10 @@ static u64 __sched_period(unsigned long nr_running)
  */
 static u64 sched_slice(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
+	/*本轮调度周期的时间长度*/
 	u64 slice = __sched_period(cfs_rq->nr_running + !se->on_rq);
+	/*Linux支持组调度，所以此处有一个循环，　　　
+	*如果不考虑组调度，将调度实体简化成进程，会更好理解*/
 
 	for_each_sched_entity(se) {
 		struct load_weight *load;
@@ -646,6 +650,7 @@ static u64 sched_slice(struct cfs_rq *cfs_rq, struct sched_entity *se)
 			update_load_add(&lw, se->load.weight);
 			load = &lw;
 		}
+		/*根据调度实体所占的权重，分配时间片的大小*/
 		slice = __calc_delta(slice, se->load.weight, load);
 	}
 	return slice;
@@ -3015,7 +3020,7 @@ place_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int initial)
 	 * little, place the new task so that it fits in the slot that
 	 * stays open at the end.
 	 */
-	//START_DEBIT表示新进程是否需要"记账", 需要则加上新进程在一
+	//START_DEBIT表示新进程是否需要"记账", 需要则加上新进程在一,放着恶意用户创建大量子进程，抢占调度
     //个调度周期内的vruntime值大小, 表示新进程在这一个调度周期内已经运行过了
 	if (initial && sched_feat(START_DEBIT))
 		vruntime += sched_vslice(cfs_rq, se); //sched_vslice函数就是计算一个调度周期内新进程的vruntime值大小
@@ -3235,6 +3240,7 @@ check_preempt_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr)
 	 * narrow margin doesn't have to wait for a full slice.
 	 * This also mitigates buddy induced latencies under load.
 	 */
+	 /* 如果当前进程运行时间低于调度的最小粒度，则不允许发生抢占 */
 	if (delta_exec < sysctl_sched_min_granularity)
 		return;
 	/* 获取下一个调度进程的se */
@@ -3407,7 +3413,7 @@ entity_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr, int queued)
 		return;
 #endif
 	/* 检查是否需要调度 */
-
+	/*如果可运行状态的进程个数大于1，检查是否可以抢占当前进程*/
 	if (cfs_rq->nr_running > 1)
 		check_preempt_tick(cfs_rq, curr);  //判断是否需要设置重新调度标志
 }
@@ -8009,6 +8015,7 @@ static void task_tick_fair(struct rq *rq, struct task_struct *curr, int queued)
 
 	for_each_sched_entity(se) {
 		cfs_rq = cfs_rq_of(se);
+		/*为了支持组调度，引入了调度实体的概念*/
 		/* 更新当前进程运行时间，并判断是否需要调度此进程 */
 		entity_tick(cfs_rq, se, queued);
 	}
@@ -8036,6 +8043,7 @@ static void task_fork_fair(struct task_struct *p)
 
 	raw_spin_lock_irqsave(&rq->lock, flags);
 	/* 更新rq运行时间 */
+	/*更新CFS调度类的队列,包括执行__update_curr更新当前进程统计 */
 
 	update_rq_clock(rq);
 	/* cfs_rq = current->se.cfs_rq; */
@@ -8059,10 +8067,14 @@ static void task_fork_fair(struct task_struct *p)
 	rcu_read_unlock();
 
 	update_curr(cfs_rq); //更新当前进程的vruntime值
+	/*新创建进程的vruntime初始化成父进程的vruntime，    
+	*紧随其后的place_entity函数会负责调整新创建进程的vruntime*/
 
 	if (curr)
 		se->vruntime = curr->vruntime; //先以父进程的vruntime为基础
 	place_entity(cfs_rq, se, 1); //设置新进程的vruntime值, 1表示是新进程
+	/*如果设置了子进程先运行，并且父进程的vruntime小于子进程，
+	则交换彼此的vruntime，确保子进程先执行*/
 
 	if (sysctl_sched_child_runs_first && curr && entity_before(curr, se)) {
 		//sysctl_sched_child_runs_first值表示是否设置了让子进程先运行
@@ -8073,8 +8085,11 @@ static void task_fork_fair(struct task_struct *p)
 		swap(curr->vruntime, se->vruntime); //当子进程的vruntime值大于父进程的vruntime时, 交换两个进程的vruntime值
 		resched_curr(rq); //设置重新调度标志TIF_NEED_RESCHED
 	}
+	    /*此处减去当前运行队列的最小虚拟运行时间，　　　
+	    *真正进入运行队列，即执行enqueue_entity时，　　　
+	    *进程的vruntime会加上cfs_rq->vruntime*/
 	//防止新进程运行时是在其他cpu上运行的, 这样在加入另一个cfs_rq时再加上另一个cfs_rq队列的min_vruntime值即可(具体可以看enqueue_entity函数)
-	se->vruntime -= cfs_rq->min_vruntime;
+	se->vruntime -= cfs_rq->min_vruntime;  //do_fork的末尾会调用wake_up_new_task函数
 	/* 解锁，还原中断记录 */
 	raw_spin_unlock_irqrestore(&rq->lock, flags);
 }

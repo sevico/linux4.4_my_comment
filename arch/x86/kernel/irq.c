@@ -212,7 +212,7 @@ u64 arch_irq_stat(void)
  */
 __visible unsigned int __irq_entry do_IRQ(struct pt_regs *regs)
 {
-	* 将栈顶地址保存到全局变量__irq_regs中，old_regs用于保存现在的__irq_regs值，这一行代码很重要，实现了嵌套中断情况下的现场保存与还原 */
+	/* 将栈顶地址保存到全局变量__irq_regs中，old_regs用于保存现在的__irq_regs值，这一行代码很重要，实现了嵌套中断情况下的现场保存与还原 */
 
 	struct pt_regs *old_regs = set_irq_regs(regs);
 	struct irq_desc * desc;

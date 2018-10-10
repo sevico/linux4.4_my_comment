@@ -842,6 +842,7 @@ static inline void enqueue_task(struct rq *rq, struct task_struct *p, int flags)
 	update_rq_clock(rq);
 	if (!(flags & ENQUEUE_RESTORE))
 		sched_info_queued(rq, p);
+	/*根据进程所属的调度类，执行相应的enqueue_task函数*/
 	p->sched_class->enqueue_task(rq, p, flags);
 }
 
@@ -857,7 +858,7 @@ void activate_task(struct rq *rq, struct task_struct *p, int flags)
 {
 	if (task_contributes_to_load(p))
 		rq->nr_uninterruptible--;
-
+	/*将进程插入运行队列，enqueue_task是调度类hook函数*/
 	enqueue_task(rq, p, flags);
 }
 
@@ -1039,9 +1040,14 @@ void check_preempt_curr(struct rq *rq, struct task_struct *p, int flags)
 	if (p->sched_class == rq->curr->sched_class) {
 		rq->curr->sched_class->check_preempt_curr(rq, p, flags);
 	} else {
+	　/*for_each_class，从高优先级的调度类到低优先级的调度类*/
 		for_each_class(class) {
+		 /*如果候选进程的调度类低于当前进程所属的调度类，就直接跳出。　
+		 不许低优先级的调度类抢占高优先级的调度类*/
 			if (class == rq->curr->sched_class)
 				break;
+			/*如果候选进程所属的调度类优先级高于当前进程的调度类,
+			则通过执行resched_task函数，设置need_resched标志位*/
 			if (class == p->sched_class) {
 				resched_curr(rq);
 				break;
@@ -2235,7 +2241,7 @@ int sched_fork(unsigned long clone_flags, struct task_struct *p)
 	unsigned long flags;
 	/* 获取当前CPU，并且禁止抢占 */
 	int cpu = get_cpu();
-	/* 初始化跟调度相关的值，比如调度实体，运行时间等 */
+	/* 初始化跟调度相关的值，比如调度实体，运行时间,虚拟运行时间等 */
 	__sched_fork(clone_flags, p);
 	/*
 	 * We mark the process as running here. This guarantees that
@@ -2461,7 +2467,7 @@ void wake_up_new_task(struct task_struct *p)
 	rq = __task_rq_lock(p);
 	/* 将进程加入到CPU的运行队列 */
 
-	activate_task(rq, p, 0);
+	activate_task(rq, p, 0); //->enqueue_task
 	/* 标记进程p处于队列中 */
 	p->on_rq = TASK_ON_RQ_QUEUED;
 	/* 跟调试有关 */
@@ -3247,7 +3253,12 @@ static void __sched notrace __schedule(bool preempt)
 	* 当内核抢占时会置位thread_info的preempt_count的PREEMPT_ACTIVE位，调用schedule()之后会清除，PREEMPT_ACTIVE置位表明是从内核抢占进入到此的(改为参数preempt)
 	 * preempt_count()是判断thread_info的preempt_count整体是否为0
 	 * prev->state大于0表明不是TASK_RUNNING状态
-	 *
+	 *进程如果是被抢占，不应该由schedule过程移除运行队列：
+	 原因是进程从TASK_RUNNING变成其他状态，是一个过程，
+	 在这个过程中可能发生抢占。试想如下场景：一个进程刚把自己设置成TASK_INTERRUPTIBLE，
+	 它就被抢占了。因为这时候它还没来得及调用schedule（）主动交出CPU控制权，
+	 仍然在CPU上执行，这就是非TASK_RUNNING状态的进程也会被抢占的场景。
+	 对于这种场景，抢占流程不应擅自将其从运行队列中移除，因为它的切换过程并未完成。
 	 */
 	if (!preempt && prev->state) {
 		/* 当前进程不为TASK_RUNNING状态并且不是通过内核态抢占进入调度 */
@@ -3255,6 +3266,7 @@ static void __sched notrace __schedule(bool preempt)
 			/* 有信号需要处理，置为TASK_RUNNING */
 			prev->state = TASK_RUNNING;
 		} else {
+		 /*先前的进程不再处于可执行状态，需要将其从运行队列中移除出去*/
 		 /* 没有信号挂起需要处理，会将此进程移除运行队列 */
 		/* 如果代码执行到此，说明当前进程要么准备退出，要么是处于即将睡眠状态 */
 			deactivate_task(rq, prev, DEQUEUE_SLEEP);

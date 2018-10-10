@@ -1584,6 +1584,10 @@ struct task_struct {
 		VTIME_SYS,
 	} vtime_snap_whence;
 #endif
+	/*
+	nivcsw:强制切换的次数(number of INVOLUNTARY context switch counts word)
+	nvcsw: 自愿切换的次数(number of VOLUNTARY context switch counts word)
+	*/
 	unsigned long nvcsw, nivcsw; /* context switch counts */
 	u64 start_time;		/* monotonic time in nsec */
 	u64 real_start_time;	/* boot based time in nsec */

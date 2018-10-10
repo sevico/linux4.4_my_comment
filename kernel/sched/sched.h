@@ -264,8 +264,10 @@ struct task_group {
 	/* 实时进程调度器的进程组变量，同 CFS */
 
 	struct sched_rt_entity **rt_se;
-	struct rt_rq **rt_rq;
+	//实时进程调度队列
 
+	struct rt_rq **rt_rq;
+	//实时进程占用CPU时间的带宽（或者说比例）
 	struct rt_bandwidth rt_bandwidth;
 #endif
 
@@ -492,17 +494,21 @@ struct rt_rq {
 	struct plist_head pushable_tasks;
 #endif /* CONFIG_SMP */
 	int rt_queued;
+	//当前队列的实时调度是否受限
 
 	int rt_throttled;
+	//当前队列的累计运行时间
 	u64 rt_time;
+	//当前队列的最大运行时间
 	u64 rt_runtime;
 	/* Nests inside the rq lock: */
 	raw_spinlock_t rt_runtime_lock;
 
 #ifdef CONFIG_RT_GROUP_SCHED
 	unsigned long rt_nr_boosted;
-
+	//当前实时调度队列归属调度队列
 	struct rq *rq;
+	//当前实时调度队列归属的调度单元
 	struct task_group *tg;
 #endif
 };

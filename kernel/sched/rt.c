@@ -889,12 +889,12 @@ static int sched_rt_runtime_exceeded(struct rt_rq *rt_rq)
 
 	if (runtime >= sched_rt_period(rt_rq))
 		return 0;
-
+	//向其他CPU借用时间
 	balance_runtime(rt_rq);
 	runtime = sched_rt_runtime(rt_rq);
 	if (runtime == RUNTIME_INF)
 		return 0;
-
+//当运行累计时间超过最大运行时间的时候，rt_throttled则被设置为1
 	if (rt_rq->rt_time > runtime) {
 		struct rt_bandwidth *rt_b = sched_rt_bandwidth(rt_rq);
 
@@ -2226,12 +2226,13 @@ static void task_tick_rt(struct rq *rq, struct task_struct *p, int queued)
 	 * RR tasks need a special form of timeslice management.
 	 * FIFO tasks have no timeslices.
 	 */
+	 /*FIFO类型没有时间片的概念，不会因为执行时间足够长而被抢占*/
 	if (p->policy != SCHED_RR)
 		return;
-
+	/*如果时间片还没到，就直接返回*/
 	if (--p->rt.time_slice)
 		return;
-
+	/*时间片已经耗尽，先将进程的时间片重新初始化为默认时间片*/
 	p->rt.time_slice = sched_rr_timeslice;
 
 	/*

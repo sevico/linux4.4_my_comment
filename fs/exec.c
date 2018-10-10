@@ -1482,6 +1482,7 @@ int search_binary_handler(struct linux_binprm *bprm)
 		}
 	}
 	read_unlock(&binfmt_lock);
+	/*若没找到，则尝试加载动态模块，再次遍历*/
 
 	if (need_retry) {
 		if (printable(bprm->buf[0]) && printable(bprm->buf[1]) &&
@@ -1507,7 +1508,7 @@ static int exec_binprm(struct linux_binprm *bprm)
 	rcu_read_lock();
 	old_vpid = task_pid_nr_ns(current, task_active_pid_ns(current->parent));
 	rcu_read_unlock();
-
+	/*核心部分，遍历formats链表，尝试每个load_binary函数*/
 	ret = search_binary_handler(bprm);
 	if (ret >= 0) {
 		audit_bprm(bprm);
@@ -1567,12 +1568,12 @@ static int do_execveat_common(int fd, struct filename *filename,
 
 	check_unsafe_exec(bprm);
 	current->in_execve = 1;
-
+	/*读取可执行文件*/
 	file = do_open_execat(fd, filename, flags);
 	retval = PTR_ERR(file);
 	if (IS_ERR(file))
 		goto out_unmark;
-
+	/*选择负载最小的CPU来执行新程序*/
 	sched_exec();
 
 	bprm->file = file;
@@ -1610,11 +1611,14 @@ static int do_execveat_common(int fd, struct filename *filename,
 	bprm->envc = count(envp, MAX_ARG_STRINGS);
 	if ((retval = bprm->envc) < 0)
 		goto out;
-
+	/*填充linux_binprm数据结构*/
+	/*在prepare_binprm函数中读取可执行文件的头128个字节，
+	存放在linux_binprm结构体的buf[BINPRM_BUF_SIZE]中。
+	*/
 	retval = prepare_binprm(bprm);
 	if (retval < 0)
 		goto out;
-
+	/*接下来的3个copy用来拷贝文件名、命令行参数和环境变量*/
 	retval = copy_strings_kernel(1, &bprm->filename, bprm);
 	if (retval < 0)
 		goto out;

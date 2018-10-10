@@ -1665,8 +1665,10 @@ bool do_notify_parent(struct task_struct *tsk, int sig)
 		if (psig->action[SIGCHLD-1].sa.sa_handler == SIG_IGN)
 			sig = 0;
 	}
+	/*子进程向父进程发送信号*/
 	if (valid_signal(sig) && sig)
 		__group_send_sig_info(sig, &info, tsk->parent);
+	/* 子进程尝试唤醒父进程，如果父进程正在等待其终止 */
 	__wake_up_parent(tsk, tsk->parent);
 	spin_unlock_irqrestore(&psig->siglock, flags);
 
@@ -2229,6 +2231,8 @@ relock:
 
 		if (ka->sa.sa_handler == SIG_IGN) /* Do nothing.  */
 			continue;
+		//同时满足 信号处理函数不是默认值 信号处理函数的标志位中，SA_ONESHOT标志置位
+		//则恢复成默认值SA_ONESHOT
 		if (ka->sa.sa_handler != SIG_DFL) {
 			/* Run the handler.  */
 			ksig->ka = *ka;
@@ -2348,6 +2352,7 @@ static void signal_delivered(struct ksignal *ksig, int stepping)
 	clear_restore_sigmask();
 
 	sigorsets(&blocked, &current->blocked, &ksig->ka.sa.sa_mask);
+	//如果信号没有设置SA_NODEFER标志位，正在处理的信号就必须在信号处理程序执行期间被阻塞
 	if (!(ksig->ka.sa.sa_flags & SA_NODEFER))
 		sigaddset(&blocked, ksig->sig);
 	set_current_blocked(&blocked);
