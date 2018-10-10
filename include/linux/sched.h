@@ -662,6 +662,7 @@ struct signal_struct {
 	struct task_struct	*curr_target;
 
 	/* shared signal handling: */
+	//发送给进程的未决信号
 	struct sigpending	shared_pending;
 
 	/* thread group exit support */
@@ -1638,7 +1639,7 @@ struct task_struct {
 
 	sigset_t blocked, real_blocked;
 	sigset_t saved_sigmask;	/* restored if set_restore_sigmask() was used */
-	/* 私有挂起信号队列 */
+	/* 私有挂起信号队列          发送给线程的未决信号*/
 	struct sigpending pending;
 
 	unsigned long sas_ss_sp;

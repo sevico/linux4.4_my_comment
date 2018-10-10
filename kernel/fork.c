@@ -1151,7 +1151,7 @@ static int copy_io(unsigned long clone_flags, struct task_struct *tsk)
 static int copy_sighand(unsigned long clone_flags, struct task_struct *tsk)
 {
 	struct sighand_struct *sig;
-
+	//如果发现是线程，则直接将引用计数++，无须分配sighand_struct结构
 	if (clone_flags & CLONE_SIGHAND) {
 		atomic_inc(&current->sighand->count);
 		return 0;

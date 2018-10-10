@@ -373,7 +373,7 @@ __sigqueue_alloc(int sig, struct task_struct *t, gfp_t flags, int override_rlimi
 	user = get_uid(__task_cred(t)->user);
 	atomic_inc(&user->sigpending);
 	rcu_read_unlock();
-
+	//实时信号也不能被无限制地挂起。该限制属于资源限制的范畴
 	if (override_rlimit ||
 	    atomic_read(&user->sigpending) <=
 			task_rlimit(t, RLIMIT_SIGPENDING)) {
@@ -866,13 +866,13 @@ static bool prepare_signal(int sig, struct task_struct *p, bool force)
  */
 static inline int wants_signal(int sig, struct task_struct *p)
 {
-	if (sigismember(&p->blocked, sig))
+	if (sigismember(&p->blocked, sig)) /*位于阻塞信号集，不方便*/
 		return 0;
-	if (p->flags & PF_EXITING)
+	if (p->flags & PF_EXITING) /*正在退出，不方便*/
 		return 0;
-	if (sig == SIGKILL)
+	if (sig == SIGKILL) /*SIGKILL信号，必须处理*/
 		return 1;
-	if (task_is_stopped_or_traced(p))
+	if (task_is_stopped_or_traced(p)) /*被调试或被暂停，不方便*/
 		return 0;
 	return task_curr(p) || !signal_pending(p);
 }
@@ -993,7 +993,7 @@ static int __send_signal(int sig, struct siginfo *info, struct task_struct *t,
 	if (!prepare_signal(sig, t,
 			from_ancestor_ns || (info == SEND_SIG_FORCED)))
 		goto ret;
-
+	//判断进入线程私有队列还是进程共享队列
 	pending = group ? &t->signal->shared_pending : &t->pending;
 	/*
 	 * Short-circuit ignored signals and support queuing
@@ -1077,6 +1077,7 @@ static int __send_signal(int sig, struct siginfo *info, struct task_struct *t,
 out_set:
 	signalfd_notify(t, sig);
 	sigaddset(&pending->signal, sig);
+	//寻找合适的线程来处理该信号
 	complete_signal(sig, t, group);
 ret:
 	trace_signal_generate(sig, info, t, group, result);
@@ -2633,11 +2634,14 @@ static int do_sigpending(void *set, unsigned long sigsetsize)
 		return -EINVAL;
 
 	spin_lock_irq(&current->sighand->siglock);
+	//进程共享的挂起信号和线程私有的挂起信号取并集
 	sigorsets(set, &current->pending.signal,
 		  &current->signal->shared_pending.signal);
 	spin_unlock_irq(&current->sighand->siglock);
 
 	/* Outside the lock because only this thread touches it.  */
+	//对集合1和线程的阻塞信号集取交集，以获得最终的结果
+	//sigprocmask函数会影响到sigpendig函数的输出结果
 	sigandsets(set, &current->blocked, set);
 	return 0;
 }
