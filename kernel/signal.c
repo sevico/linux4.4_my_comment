@@ -184,8 +184,11 @@ int next_signal(struct sigpending *pending, sigset_t *mask)
 	 */
 	x = *s &~ *m;
 	if (x) {
+		/*优先选择同步信号，所谓同步信号集合就是
+		SIGSEGV、SIGBUS等六种信号*/
 		if (x & SYNCHRONOUS_MASK)
 			x &= SYNCHRONOUS_MASK;
+		//小信号值优先递送的算法
 		sig = ffz(~x) + 1;
 		return sig;
 	}
@@ -573,6 +576,7 @@ int dequeue_signal(struct task_struct *tsk, sigset_t *mask, siginfo_t *info)
 	/* We only dequeue private signals from ourselves, we don't let
 	 * signalfd steal them
 	 */
+	 /*线程私有的挂起信号队列优先*/
 	signr = __dequeue_signal(&tsk->pending, mask, info, &resched_timer);
 	if (!signr) {
 		signr = __dequeue_signal(&tsk->signal->shared_pending,
