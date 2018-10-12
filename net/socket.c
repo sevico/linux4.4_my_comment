@@ -371,6 +371,8 @@ struct file *sock_alloc_file(struct socket *sock, int flags, const char *dname)
 	path.mnt = mntget(sock_mnt);
 
 	d_instantiate(path.dentry, SOCK_INODE(sock));
+	/*申请一个struct file，并将socket_file_ops作为参数来传递。
+	在alloc_file中，会将socket_file_ops赋给file->f_op。*/
 
 	file = alloc_file(&path, FMODE_READ | FMODE_WRITE,
 		  &socket_file_ops);
@@ -380,7 +382,7 @@ struct file *sock_alloc_file(struct socket *sock, int flags, const char *dname)
 		path_put(&path);
 		return file;
 	}
-
+	/* 让sock->file指向file，完成sock和file的关联 */
 	sock->file = file;
 	file->f_flags = O_RDWR | (flags & O_NONBLOCK);
 	file->private_data = sock;
@@ -452,6 +454,8 @@ static struct socket *sockfd_lookup_light(int fd, int *err, int *fput_needed)
 	struct socket *sock;
 
 	*err = -EBADF;
+	/*由文件描述符得到套接字在内核中对应的结构struct socket.
+	前文已经介绍了fd与struct socket的关联关系。*/
 	if (f.file) {
 		sock = sock_from_file(f.file, err);
 		if (likely(sock)) {
@@ -1365,9 +1369,10 @@ SYSCALL_DEFINE3(bind, int, fd, struct sockaddr __user *, umyaddr, int, addrlen)
 	struct socket *sock;
 	struct sockaddr_storage address;
 	int err, fput_needed;
-
+	/* umyaddr是用户空间地址，这里将其复制到内核空间address变量中 */
 	sock = sockfd_lookup_light(fd, &err, &fput_needed);
 	if (sock) {
+		 /* umyaddr是用户空间地址，这里将其复制到内核空间address变量中 */
 		err = move_addr_to_kernel(umyaddr, addrlen, &address);
 		if (err >= 0) {
 			err = security_socket_bind(sock,
@@ -1376,7 +1381,7 @@ SYSCALL_DEFINE3(bind, int, fd, struct sockaddr __user *, umyaddr, int, addrlen)
 			if (!err)
 				err = sock->ops->bind(sock,
 						      (struct sockaddr *)
-						      &address, addrlen); //待跟踪
+						      &address, addrlen); //待跟踪 AF_INET -> inet_bind
 		}
 		fput_light(sock->file, fput_needed);
 	}
