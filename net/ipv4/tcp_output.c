@@ -3257,6 +3257,7 @@ int tcp_connect(struct sock *sk)
 
 	if (inet_csk(sk)->icsk_af_ops->rebuild_header(sk))
 		return -EHOSTUNREACH; /* Routing failure or similar. */
+	/* 初始化TCP连接控制块 */
 
 	tcp_connect_init(sk);
 
@@ -3264,12 +3265,15 @@ int tcp_connect(struct sock *sk)
 		tcp_finish_connect(sk, NULL);
 		return 0;
 	}
+	/* 申请报文内存 */
 
 	buff = sk_stream_alloc_skb(sk, 0, sk->sk_allocation, true);
 	if (unlikely(!buff))
 		return -ENOBUFS;
+	/* 初始化报文 */
 
 	tcp_init_nondata_skb(buff, tp->write_seq++, TCPHDR_SYN);
+	 /* 设置TCP控制块相关的发送变量，并发送该SYN报文 */
 	tp->retrans_stamp = tcp_time_stamp;
 	tcp_connect_queue_skb(sk, buff);
 	tcp_ecn_send_syn(sk, buff);
@@ -3286,6 +3290,7 @@ int tcp_connect(struct sock *sk)
 	tp->snd_nxt = tp->write_seq;
 	tp->pushed_seq = tp->write_seq;
 	TCP_INC_STATS(sock_net(sk), TCP_MIB_ACTIVEOPENS);
+	/* 重置与该TCP套接字对应的重传定时器 */
 
 	/* Timer for repeating the SYN until an answer. */
 	inet_csk_reset_xmit_timer(sk, ICSK_TIME_RETRANS,

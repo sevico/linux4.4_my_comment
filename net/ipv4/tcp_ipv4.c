@@ -149,48 +149,57 @@ int tcp_v4_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 	struct rtable *rt;
 	int err;
 	struct ip_options_rcu *inet_opt;
-
+		/* 地址长度检查 */
 	if (addr_len < sizeof(struct sockaddr_in))
 		return -EINVAL;
-
+	/* 协议族类型检查 */
 	if (usin->sin_family != AF_INET)
 		return -EAFNOSUPPORT;
-
+	/* 设置下一跳和目的地址 */
 	nexthop = daddr = usin->sin_addr.s_addr;
+	/* 获得IP选项 */
 	inet_opt = rcu_dereference_protected(inet->inet_opt,
 					     sock_owned_by_user(sk));
+	/* 如果有严格源路由的IP选项 */
 	if (inet_opt && inet_opt->opt.srr) {
+		/* 若地址为0，则返回错误 */
 		if (!daddr)
 			return -EINVAL;
+		/*因为严格源路由的IP选项，所以下一跳要设置为选项中的第一跳地址*/
 		nexthop = inet_opt->opt.faddr;
 	}
-
+	/* 设置源端口和目的端口 */
 	orig_sport = inet->inet_sport;
 	orig_dport = usin->sin_port;
 	fl4 = &inet->cork.fl.u.ip4;
+	/* 查找路由 */
 	rt = ip_route_connect(fl4, nexthop, inet->inet_saddr,
 			      RT_CONN_FLAGS(sk), sk->sk_bound_dev_if,
 			      IPPROTO_TCP,
 			      orig_sport, orig_dport, sk);
+	/* 如果查找路由失败，则返回错误 */
 	if (IS_ERR(rt)) {
 		err = PTR_ERR(rt);
 		if (err == -ENETUNREACH)
 			IP_INC_STATS(sock_net(sk), IPSTATS_MIB_OUTNOROUTES);
 		return err;
 	}
-
+	/* 如果路由是多播或广播路由，则返回错误 */
 	if (rt->rt_flags & (RTCF_MULTICAST | RTCF_BROADCAST)) {
 		ip_rt_put(rt);
 		return -ENETUNREACH;
 	}
-
+	/* 如果没有IP选项或没有设置严格路由，那么目的地址即为路由结果的目的地址 */
 	if (!inet_opt || !inet_opt->opt.srr)
 		daddr = fl4->daddr;
-
+	/* 如果没有设置源地址，则使用路由结果的源地址 */
 	if (!inet->inet_saddr)
 		inet->inet_saddr = fl4->saddr;
+	 /* 套接字的接收地址即为源地址 */
 	sk_rcv_saddr_set(sk, inet->inet_saddr);
-
+	/*若保存的TCP选项有时间戳，并且目的地址与要连接的地址不同，
+	则需要重置时间戳及相关变量
+	*/
 	if (tp->rx_opt.ts_recent_stamp && inet->inet_daddr != daddr) {
 		/* Reset inherited state */
 		tp->rx_opt.ts_recent	   = 0;
@@ -198,18 +207,18 @@ int tcp_v4_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 		if (likely(!tp->repair))
 			tp->write_seq	   = 0;
 	}
-
+	/* 允许快速重用套接字，并且如果上次连接的目的地址与这次相同，但没有时间戳信息，则尝试从对端peer中获得时间戳信息 */
 	if (tcp_death_row.sysctl_tw_recycle &&
 	    !tp->rx_opt.ts_recent_stamp && fl4->daddr == daddr)
 		tcp_fetch_timewait_stamp(sk, &rt->dst);
-
+	/* 设置目的端口和地址 */
 	inet->inet_dport = usin->sin_port;
 	sk_daddr_set(sk, daddr);
-
+	/* 设置IP头的选项长度 */
 	inet_csk(sk)->icsk_ext_hdr_len = 0;
 	if (inet_opt)
 		inet_csk(sk)->icsk_ext_hdr_len = inet_opt->opt.optlen;
-
+	/* 初始化MSS */
 	tp->rx_opt.mss_clamp = TCP_MSS_DEFAULT;
 
 	/* Socket identity is still unknown (sport may be zero).
@@ -217,13 +226,15 @@ int tcp_v4_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 	 * lock select source port, enter ourselves into the hash tables and
 	 * complete initialization after this.
 	 */
+	 /* 设置TCP的状态为SYN_SENT，即发送了syn包 */
 	tcp_set_state(sk, TCP_SYN_SENT);
+	 /* 将套接字加入到hash表中，并分配源端口 */
 	err = inet_hash_connect(&tcp_death_row, sk);
 	if (err)
 		goto failure;
 
 	sk_set_txhash(sk);
-
+	/* 检查源端口或目的端口是否发生了变化，如果发生了变化则重新查找路由 */
 	rt = ip_route_newports(fl4, rt, orig_sport, orig_dport,
 			       inet->inet_sport, inet->inet_dport, sk);
 	if (IS_ERR(rt)) {
@@ -232,16 +243,19 @@ int tcp_v4_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 		goto failure;
 	}
 	/* OK, now commit destination to socket.  */
+	/* 现在确定了路由，可以查看路由的网卡功能，来设置GSO功能了 */
 	sk->sk_gso_type = SKB_GSO_TCPV4;
 	sk_setup_caps(sk, &rt->dst);
-
+	/* 如果没有设置初始的序列号，则根据双方地址，随机生成端口 */
 	if (!tp->write_seq && likely(!tp->repair))
 		tp->write_seq = secure_tcp_sequence_number(inet->inet_saddr,
 							   inet->inet_daddr,
 							   inet->inet_sport,
 							   usin->sin_port);
+	/*　利用初始序列号和当前时间，生成inet_id，该ID用于生成IP报文的ID值*/
 
 	inet->inet_id = tp->write_seq ^ jiffies;
+	/* 一切准备工作完毕，tcp_connect生成SYN报文并发送 */
 
 	err = tcp_connect(sk);
 

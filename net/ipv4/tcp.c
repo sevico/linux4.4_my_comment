@@ -841,6 +841,8 @@ struct sk_buff *sk_stream_alloc_skb(struct sock *sk, int size, gfp_t gfp,
 			mem_scheduled = sk_wmem_schedule(sk, skb->truesize);
 		}
 		if (likely(mem_scheduled)) {
+			 /* 目前我们不知道后面会填充哪些TCP选项，所以直接在skb的首部保
+			 留TCP协议的最大长度，从而保证了足够的空间，避免重新分配内存。 */
 			skb_reserve(skb, sk->sk_prot->max_header);
 			/*
 			 * Make sure that we have exactly size bytes

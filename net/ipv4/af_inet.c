@@ -538,14 +538,17 @@ int inet_dgram_connect(struct socket *sock, struct sockaddr *uaddr,
 		       int addr_len, int flags)
 {
 	struct sock *sk = sock->sk;
-
+	/* 长度合法性检查 */
 	if (addr_len < sizeof(uaddr->sa_family))
 		return -EINVAL;
+	 /* 如果协议族为AF_UNSPEC，则先执行disconnect */
 	if (uaddr->sa_family == AF_UNSPEC)
 		return sk->sk_prot->disconnect(sk, flags);
-
+	/* 如果该套接字没有指定源端口，并且系统自动绑定端口失败，则返回错误 */
 	if (!inet_sk(sk)->inet_num && inet_autobind(sk))
 		return -EAGAIN;
+	/* 调用具体协议的connect实现函数 */
+	//ip4_datagram_connect
 	return sk->sk_prot->connect(sk, uaddr, addr_len);
 }
 EXPORT_SYMBOL(inet_dgram_connect);
@@ -582,50 +585,66 @@ static long inet_wait_for_connect(struct sock *sk, long timeo, int writebias)
 int __inet_stream_connect(struct socket *sock, struct sockaddr *uaddr,
 			  int addr_len, int flags)
 {
+	/*
+	从socket结构获得sock结构，后者是内核真正用于管理网络层的套接字结构
+	*/
+
 	struct sock *sk = sock->sk;
 	int err;
 	long timeo;
-
+	/* 地址长度检查 */
 	if (addr_len < sizeof(uaddr->sa_family))
 		return -EINVAL;
-
+	/* 对AF_UNSPEC兼容性处理 */
 	if (uaddr->sa_family == AF_UNSPEC) {
 		err = sk->sk_prot->disconnect(sk, flags);
 		sock->state = err ? SS_DISCONNECTING : SS_UNCONNECTED;
 		goto out;
 	}
+	/* 因为STREAM协议是有连接状态的，所以需要对套接字进行状态检查 */
 
 	switch (sock->state) {
 	default:
 		err = -EINVAL;
 		goto out;
+	/* 若连接已经建立，则返回错误  */
 	case SS_CONNECTED:
 		err = -EISCONN;
 		goto out;
+	 /* 若连接正在进行中，则返回错误*/
 	case SS_CONNECTING:
 		err = -EALREADY;
 		/* Fall out of switch with err, set for this state */
 		break;
+	 /* 当前为未连接状态 */
 	case SS_UNCONNECTED:
+		/* sock的状态是未连接，但是套接字的sk_state却不是关闭状态，此时无法进行连接 */
 		err = -EISCONN;
 		if (sk->sk_state != TCP_CLOSE)
 			goto out;
-
+		/*既然需要产生连接，那么每种具体的协议肯定都有自己的实现。所以这会调用具体协议的实现函数。
+		*/
+		//tcp_v4_connect
 		err = sk->sk_prot->connect(sk, uaddr, addr_len);
 		if (err < 0)
 			goto out;
-
+		/* 将sock状态更改为正在连接中 */
 		sock->state = SS_CONNECTING;
 
 		/* Just entered SS_CONNECTING state; the only
 		 * difference is that return value in non-blocking
 		 * case is EINPROGRESS, rather than EALREADY.
 		 */
+		 /* 将错误码设置为EINPROGRESS，表示正在连接中。
+		 当connect为非阻塞时，就会返回这个错误 */
 		err = -EINPROGRESS;
 		break;
 	}
+	/*检查是否需要连接超时。若设置了非阻塞标志，则timeo为假。
+	若设置了阻塞标志，则timeo为真。*/
 
 	timeo = sock_sndtimeo(sk, flags & O_NONBLOCK);
+	/* 当前连接状态为正在连接的状态（即刚发送了syn或收到syn） */
 
 	if ((1 << sk->sk_state) & (TCPF_SYN_SENT | TCPF_SYN_RECV)) {
 		int writebias = (sk->sk_protocol == IPPROTO_TCP) &&
@@ -633,10 +652,12 @@ int __inet_stream_connect(struct socket *sock, struct sockaddr *uaddr,
 				tcp_sk(sk)->fastopen_req->data ? 1 : 0;
 
 		/* Error code is set above */
+		/* 如果没有超时标志或连接超时或失败，则返回 */
 		if (!timeo || !inet_wait_for_connect(sk, timeo, writebias))
 			goto out;
-
+		/* 判断是否由于信号导致等待连接退出 */
 		err = sock_intr_errno(timeo);
+		 /* 如果有未处理的信号，则返回失败，表示信号中断了连接 */
 		if (signal_pending(current))
 			goto out;
 	}
@@ -644,6 +665,7 @@ int __inet_stream_connect(struct socket *sock, struct sockaddr *uaddr,
 	/* Connection was closed by RST, timeout, ICMP error
 	 * or another process disconnected us.
 	 */
+	  /* 连接被关闭了。原因可能是对端RST，超时等 */
 	if (sk->sk_state == TCP_CLOSE)
 		goto sock_error;
 
@@ -651,6 +673,7 @@ int __inet_stream_connect(struct socket *sock, struct sockaddr *uaddr,
 	 * and error was received after socket entered established state.
 	 * Hence, it is handled normally after connect() return successfully.
 	 */
+	/* 至此，连接成功*/
 
 	sock->state = SS_CONNECTED;
 	err = 0;

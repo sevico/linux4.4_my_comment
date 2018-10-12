@@ -1532,19 +1532,22 @@ SYSCALL_DEFINE3(connect, int, fd, struct sockaddr __user *, uservaddr,
 	struct socket *sock;
 	struct sockaddr_storage address;
 	int err, fput_needed;
-
+	/* 通过套接字文件描述符获得对应的struct socket */
 	sock = sockfd_lookup_light(fd, &err, &fput_needed);
 	if (!sock)
 		goto out;
+	/* 将用户空间地址复制到内核空间变量address中 */
 	err = move_addr_to_kernel(uservaddr, addrlen, &address);
 	if (err < 0)
 		goto out_put;
-
+	/* 安全性检查 */
 	err =
 	    security_socket_connect(sock, (struct sockaddr *)&address, addrlen);
 	if (err)
 		goto out_put;
-
+	/* 与bind类似，调用与协议族对应的connect操作函数 */
+	//SOCK_STREAM -> inet_stream_connect
+	//SOCK_DGRAM -> inet_dgram_connect
 	err = sock->ops->connect(sock, (struct sockaddr *)&address, addrlen,
 				 sock->file->f_flags);
 out_put:
