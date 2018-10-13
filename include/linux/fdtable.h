@@ -48,20 +48,35 @@ struct files_struct {
   /*
    * read mostly part
    */
+    /* count为文件表files_struct的引用计数 */
 	atomic_t count;
 	bool resize_in_progress;
 	wait_queue_head_t resize_wait;
+	/* 文件描述符表 */
+	/* 为什么有两个fdtable呢？这是内核的一种优化策略。fdt为指针，而fdtab为普通变量。一般情况下，
+	 fdt是指向fdtab的，当需要它的时候，才会真正动态申请内存。因为默认大小的文件表足以应付大多数
+	 情况，因此这样就可以避免频繁的内存申请。
+	 这也是内核的常用技巧之一。在创建时，使用普通的变量或者数组，
+	 然后让指针指向它，作为默认情况使
+	 用。只有当进程使用量超过默认值时，才会动态申请内存。*/
 
 	struct fdtable __rcu *fdt;
 	struct fdtable fdtab;
   /*
    * written part on a separate cache line in SMP
    */
+    /* 使用____cacheline_aligned_in_smp可以保证file_lock是以cache     line对齐的，避免了false sharing */
 	spinlock_t file_lock ____cacheline_aligned_in_smp;
+   /* 用于查找下一个空闲的fd */
 	int next_fd;
+    /* 保存执行exec需要关闭的文件描述符的位图 */
 	unsigned long close_on_exec_init[1];
+	/* 保存打开的文件描述符的位图 */
 	unsigned long open_fds_init[1];
 	unsigned long full_fds_bits_init[1];
+	/* fd_array为一个固定大小的file结构数组。struct file是内核用于文
+	件管理的结构。这里使用默认大小的数组，就是为了可以涵盖大多数情况，
+	避免动态分配*/
 	struct file __rcu * fd_array[NR_OPEN_DEFAULT];
 };
 
