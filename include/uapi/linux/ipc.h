@@ -8,9 +8,12 @@
 /* Obsolete, used only for backwards compatibility and libc5 compiles */
 struct ipc_perm
 {
+	//就是调用get函数创建IPC对象时传递进去的key值
 	__kernel_key_t	key;
+	//uid和gid字段用于指定IPC对象的所有权
 	__kernel_uid_t	uid;
 	__kernel_gid_t	gid;
+	//。cuid和cgid字段保存着创建该IPC对象的进程的有效用户ID和有效组ID
 	__kernel_uid_t	cuid;
 	__kernel_gid_t	cgid;
 	__kernel_mode_t	mode; 

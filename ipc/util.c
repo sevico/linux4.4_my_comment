@@ -223,10 +223,10 @@ int ipc_addid(struct ipc_ids *ids, struct kern_ipc_perm *new, int size)
 	kgid_t egid;
 	int id;
 	int next_id = ids->next_id;
-
+	/*用户设置的IPC对象的上限，不能超过系统硬上限IPCMNI，即32768*/
 	if (size > IPCMNI)
 		size = IPCMNI;
-
+	/*如果系统中已经存在的IPC对象超过了个数上限，则返回失败*/
 	if (ids->in_use >= size)
 		return -ENOSPC;
 
@@ -236,11 +236,11 @@ int ipc_addid(struct ipc_ids *ids, struct kern_ipc_perm *new, int size)
 	new->deleted = false;
 	rcu_read_lock();
 	spin_lock(&new->lock);
-
+	/*设置创建者ID和owner ID*/
 	current_euid_egid(&euid, &egid);
 	new->cuid = new->uid = euid;
 	new->gid = new->cgid = egid;
-
+	 /*通过idr管理，调用idr_get_new获得一个空闲的槽位*/
 	id = idr_alloc(&ids->ipcs_idr, new,
 		       (next_id < 0) ? 0 : ipcid_to_idx(next_id), 0,
 		       GFP_NOWAIT);
@@ -250,10 +250,11 @@ int ipc_addid(struct ipc_ids *ids, struct kern_ipc_perm *new, int size)
 		rcu_read_unlock();
 		return id;
 	}
-
+	/*系统当前在用的IPC对象加1*/
 	ids->in_use++;
 
 	if (next_id < 0) {
+		/*seq的值自加，如果大于seq_max,则溢出回绕至0*/
 		new->seq = ids->seq++;
 		if (ids->seq > IPCID_SEQ_MAX)
 			ids->seq = 0;

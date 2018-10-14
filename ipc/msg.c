@@ -653,7 +653,7 @@ long do_msgsnd(int msqid, long mtype, void __user *mtext,
 		err = security_msg_queue_msgsnd(msq, msg, msgflg);
 		if (err)
 			goto out_unlock0;
-
+        //第二个条件看起来很奇怪的，其实这个条件是用来防范空消息的：发送的消息只有mtype字段，消息体正文mtext都是空
 		if (msgsz + msq->q_cbytes <= msq->q_qbytes &&
 				1 + msq->q_qnum <= msq->q_qbytes) {
 			break;
@@ -695,14 +695,20 @@ long do_msgsnd(int msqid, long mtype, void __user *mtext,
 		}
 
 	}
+	/*将最后调用msgsnd的进程ID更新到消息队列的q_lspid成员变量中*/
 	msq->q_lspid = task_tgid_vnr(current);
+	/*将最后调用msgsnd的时间更新到消息队列的q_stime成员变量中*/
 	msq->q_stime = get_seconds();
-
+	/*如果有进程正在等待该消息，则就地消化，无须进入消息队列*/
 	if (!pipelined_send(msq, msg)) {
 		/* no one is waiting for this message, enqueue it */
+		/*将消息链入消息队列的链表中*/
 		list_add_tail(&msg->m_list, &msq->q_messages);
+		 /*更新消息队列当前消息的字节数*/
 		msq->q_cbytes += msgsz;
+		/*更新消息队列当前消息的总数*/
 		msq->q_qnum++;
+		 /*更新命名空间内，所有消息队列的总字节数和消息总个数*/
 		atomic_add(msgsz, &ns->msg_bytes);
 		atomic_inc(&ns->msg_hdrs);
 	}

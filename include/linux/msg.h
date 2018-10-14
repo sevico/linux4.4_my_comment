@@ -17,13 +17,21 @@ struct msg_msg {
 /* one msq_queue structure for each present queue on the system */
 struct msg_queue {
 	struct kern_ipc_perm q_perm;
+	/* 上一次 msgsnd的时间*/
 	time_t q_stime;			/* last msgsnd time */
+	/* 上一次 msgrcv的时间 */
 	time_t q_rtime;			/* last msgrcv time */
+	 /* 属性变化时间 */
 	time_t q_ctime;			/* last change time */
+	 /* 队列当前字节总数*/
 	unsigned long q_cbytes;		/* current number of bytes on queue */
+	 /*队列当前消息总数*/
 	unsigned long q_qnum;		/* number of messages in queue */
+	  /*一个消息队列允许的最大字节数*/
 	unsigned long q_qbytes;		/* max number of bytes on queue */
+	   /*上一个调用msgsnd的进程ID*/
 	pid_t q_lspid;			/* pid of last msgsnd */
+	   /*上一个调用msgrcv的进程ID*/
 	pid_t q_lrpid;			/* last receive pid */
 
 	struct list_head q_messages;

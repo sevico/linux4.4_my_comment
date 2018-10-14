@@ -157,6 +157,8 @@ extern void recompute_msgmni(struct ipc_namespace *);
 
 static inline int ipc_buildid(int id, int seq)
 {
+	//id就是最小可用的槽位
+	//seq是开机以来内核创建IPC对象的流水号
 	return SEQ_MULTIPLIER * seq + id;
 }
 
