@@ -36,6 +36,7 @@ struct semid_ds {
 
 /* semop system calls takes an array of these. */
 struct sembuf {
+	//操作哪个信号量
 	unsigned short  sem_num;	/* semaphore index in array */
 	short		sem_op;		/* semaphore operation */
 	short		sem_flg;	/* operation flags */

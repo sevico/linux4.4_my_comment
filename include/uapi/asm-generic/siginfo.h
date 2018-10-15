@@ -6,7 +6,7 @@
 
 typedef union sigval {
 	int sival_int;
-	void __user *sival_ptr;
+	void __user *sival_ptr; //线程函数入参
 } sigval_t;
 
 /*
@@ -283,8 +283,15 @@ typedef struct siginfo {
 		/ sizeof(int))
 
 typedef struct sigevent {
+	/*信号方式和线程方式都有其独特含义*/
 	sigval_t sigev_value;
+	 /*用于信号方式，决定发送哪个信号*/
 	int sigev_signo;
+	/*决定采用哪种通知方法，信号还是线程
+		SIGEV_NONE:当消息到达空的消息队列时，不采取任何通知行动。
+		SIGEV_SIGNAL：采用发送信号的方式通知进程
+		SIGEV_THREAD：通过调用segev_notify_function中指定的函数来通知进程，就如同在一个新的线程中启动该函数一样。
+	*/
 	int sigev_notify;
 	union {
 		int _pad[SIGEV_PAD_SIZE];

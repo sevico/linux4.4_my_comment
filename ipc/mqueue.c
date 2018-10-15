@@ -267,10 +267,11 @@ static struct inode *mqueue_get_inode(struct super_block *sb,
 		 * that means the min(mq_maxmsg, max_priorities) * struct
 		 * posix_msg_tree_node.
 		 */
+		  /*mq_treesize是额外的开销*/
 		mq_treesize = info->attr.mq_maxmsg * sizeof(struct msg_msg) +
 			min_t(unsigned int, info->attr.mq_maxmsg, MQ_PRIO_MAX) *
 			sizeof(struct posix_msg_tree_node);
-
+		/*mq_bytes是消息队列真正消耗的空间*/
 		mq_bytes = mq_treesize + (info->attr.mq_maxmsg *
 					  info->attr.mq_msgsize);
 

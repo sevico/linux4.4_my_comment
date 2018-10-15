@@ -2161,6 +2161,7 @@ void exit_sem(struct task_struct *tsk)
 		for (i = 0; i < sma->sem_nsems; i++) {
 			struct sem *semaphore = &sma->sem_base[i];
 			if (un->semadj[i]) {
+				 /*信号量的值加上退出进程的对应的撤销值*/
 				semaphore->semval += un->semadj[i];
 				/*
 				 * Range checks of the new semaphore value,
@@ -2175,8 +2176,10 @@ void exit_sem(struct task_struct *tsk)
 				 *
 				 *	Manfred <manfred@colorfullife.com>
 				 */
+				 /*向下溢出，则置为0*/
 				if (semaphore->semval < 0)
 					semaphore->semval = 0;
+				/*向上溢出，则置为SEMVMX*/
 				if (semaphore->semval > SEMVMX)
 					semaphore->semval = SEMVMX;
 				semaphore->sempid = task_tgid_vnr(current);

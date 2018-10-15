@@ -25,12 +25,17 @@
 /* Obsolete, used only for backwards compatibility and libc5 compiles */
 struct shmid_ds {
 	struct ipc_perm		shm_perm;	/* operation perms */
+	//共享内存的字节数
 	int			shm_segsz;	/* size of segment (bytes) */
+	//创建共享内存时设置成0，当进程通过shmat函数attach共享内存时，将时间更新为当前时间。
 	__kernel_time_t		shm_atime;	/* last attach time */
+	//创建共享内存时设置成0，当进程调用shmdt分离共享内存时，将时间更新成当前时间。
 	__kernel_time_t		shm_dtime;	/* last detach time */
+	//当创建共享内存时，设置该值为当前时间；当调用IPC_SET操作时，更新该值为当前时间
 	__kernel_time_t		shm_ctime;	/* last change time */
 	__kernel_ipc_pid_t	shm_cpid;	/* pid of creator */
 	__kernel_ipc_pid_t	shm_lpid;	/* pid of last operator */
+	//attach该共享内存到其地址空间的进程的个数。
 	unsigned short		shm_nattch;	/* no. of current attaches */
 	unsigned short 		shm_unused;	/* compatibility */
 	void 			*shm_unused2;	/* ditto - used by DIPC */
