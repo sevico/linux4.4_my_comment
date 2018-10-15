@@ -48,13 +48,14 @@ struct net {
 	atomic_t		passive;	/* To decided when the network
 						 * namespace should be freed.
 						 */
+	/* 用于判断何时释放网络命名空间 */
 	atomic_t		count;		/* To decided when the network
 						 *  namespace should be shut down.
 						 */
 	spinlock_t		rules_mod_lock;
 
 	atomic64_t		cookie_gen;
-
+	/* 网络命名空间的链表 */
 	struct list_head	list;		/* list of network namespaces */
 	struct list_head	cleanup_list;	/* namespaces on death row */
 	struct list_head	exit_list;	/* Use only net_mutex */
@@ -64,8 +65,9 @@ struct net {
 	struct idr		netns_ids;
 
 	struct ns_common	ns;
-
+	///proc/net
 	struct proc_dir_entry 	*proc_net;
+	//而/proc/net/stats
 	struct proc_dir_entry 	*proc_net_stat;
 
 #ifdef CONFIG_SYSCTL
@@ -74,7 +76,7 @@ struct net {
 
 	struct sock 		*rtnl;			/* rtnetlink socket */
 	struct sock		*genl_sock;
-
+	//与特定命名空间关联的所有设备用该链表链接
 	struct list_head 	dev_base_head;
 	struct hlist_head 	*dev_name_head;
 	struct hlist_head	*dev_index_head;
@@ -85,7 +87,7 @@ struct net {
 	/* core fib_rules */
 	struct list_head	rules_ops;
 
-
+	/* 环回接口设备 */
 	struct net_device       *loopback_dev;          /* The loopback */
 	struct netns_core	core;
 	struct netns_mib	mib;
@@ -162,7 +164,7 @@ static inline struct net *copy_net_ns(unsigned long flags,
 }
 #endif /* CONFIG_NET_NS */
 
-
+//所有可用的网络命名空间
 extern struct list_head net_namespace_list;
 
 struct net *get_net_ns_by_pid(pid_t pid);
