@@ -96,11 +96,20 @@ typedef unsigned long sigset_t;
 /* Here we must cater to libcs that poke about in kernel headers.  */
 
 struct sigaction {
+/*
+This field specifies the type of action to be performed; its value can be a pointer
+to the signal handler, SIG_DFL (that is, the value 0) to specify that the default
+action is performed, or SIG_IGN (that is, the value 1) to specify that the signal is
+ignored.
+*/
 	union {
 	  __sighandler_t _sa_handler;
 	  void (*_sa_sigaction)(int, struct siginfo *, void *);
 	} _u;
+	//This sigset_t variable specifies the signals to be masked when running the signal
+	//handler.
 	sigset_t sa_mask;
+	//This set of flags specifies how the signal must be handled;
 	unsigned long sa_flags;
 	void (*sa_restorer)(void);
 };

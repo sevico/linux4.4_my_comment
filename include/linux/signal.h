@@ -14,9 +14,14 @@ extern int print_fatal_signals;
  */
 //信号发送信息
 struct sigqueue {
+//Links for the pending signal queue’s list
 	struct list_head list;
+//Flags of the sigqueue data structure
 	int flags;
+//Describes the event that raised the signal
 	siginfo_t info;
+//Pointer to the per-user data structure of the process’s owner
+//clone( ), fork( ), and vfork( ) System Calls
 	struct user_struct *user;
 };
 
