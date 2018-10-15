@@ -3349,14 +3349,18 @@ static int handle_pte_fault(struct mm_struct *mm,
 	entry = *pte;
 	barrier();
 	if (!pte_present(entry)) {
+		 /*pte_none表示没有对应页表项，内核需要从头开始加载该页*/
 		if (pte_none(entry)) {
+			 /*若是匿名映射，则按需分配*/
 			if (vma_is_anonymous(vma))
 				return do_anonymous_page(mm, vma, address,
 							 pte, pmd, flags);
 			else
+				/*若是基于文件的映射，则请求调页*/
 				return do_fault(mm, vma, address, pte, pmd,
 						flags, entry);
 		}
+		/*如果该页标记不存在，但是页表中保存了相关的信息，则表示该页已被换出*/
 		return do_swap_page(mm, vma, address,
 					pte, pmd, flags, entry);
 	}

@@ -1848,7 +1848,7 @@ static int page_cache_read(struct file *file, pgoff_t offset, gfp_t gfp_mask)
 
 		ret = add_to_page_cache_lru(page, mapping, offset, gfp_mask);
 		if (ret == 0)
-			ret = mapping->a_ops->readpage(file, page);
+			ret = mapping->a_ops->readpage(file, page);  //ext4_readpage
 		else if (ret == -EEXIST)
 			ret = 0; /* losing race to add is OK */
 
@@ -1969,6 +1969,8 @@ int filemap_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	/*
 	 * Do we have something in the page cache already?
 	 */
+	 //filemap_fault首先会调用file_get_page来检查请求页面是否已经在页缓存之中了
+	 //多个进程mmap同一文件的某个区域时
 	page = find_get_page(mapping, offset);
 	if (likely(page) && !(vmf->flags & FAULT_FLAG_TRIED)) {
 		/*
