@@ -511,8 +511,11 @@ static inline int get_dumpable(struct mm_struct *mm)
 #define MMF_INIT_MASK		(MMF_DUMPABLE_MASK | MMF_DUMP_FILTER_MASK)
 
 struct sighand_struct {
+//Usage counter of the signal handler descriptor
 	atomic_t		count;
+//Array of structures specifying the actions to be performed upon delivering the signals
 	struct k_sigaction	action[_NSIG];
+//Spin lock protecting both the signal descriptor and the signal handler descriptor
 	spinlock_t		siglock;
 	wait_queue_head_t	signalfd_wqh;
 };
@@ -651,14 +654,17 @@ struct autogroup;
  * the locking of signal_struct.
  */
 struct signal_struct {
+	//Usage counter of the signal descriptor
 	atomic_t		sigcnt;
+	//Number of live processes in the thread group
 	atomic_t		live;
 	int			nr_threads;
 	struct list_head	thread_head;
-
+	//Wait queue for the processes sleeping in a wait4() system call
 	wait_queue_head_t	wait_chldexit;	/* for wait4() */
 
 	/* current thread group signal load-balancing target: */
+	//Descriptor of the last process in the thread group that received a signal
 	struct task_struct	*curr_target;
 
 	/* shared signal handling: */
@@ -666,17 +672,22 @@ struct signal_struct {
 	struct sigpending	shared_pending;
 
 	/* thread group exit support */
+	//Process termination code for the thread group
 	int			group_exit_code;
 	/* overloaded:
 	 * - notify group_exit_task when ->count is equal to notify_count
 	 * - everyone except group_exit_task is stopped during signal delivery
 	 *   of fatal signals, group_exit_task processes the signal.
 	 */
+	 //Used when killing a whole thread group
 	int			notify_count;
+	//Used when killing a whole thread group
 	struct task_struct	*group_exit_task;
 
 	/* thread group stop support, overloads group_exit_code too */
+	//Used when stopping a whole thread group
 	int			group_stop_count;
+	//Flags used when delivering signals that modify the status of the process
 	unsigned int		flags; /* see SIGNAL_* flags below */
 
 	/*
@@ -1641,8 +1652,9 @@ struct task_struct {
 	sigset_t saved_sigmask;	/* restored if set_restore_sigmask() was used */
 	/* 私有挂起信号队列          发送给线程的未决信号*/
 	struct sigpending pending;
-
+	//信号处理专用栈
 	unsigned long sas_ss_sp;
+	//信号处理专用栈大小
 	size_t sas_ss_size;
 
 	struct callback_head *task_works;

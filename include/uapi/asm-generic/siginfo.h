@@ -46,10 +46,20 @@ typedef union sigval {
 #ifndef HAVE_ARCH_SIGINFO_T
 
 typedef struct siginfo {
+	//The signal number
 	int si_signo;
+	//The error code of the instruction that caused the signal to be raised, or 0 if there
+	//was no error
 	int si_errno;
+	//A code identifying who raised the signal
+	//SI_USER kill() and raise()
+	//SI_KERNEL Generic kernel function
+	//SI_QUEUE sigqueue()
+	//SI_TIMER Timer expiration
+	//SI_ASYNCIO Asynchronous I/O completion
+	//SI_TKILL tkill() and tgkill()
 	int si_code;
-
+	////storing information depending on the type of signal
 	union {
 		int _pad[SI_PAD_SIZE];
 
