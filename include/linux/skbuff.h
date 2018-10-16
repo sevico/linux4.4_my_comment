@@ -200,7 +200,7 @@ struct sk_buff_head {
 	/* These two members must be first. */
 	struct sk_buff	*next;
 	struct sk_buff	*prev;
-
+	//等待队列的长度
 	__u32		qlen;
 	spinlock_t	lock;
 };
@@ -548,17 +548,21 @@ struct sk_buff {
 	union {
 		struct {
 			/* These two members must be first. */
+		//将套接字缓冲区保存到一个双链表中
 			struct sk_buff		*next;
 			struct sk_buff		*prev;
 
 			union {
+				//保存了分组到达的时间
 				ktime_t		tstamp;
 				struct skb_mstamp skb_mstamp;
 			};
 		};
 		struct rb_node	rbnode; /* used in netem & tcp stack */
 	};
+	//指向用于处理该分组的套接字对应的socket实例
 	struct sock		*sk;
+	//dev指定了处理分组的网络设备。dev在处理分组的过程中可能会改变
 	struct net_device	*dev;
 
 	/*
@@ -659,6 +663,7 @@ struct sk_buff {
 		};
 	};
 	__u32			priority;
+	//输入设备的接口索引
 	int			skb_iif;
 	__u32			hash;
 	__be16			vlan_proto;
@@ -816,6 +821,7 @@ struct sk_buff *__alloc_skb(unsigned int size, gfp_t priority, int flags,
 			    int node);
 struct sk_buff *__build_skb(void *data, unsigned int frag_size);
 struct sk_buff *build_skb(void *data, unsigned int frag_size);
+//分配一个新的sk_buff实例
 static inline struct sk_buff *alloc_skb(unsigned int size,
 					gfp_t priority)
 {
@@ -1868,6 +1874,7 @@ static inline int pskb_may_pull(struct sk_buff *skb, unsigned int len)
  *
  *	Return the number of bytes of free space at the head of an &sk_buff.
  */
+ //返回数据起始处空闲空间的长度
 static inline unsigned int skb_headroom(const struct sk_buff *skb)
 {
 	return skb->data - skb->head;
@@ -1879,6 +1886,7 @@ static inline unsigned int skb_headroom(const struct sk_buff *skb)
  *
  *	Return the number of bytes of free space at the tail of an sk_buff
  */
+ //返回数据末端空闲空间的长度
 static inline int skb_tailroom(const struct sk_buff *skb)
 {
 	return skb_is_nonlinear(skb) ? 0 : skb->end - skb->tail;
@@ -2021,17 +2029,17 @@ static inline bool skb_transport_header_was_set(const struct sk_buff *skb)
 {
 	return skb->transport_header != (typeof(skb->transport_header))~0U;
 }
-
+//从给定的套接字缓冲区获取传输层首部的地址
 static inline unsigned char *skb_transport_header(const struct sk_buff *skb)
 {
 	return skb->head + skb->transport_header;
 }
-
+//将传输层首部重置为数据部分的起始位置
 static inline void skb_reset_transport_header(struct sk_buff *skb)
 {
 	skb->transport_header = skb->data - skb->head;
 }
-
+//根据数据部分中给定的偏移量来设置传输层首部的起始地址
 static inline void skb_set_transport_header(struct sk_buff *skb,
 					    const int offset)
 {

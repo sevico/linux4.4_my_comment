@@ -553,7 +553,9 @@ asmlinkage unsigned long sys_sigreturn(void)
 		goto badframe;
 
 	set_current_blocked(&set);
-
+	//copy the process hardware context
+	//from the sc field of the frame to the Kernel Mode stack and remove the frame from
+	//the User Mode stack;
 	if (restore_sigcontext(regs, &frame->sc))
 		goto badframe;
 	return regs->ax;
@@ -718,6 +720,8 @@ void do_signal(struct pt_regs *regs)
 	/* Did we come from a system call? */
 	if (syscall_get_nr(current, regs) >= 0) {
 		/* Restart the system call - no handlers present */
+	//eip points either to the int $0x80 instruction or to the
+	//sysenter instruction, and eax contains the system call number
 		switch (syscall_get_error(current, regs)) {
 		case -ERESTARTNOHAND:
 		case -ERESTARTSYS:

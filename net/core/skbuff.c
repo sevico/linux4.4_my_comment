@@ -936,7 +936,7 @@ EXPORT_SYMBOL_GPL(skb_copy_ubufs);
  *	If this function is called from an interrupt gfp_mask() must be
  *	%GFP_ATOMIC.
  */
-
+//创建套接字缓冲区的一个副本，但原本和副本将使用同一分组数据
 struct sk_buff *skb_clone(struct sk_buff *skb, gfp_t gfp_mask)
 {
 	struct sk_buff_fclones *fclones = container_of(skb,
@@ -1014,7 +1014,7 @@ static inline int skb_alloc_rx_flag(const struct sk_buff *skb)
  *	function is not recommended for use in circumstances when only
  *	header is going to be modified. Use pskb_copy() instead.
  */
-
+//创建套接字缓冲区和相关数据的一个副本
 struct sk_buff *skb_copy(const struct sk_buff *skb, gfp_t gfp_mask)
 {
 	int headerlen = skb_headroom(skb);
@@ -1196,7 +1196,7 @@ nodata:
 EXPORT_SYMBOL(pskb_expand_head);
 
 /* Make private copy of skb with writable head and some headroom */
-
+//在数据起始处创建更多的空闲空间。现存数据不变
 struct sk_buff *skb_realloc_headroom(struct sk_buff *skb, unsigned int headroom)
 {
 	struct sk_buff *skb2;

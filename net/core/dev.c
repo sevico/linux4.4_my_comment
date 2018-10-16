@@ -6744,6 +6744,7 @@ int register_netdevice(struct net_device *dev)
 
 	ret = -EBUSY;
 	if (!dev->ifindex)
+		//生成在所属命名空间中唯一标识该设备的接口索引
 		dev->ifindex = dev_new_index(net);
 	else if (__dev_get_by_index(net, dev->ifindex))
 		goto err_uninit;
@@ -6775,7 +6776,7 @@ int register_netdevice(struct net_device *dev)
 	ret = notifier_to_errno(ret);
 	if (ret)
 		goto err_uninit;
-
+	//将新设备添加到通用内核对象模型中
 	ret = netdev_register_kobject(dev);
 	if (ret)
 		goto err_uninit;

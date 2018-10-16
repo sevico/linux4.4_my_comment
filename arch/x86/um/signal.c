@@ -350,11 +350,18 @@ static int copy_ucontext_to_user(struct ucontext __user *uc,
 
 struct sigframe
 {
+	//Return address of the signal handler function
 	char __user *pretcode;
+	//The signal number; this is the parameter required by the signal handler.
 	int sig;
+	//Structure of type sigcontext containing the hardware context of the User Mode
+	//process right before switching to Kernel Mode
 	struct sigcontext sc;
+	//may be used to store the floating point registers of the User Mode process
 	struct _fpstate fpstate;
+	//Bit array that specifies the blocked real-time signals
 	unsigned long extramask[_NSIG_WORDS-1];
+	
 	char retcode[8];
 };
 

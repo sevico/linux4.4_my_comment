@@ -660,6 +660,7 @@ void signal_wake_up_state(struct task_struct *t, unsigned int state)
 	 * By using wake_up_state, we ensure the process will wake up and
 	 * handle its death signal.
 	 */
+	 //If try_to_wake_up() returned 0, the process was already runnable
 	if (!wake_up_state(t, state | TASK_INTERRUPTIBLE))
 		kick_process(t);
 }
@@ -729,10 +730,10 @@ static int check_kill_permission(int sig, struct siginfo *info,
 {
 	struct pid *sid;
 	int error;
-
+	//Checks that the parameter sig is correct
 	if (!valid_signal(sig))
 		return -EINVAL;
-
+	//内核发送，无需检查权限
 	if (!si_fromuser(info))
 		return 0;
 
@@ -744,6 +745,7 @@ static int check_kill_permission(int sig, struct siginfo *info,
 	    !kill_ok_by_cred(t)) {
 		switch (sig) {
 		case SIGCONT:
+			//SIGCONT只能由login session of the sending process 发送
 			sid = task_session(t);
 			/*
 			 * We don't return the error if sid == NULL. The
@@ -1033,8 +1035,10 @@ static int __send_signal(int sig, struct siginfo *info, struct task_struct *t,
 	q = __sigqueue_alloc(sig, t, GFP_ATOMIC | __GFP_NOTRACK_FALSE_POSITIVE,
 		override_rlimit);
 	if (q) {
+		//Adds the sigqueue data structure in the pending signal queue signals
 		list_add_tail(&q->list, &pending->list);
 		switch ((unsigned long) info) {
+		//Fills the siginfo_t table inside the sigqueue data structure
 		case (unsigned long) SEND_SIG_NOINFO:
 			q->info.si_signo = sig;
 			q->info.si_errno = 0;
@@ -1074,12 +1078,15 @@ static int __send_signal(int sig, struct siginfo *info, struct task_struct *t,
 			 * This is a silent loss of information.  We still
 			 * send the signal, but the *info bits are lost.
 			 */
+			 //let the destination process receive the signal even if there is no
+			//room for the corresponding item in the pending signal queue.
 			result = TRACE_SIGNAL_LOSE_INFO;
 		}
 	}
 
 out_set:
 	signalfd_notify(t, sig);
+	//Sets the bit corresponding to the signal in the bit mask of the queue
 	sigaddset(&pending->signal, sig);
 	//寻找合适的线程来处理该信号
 	complete_signal(sig, t, group);
@@ -1171,6 +1178,7 @@ int do_send_sig_info(int sig, struct siginfo *info, struct task_struct *p,
  * We don't want to have recursive SIGSEGV's etc, for example,
  * that is why we also clear SIGNAL_UNKILLABLE.
  */
+ //Like force_sig(), with extended information in a siginfo_t structure
 int
 force_sig_info(int sig, struct siginfo *info, struct task_struct *t)
 {
@@ -1266,6 +1274,8 @@ struct sighand_struct *__lock_task_sighand(struct task_struct *tsk,
 /*
  * send signal info to all the members of a group
  */
+ //Sends a signal to a single thread group identified by the process descriptor of one of
+//its members
 int group_send_sig_info(int sig, struct siginfo *info, struct task_struct *p)
 {
 	int ret;
@@ -1273,7 +1283,9 @@ int group_send_sig_info(int sig, struct siginfo *info, struct task_struct *p)
 	rcu_read_lock();
 	ret = check_kill_permission(sig, info, p);
 	rcu_read_unlock();
-
+	//If the sig parameter has the value 0, it returns immediately without generating
+	//any signal
+	//发送0信号用于检查发送者是否有权限发送信号
 	if (!ret && sig)
 		ret = do_send_sig_info(sig, info, p, true);
 
@@ -1428,6 +1440,7 @@ static int kill_something_info(int sig, struct siginfo *info, pid_t pid)
 /*
  * These are for backward compatibility with the rest of the kernel source.
  */
+//Like send_sig(), with extended information in a siginfo_t structure
 
 int send_sig_info(int sig, struct siginfo *info, struct task_struct *p)
 {
@@ -1443,13 +1456,13 @@ int send_sig_info(int sig, struct siginfo *info, struct task_struct *p)
 
 #define __si_special(priv) \
 	((priv) ? SEND_SIG_PRIV : SEND_SIG_NOINFO)
-
+//Sends a signal to a single process
 int
 send_sig(int sig, struct task_struct *p, int priv)
 {
 	return send_sig_info(sig, __si_special(priv), p);
 }
-
+//Sends a signal that cannot be explicitly ignored or blocked by the process
 void
 force_sig(int sig, struct task_struct *p)
 {
@@ -1474,7 +1487,7 @@ force_sigsegv(int sig, struct task_struct *p)
 	force_sig(SIGSEGV, p);
 	return 0;
 }
-
+//Sends a signal to all thread groups in a process group
 int kill_pgrp(struct pid *pid, int sig, int priv)
 {
 	int ret;
@@ -2217,18 +2230,20 @@ relock:
 			spin_unlock_irq(&sighand->siglock);
 			goto relock;
 		}
-
+		//If its value is 0, it means that all pending signals
+		//have been handled and do_signal( ) can finish
 		signr = dequeue_signal(current, &current->blocked, &ksig->info);
 
 		if (!signr)
 			break; /* will return 0 */
-
+		//it checks whether the current receiver process is
+		//being monitored by some other process
 		if (unlikely(current->ptrace) && signr != SIGKILL) {
 			signr = ptrace_signal(signr, &ksig->info);
 			if (!signr)
 				continue;
 		}
-
+		//loads the ka local variable
 		ka = &sighand->action[signr-1];
 
 		/* Trace actually delivered signals. */
@@ -2251,6 +2266,7 @@ relock:
 		/*
 		 * Now we are doing the default action for this signal.
 		 */
+		 //SIGCONT | SIGCHLD | SIGWINCH | SIGURG 默认处理
 		if (sig_kernel_ignore(signr)) /* Default is nothing. */
 			continue;
 
@@ -2267,7 +2283,8 @@ relock:
 		if (unlikely(signal->flags & SIGNAL_UNKILLABLE) &&
 				!sig_kernel_only(signr))
 			continue;
-
+		//The signals whose default action is “stop” may stop all processes in the thread
+		//group.
 		if (sig_kernel_stop(signr)) {
 			/*
 			 * The default action is to stop all threads in
@@ -2308,7 +2325,7 @@ relock:
 		 * Anything else is fatal, maybe with a core dump.
 		 */
 		current->flags |= PF_SIGNALED;
-
+		//生成转储文件
 		if (sig_kernel_coredump(signr)) {
 			if (print_fatal_signals)
 				print_fatal_signal(ksig->info.si_signo);

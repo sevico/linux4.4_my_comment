@@ -257,9 +257,11 @@ struct hh_cache {
 	((((dev)->hard_header_len+(dev)->needed_headroom+(extra))&~(HH_DATA_MOD - 1)) + HH_DATA_MOD)
 
 struct header_ops {
+	//创建一个新的硬件首部
 	int	(*create) (struct sk_buff *skb, struct net_device *dev,
 			   unsigned short type, const void *daddr,
 			   const void *saddr, unsigned int len);
+	//分析一个给定的硬件首部
 	int	(*parse)(const struct sk_buff *skb, unsigned char *haddr);
 	int	(*cache)(const struct neighbour *neigh, struct hh_cache *hh, __be16 type);
 	void	(*cache_update)(struct hh_cache *hh,
@@ -1537,16 +1539,18 @@ enum netdev_priv_flags {
 
 struct net_device {
 	char			name[IFNAMSIZ];
+	/* 设备名散列链表的链表元素 */
 	struct hlist_node	name_hlist;
 	char 			*ifalias;
 	/*
 	 *	I/O specific fields
 	 *	FIXME: Merge these and struct ifmap into one
 	 */
-	unsigned long		mem_end;
-	unsigned long		mem_start;
-	unsigned long		base_addr;
-	int			irq;
+	 /* I/O相关字段 */
+	unsigned long		mem_end; /* 共享内存结束位置 */
+	unsigned long		mem_start; /* 共享内存起始位置 */
+	unsigned long		base_addr;/* 设备I/O地址 */
+	int			irq; /* 设备IRQ编号 */
 
 	atomic_t		carrier_changes;
 
@@ -1581,6 +1585,7 @@ struct net_device {
 	netdev_features_t	vlan_features;
 	netdev_features_t	hw_enc_features;
 	netdev_features_t	mpls_features;
+	/* 接口索引。唯一的设备标识符*/
 
 	int			ifindex;
 	int			group;
@@ -1602,9 +1607,10 @@ struct net_device {
 #ifdef CONFIG_NET_L3_MASTER_DEV
 	const struct l3mdev_ops	*l3mdev_ops;
 #endif
-
+	/* 硬件首部描述 */
+	//该结构提供了更多的函数指针，用于操作硬件首部
 	const struct header_ops *header_ops;
-
+	/* 接口标志（按BSD方式） */
 	unsigned int		flags;
 	unsigned int		priv_flags;
 
@@ -1616,9 +1622,11 @@ struct net_device {
 
 	unsigned char		if_port;
 	unsigned char		dma;
-
+	/* 接口MTU值 */
 	unsigned int		mtu;
+	/* 接口硬件类型 */
 	unsigned short		type;
+	/* 硬件首部长度 */
 	unsigned short		hard_header_len;
 	unsigned short		min_header_len;
 
@@ -1626,8 +1634,10 @@ struct net_device {
 	unsigned short		needed_tailroom;
 
 	/* Interface address info. */
+	/* 持久硬件地址 */
 	unsigned char		perm_addr[MAX_ADDR_LEN];
 	unsigned char		addr_assign_type;
+	/* 硬件地址长度 */
 	unsigned char		addr_len;
 	unsigned short		neigh_priv_len;
 	unsigned short          dev_id;
@@ -1647,6 +1657,7 @@ struct net_device {
 
 
 	/* Protocol specific pointers */
+	/* 协议相关指针 */
 
 #if IS_ENABLED(CONFIG_VLAN_8021Q)
 	struct vlan_info __rcu	*vlan_info;
@@ -1657,9 +1668,13 @@ struct net_device {
 #if IS_ENABLED(CONFIG_TIPC)
 	struct tipc_bearer __rcu *tipc_ptr;
 #endif
+	/* AppleTalk相关指针 */
 	void 			*atalk_ptr;
+	/* IPv4相关数据 */
 	struct in_device __rcu	*ip_ptr;
+	/* DECnet相关数据 */
 	struct dn_dev __rcu     *dn_ptr;
+	/* IPv6相关数据 */
 	struct inet6_dev __rcu	*ip6_ptr;
 	void			*ax25_ptr;
 	struct wireless_dev	*ieee80211_ptr;
@@ -1671,9 +1686,11 @@ struct net_device {
 /*
  * Cache lines mostly used on receive path (including eth_type_trans())
  */
+ 	/* 上一次接收操作的时间 */
 	unsigned long		last_rx;
 
 	/* Interface address info used in eth_type_trans() */
+	/* 硬件地址，（在bcast成员之前，因为大多数分组都是单播） */
 	unsigned char		*dev_addr;
 
 
@@ -1696,7 +1713,7 @@ struct net_device {
 #ifdef CONFIG_NETFILTER_INGRESS
 	struct list_head	nf_hooks_ingress;
 #endif
-
+	/* 硬件多播地址 */
 	unsigned char		broadcast[MAX_ADDR_LEN];
 #ifdef CONFIG_RFS_ACCEL
 	struct cpu_rmap		*rx_cpu_rmap;
@@ -1728,6 +1745,7 @@ struct net_device {
 	 * trans_start here is expensive for high speed devices on SMP,
 	 * please use netdev_queue->trans_start instead.
 	 */
+	 /* 上一次发送操作的时间（以jiffies为单位） */
 	unsigned long		trans_start;
 
 	struct timer_list	watchdog_timer;
@@ -1757,7 +1775,7 @@ struct net_device {
 #ifdef CONFIG_NETPOLL
 	struct netpoll_info __rcu	*npinfo;
 #endif
-
+	/* 该设备所在的网络命名空间 */
 	possible_net_t			nd_net;
 
 	/* mid-layer private */
@@ -1771,7 +1789,7 @@ struct net_device {
 
 	struct garp_port __rcu	*garp_port;
 	struct mrp_port __rcu	*mrp_port;
-
+	/* class/net/name项 */
 	struct device	dev;
 	const struct attribute_group *sysfs_groups[4];
 	const struct attribute_group *sysfs_rx_queue_group;
