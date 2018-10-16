@@ -693,8 +693,11 @@ struct sk_buff {
 	__u16			inner_mac_header;
 
 	__be16			protocol;
+	//传输层协议首部的起始
 	__u16			transport_header;
+	//网 络层协议首部的起始
 	__u16			network_header;
+	//MAC协议首部的起始
 	__u16			mac_header;
 
 	/* private: */
@@ -702,9 +705,13 @@ struct sk_buff {
 	/* public: */
 
 	/* These elements must be at the end, see alloc_skb() for details.  */
+	//协议数据区域的结束位置
 	sk_buff_data_t		tail;
+	//数据在内存中的结束位置
 	sk_buff_data_t		end;
+	//数据在内存中的起始位置
 	unsigned char		*head,
+	//协议数据区域的起始位置
 				*data;
 	unsigned int		truesize;
 	atomic_t		users;
