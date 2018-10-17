@@ -200,16 +200,22 @@ int inet_listen(struct socket *sock, int backlog)
 	lock_sock(sk);
 
 	err = -EINVAL;
+	 /* 如果套接字状态不是未连接或不是基于流的套接字，则返回错误 */
 	if (sock->state != SS_UNCONNECTED || sock->type != SOCK_STREAM)
 		goto out;
-
+	/* 得到之前的TCP连接状态 */
 	old_state = sk->sk_state;
+	 /* 如果之前的状态不是关闭或监听，则返回错误 */
 	if (!((1 << old_state) & (TCPF_CLOSE | TCPF_LISTEN)))
 		goto out;
 
 	/* Really, if the socket is already in listen state
 	 * we can only allow the backlog to be adjusted.
 	 */
+	  /*经过前面的状态过滤，这里只可能是关闭或监听状态
+	  如果当前已经是监听状态了，那么我们只须改变backlog的值；
+	  如果是关闭状态，则需要真正地启动监听操作。
+	  */
 	if (old_state != TCP_LISTEN) {
 		/* Check special setups for testing purpose to enable TFO w/o
 		 * requiring TCP_FASTOPEN sockopt.
@@ -233,6 +239,7 @@ int inet_listen(struct socket *sock, int backlog)
 		if (err)
 			goto out;
 	}
+	 /* 更新backlog的值 */
 	sk->sk_max_ack_backlog = backlog;
 	err = 0;
 
@@ -709,22 +716,25 @@ int inet_accept(struct socket *sock, struct socket *newsock, int flags)
 {
 	struct sock *sk1 = sock->sk;
 	int err = -EINVAL;
+	/* 调用具体协议的accept操作，并得到新的sock结构*/
+	//tcp : inet_csk_accept
 	struct sock *sk2 = sk1->sk_prot->accept(sk1, flags, &err);
 
 	if (!sk2)
 		goto do_err;
-
+	/* 锁住新的sk2 */
 	lock_sock(sk2);
-
+	/* 记录RFS信息 */
 	sock_rps_record_flow(sk2);
 	WARN_ON(!((1 << sk2->sk_state) &
 		  (TCPF_ESTABLISHED | TCPF_SYN_RECV |
 		  TCPF_CLOSE_WAIT | TCPF_CLOSE)));
-
+	 /* 将新的sock与调用者传递的socket关联起来 */
 	sock_graft(sk2, newsock);
-
+	/* 设置socket为连接状态 */
 	newsock->state = SS_CONNECTED;
 	err = 0;
+	 /* 释放sk2的控制权*/
 	release_sock(sk2);
 do_err:
 	return err;

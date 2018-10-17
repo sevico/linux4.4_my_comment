@@ -3235,7 +3235,7 @@ out:
 	rcu_read_unlock_bh();
 	return rc;
 }
-
+//将分组放置到发出分组的队列上
 int dev_queue_xmit(struct sk_buff *skb)
 {
 	return __dev_queue_xmit(skb, NULL);
@@ -3632,7 +3632,8 @@ static int netif_rx_internal(struct sk_buff *skb)
  *	NET_RX_DROP     (packet was dropped)
  *
  */
-
+//将接收到的分组放置到一个特定于CPU的等待队列上，并退出中断上下文，
+//使得CPU可以执行其他任务。
 int netif_rx(struct sk_buff *skb)
 {
 	trace_netif_rx_entry(skb);
@@ -4640,10 +4641,11 @@ static int process_backlog(struct napi_struct *napi, int quota)
 	local_irq_disable();
 	while (1) {
 		struct sk_buff *skb;
-
+//从等待队列移除一个套接字缓冲区，该缓冲区管理着一个接收到的分组
 		while ((skb = __skb_dequeue(&sd->process_queue))) {
 			rcu_read_lock();
 			local_irq_enable();
+		//函数分析分组类型，以便根据分组类型将分组传递给网络层的接收函数
 			__netif_receive_skb(skb);
 			rcu_read_unlock();
 			local_irq_disable();
@@ -4947,12 +4949,14 @@ static void net_rx_action(struct softirq_action *h)
 		}
 
 		n = list_first_entry(&list, struct napi_struct, poll_list);
+		//调用poll方法
 		budget -= napi_poll(n, &repoll);
 
 		/* If softirq window is exhausted then punt.
 		 * Allow this to run for 2 jiffies since which will allow
 		 * an average latency of 1.5/HZ.
 		 */
+		 //预算用尽或处理时间过长?
 		if (unlikely(budget <= 0 ||
 			     time_after_eq(jiffies, time_limit))) {
 			sd->time_squeeze++;
@@ -4965,6 +4969,7 @@ static void net_rx_action(struct softirq_action *h)
 	list_splice_tail_init(&sd->poll_list, &list);
 	list_splice_tail(&repoll, &list);
 	list_splice(&list, &sd->poll_list);
+	//预算用尽或处理时间过长,引发NET_RX_SOFTIRQ中断
 	if (!list_empty(&sd->poll_list))
 		__raise_softirq_irqoff(NET_RX_SOFTIRQ);
 

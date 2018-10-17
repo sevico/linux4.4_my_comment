@@ -33,6 +33,7 @@ struct sk_buff;
 struct dst_entry {
 	struct rcu_head		rcu_head;
 	struct dst_entry	*child;
+	//用于处理该分组的网络设备
 	struct net_device       *dev;
 	struct  dst_ops	        *ops;
 	unsigned long		_metrics;
@@ -44,7 +45,9 @@ struct dst_entry {
 #else
 	void			*__pad1;
 #endif
+	//用于处理接受的分组
 	int			(*input)(struct sk_buff *);
+	//用于处理发送的分组
 	int			(*output)(struct net *net, struct sock *sk, struct sk_buff *skb);
 
 	unsigned short		flags;
@@ -458,6 +461,8 @@ static inline int dst_neigh_output(struct dst_entry *dst, struct neighbour *n,
 	if ((n->nud_state & NUD_CONNECTED) && hh->hh_len)
 		return neigh_hh_output(hh, skb);
 	else
+		//调用由路由层设置的函数dst->neighbour->output，
+		//该函数指针通常指向dev_queue_xmit
 		return n->output(n, skb);
 }
 

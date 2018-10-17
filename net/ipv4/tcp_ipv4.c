@@ -1403,8 +1403,9 @@ int tcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb)
 	struct sock *rsk;
 
 	if (sk->sk_state == TCP_ESTABLISHED) { /* Fast path */
+		/* 处理已连接的数据包流程 */
 		struct dst_entry *dst = sk->sk_rx_dst;
-
+		/* 如果数据包与套接字的rxhash不同，则重置套接字的rxhash*/
 		sock_rps_save_rxhash(sk, skb);
 		sk_mark_napi_id(sk, skb);
 		if (dst) {
@@ -1414,21 +1415,30 @@ int tcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb)
 				sk->sk_rx_dst = NULL;
 			}
 		}
+		 /* 进入已连接TCP的处理函数 */
 		tcp_rcv_established(sk, skb, tcp_hdr(skb), skb->len);
 		return 0;
 	}
-
+	 /* 运行到这里，则表明该TCP为非连接状态 */
+	 /* 检查数据包长度和TCP校验值 */
 	if (tcp_checksum_complete(skb))
 		goto csum_err;
 
 	if (sk->sk_state == TCP_LISTEN) {
+		 /* 连接处于监听状态，这是我们要跟踪的流程 */
+		/*
+		处理连接请求，即处理SYN包。作为第一个SYN包请求，服务端只有
+		一个监听sock，所以这里返回的nsk实际上就是sk
+		*/
 		struct sock *nsk = tcp_v4_cookie_check(sk, skb);
 
 		if (!nsk)
 			goto discard;
 		if (nsk != sk) {
+			/* 为SYN请求生成了新的sock结构，自然需要重新做RFS hash */
 			sock_rps_save_rxhash(nsk, skb);
 			sk_mark_napi_id(nsk, skb);
+		 /* 处理子sock */
 			if (tcp_child_process(sk, nsk, skb)) {
 				rsk = nsk;
 				goto reset;
@@ -1437,7 +1447,7 @@ int tcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb)
 		}
 	} else
 		sock_rps_save_rxhash(sk, skb);
-
+	 /* 根据状态处理数据包 */
 	if (tcp_rcv_state_process(sk, skb)) {
 		rsk = sk;
 		goto reset;
@@ -1580,20 +1590,21 @@ int tcp_v4_rcv(struct sk_buff *skb)
 	struct sock *sk;
 	int ret;
 	struct net *net = dev_net(skb->dev);
-
+	/* 如果数据包不是发给本机的，则drop掉 */
 	if (skb->pkt_type != PACKET_HOST)
 		goto discard_it;
 
 	/* Count it even if it's bad */
 	TCP_INC_STATS_BH(net, TCP_MIB_INSEGS);
-
+	 /* 数据包至少还有一个TCP报文头部长度 */
 	if (!pskb_may_pull(skb, sizeof(struct tcphdr)))
 		goto discard_it;
-
+	/* 得到TCP报文头部 */
 	th = tcp_hdr(skb);
-
+	 /* 检查TCP的数据偏移，至少要比头部大 */
 	if (th->doff < sizeof(struct tcphdr) / 4)
 		goto bad_packet;
+	 /* 检查数据段长度  */
 	if (!pskb_may_pull(skb, th->doff * 4))
 		goto discard_it;
 
@@ -1601,11 +1612,12 @@ int tcp_v4_rcv(struct sk_buff *skb)
 	 * Packet length and doff are validated by header prediction,
 	 * provided case of th->doff==0 is eliminated.
 	 * So, we defer the checks. */
-
+	/* 计算校验和 */
 	if (skb_checksum_init(skb, IPPROTO_TCP, inet_compute_pseudo))
 		goto csum_error;
-
+	 /* 重新得到TCP头部。因为前面的代码可能会重新申请skb*/
 	th = tcp_hdr(skb);
+	 /* 得到IP头部 */
 	iph = ip_hdr(skb);
 	/* This is tricky : We move IPCB at its correct location into TCP_SKB_CB()
 	 * barrier() makes sure compiler wont play fool^Waliasing games.
@@ -1613,7 +1625,7 @@ int tcp_v4_rcv(struct sk_buff *skb)
 	memmove(&TCP_SKB_CB(skb)->header.h4, IPCB(skb),
 		sizeof(struct inet_skb_parm));
 	barrier();
-
+	 /* 设置TCP控制块的序列号，结束序列号，确认序列号等 */
 	TCP_SKB_CB(skb)->seq = ntohl(th->seq);
 	TCP_SKB_CB(skb)->end_seq = (TCP_SKB_CB(skb)->seq + th->syn + th->fin +
 				    skb->len - th->doff * 4);
@@ -1624,11 +1636,13 @@ int tcp_v4_rcv(struct sk_buff *skb)
 	TCP_SKB_CB(skb)->sacked	 = 0;
 
 lookup:
+	/*根据端口信息，找到对应的sock结构。这里先对已经连接的sock进行查找，然后对监听的sock进行查找*/
 	sk = __inet_lookup_skb(&tcp_hashinfo, skb, th->source, th->dest);
 	if (!sk)
 		goto no_tcp_socket;
 
 process:
+	/* 如果sock处于TIME_WAIT状态，则跳转到do_time_wait */
 	if (sk->sk_state == TCP_TIME_WAIT)
 		goto do_time_wait;
 
@@ -1665,19 +1679,21 @@ process:
 			return 0;
 		}
 	}
+	 /* 如果数据包的TTL小于设置的TTL阀值，则丢弃 */
 	if (unlikely(iph->ttl < inet_sk(sk)->min_ttl)) {
 		NET_INC_STATS_BH(net, LINUX_MIB_TCPMINTTLDROP);
 		goto discard_and_relse;
 	}
-
+	/* xfrm策略失败 */
 	if (!xfrm4_policy_check(sk, XFRM_POLICY_IN, skb))
 		goto discard_and_relse;
 
 	if (tcp_v4_inbound_md5_hash(sk, skb))
 		goto discard_and_relse;
+	/* 虽然函数的名字为reset重置，但实际上是释放了netfilter的相关资源 */
 
 	nf_reset(skb);
-
+	 /* 执行socket过滤器 */
 	if (tcp_filter(sk, skb))
 		goto discard_and_relse;
 	th = (const struct tcphdr *)skb->data;
@@ -1691,14 +1707,18 @@ process:
 	}
 
 	sk_incoming_cpu_update(sk);
-
+	 /* 锁住sock，获得控制权 */
 	bh_lock_sock_nested(sk);
 	tcp_sk(sk)->segs_in += max_t(u16, 1, skb_shinfo(skb)->gso_segs);
 	ret = 0;
 	if (!sock_owned_by_user(sk)) {
+		 /* 把数据包放到prequeue中 */
 		if (!tcp_prequeue(sk, skb))
+			/* 如果放到prequeue中失败，则只能即时处理该数据包 */
 			ret = tcp_v4_do_rcv(sk, skb);
-	} else if (unlikely(sk_add_backlog(sk, skb,
+	} 　　    /* else if的时候，意味着用户进程正在使用这个套接字
+			那么就把数据包保存到backlog中。*/
+		else if (unlikely(sk_add_backlog(sk, skb,
 					   sk->sk_rcvbuf + sk->sk_sndbuf))) {
 		bh_unlock_sock(sk);
 		NET_INC_STATS_BH(net, LINUX_MIB_TCPBACKLOGDROP);
@@ -1707,20 +1727,23 @@ process:
 	bh_unlock_sock(sk);
 
 put_and_return:
+	/* 释放sk的控制权 */
 	sock_put(sk);
 
 	return ret;
 
 no_tcp_socket:
+	 /* 若没有找到对应的TCP套接字，并且xfrm策略检测失败，则丢弃数据包*/
 	if (!xfrm4_policy_check(NULL, XFRM_POLICY_IN, skb))
 		goto discard_it;
-
+	 /* 检查是否数据包长度出错，或者是校验和出错 */
 	if (tcp_checksum_complete(skb)) {
 csum_error:
 		TCP_INC_STATS_BH(net, TCP_MIB_CSUMERRORS);
 bad_packet:
 		TCP_INC_STATS_BH(net, TCP_MIB_INERRS);
 	} else {
+		 /* 若数据包未出错，但也没有匹配的套接字，则发送TCP RESET */
 		tcp_v4_send_reset(NULL, skb);
 	}
 
@@ -1734,6 +1757,7 @@ discard_and_relse:
 	goto discard_it;
 
 do_time_wait:
+	 /* 连接处于TIME_WAIT状态的数据包处理， */
 	if (!xfrm4_policy_check(NULL, XFRM_POLICY_IN, skb)) {
 		inet_twsk_put(inet_twsk(sk));
 		goto discard_it;

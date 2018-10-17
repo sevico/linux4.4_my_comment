@@ -40,7 +40,9 @@
 /* This is used to register protocols. */
 struct net_protocol {
 	void			(*early_demux)(struct sk_buff *skb);
+//handler是协议例程，分组将（以套接字缓冲区的形式）被传递到该例程进行进一步处理
 	int			(*handler)(struct sk_buff *skb);
+//在接收到ICMP错误信息并需要传递到更高层时，需要调用err_handler
 	void			(*err_handler)(struct sk_buff *skb, u32 info);
 	unsigned int		no_policy:1,
 				netns_ok:1,

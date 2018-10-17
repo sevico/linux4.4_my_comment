@@ -67,11 +67,12 @@ static int ip_forward_finish(struct net *net, struct sock *sk, struct sk_buff *s
 
 	IP_INC_STATS_BH(net, IPSTATS_MIB_OUTFORWDATAGRAMS);
 	IP_ADD_STATS_BH(net, IPSTATS_MIB_OUTOCTETS, skb->len);
-
+	//处理分组包含额外的选项
 	if (unlikely(opt->optlen))
 		ip_forward_options(skb);
 
 	skb_sender_cpu_clear(skb);
+	//将分组传递到在路由期间选择、保存在skb->dst->output中的发送函数。通常使用ip_output
 	return dst_output(net, sk, skb);
 }
 

@@ -304,9 +304,10 @@ static inline struct sock *__inet_lookup(struct net *net,
 					 const int dif)
 {
 	u16 hnum = ntohs(dport);
+	//先对已经连接的sock进行查找
 	struct sock *sk = __inet_lookup_established(net, hashinfo,
 				saddr, sport, daddr, hnum, dif);
-
+	//然后对监听的sock进行查找
 	return sk ? : __inet_lookup_listener(net, hashinfo, saddr, sport,
 					     daddr, hnum, dif);
 }

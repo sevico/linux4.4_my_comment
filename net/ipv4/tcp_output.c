@@ -396,17 +396,23 @@ static void tcp_ecn_send(struct sock *sk, struct sk_buff *skb,
  */
 static void tcp_init_nondata_skb(struct sk_buff *skb, u32 seq, u8 flags)
 {
+	/* 设置为CHECKSUM_PARTIAL，表示需要计算TCP校验和 */
 	skb->ip_summed = CHECKSUM_PARTIAL;
+	 /* 初始化校验和信息 */
 	skb->csum = 0;
-
+	/* TCP_SKB_CB是一个宏，用于将skb->cb转换为TCP的控制块 */
+	  /* 设置TCP首部标志位 */
 	TCP_SKB_CB(skb)->tcp_flags = flags;
+	/* 重置控制块的SACK标志位 */
 	TCP_SKB_CB(skb)->sacked = 0;
-
+	/* 初始化skb的GSO */
 	tcp_skb_pcount_set(skb, 1);
-
+	 /* 设置TCP的序列号 */
 	TCP_SKB_CB(skb)->seq = seq;
+	  /* 如果是SYN或FIN包，则增加TCP序列号 */
 	if (flags & (TCPHDR_SYN | TCPHDR_FIN))
 		seq++;
+	 /* 设置结束序列号 */
 	TCP_SKB_CB(skb)->end_seq = seq;
 }
 
@@ -947,17 +953,21 @@ static int tcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
 	 * One way to get this would be to set skb->truesize = 2 on them.
 	 */
 	skb->ooo_okay = sk_wmem_alloc_get(sk) < SKB_TRUESIZE(1);
-
+	/* 为TCP报文头部保存空间 */
 	skb_push(skb, tcp_header_size);
+	/* 重置TCP报文头指针 */
 	skb_reset_transport_header(skb);
 
 	skb_orphan(skb);
+	/* 设置skb的所有者为sk，同时增加sk的写缓存的使用统计 */
 	skb->sk = sk;
 	skb->destructor = skb_is_tcp_pure_ack(skb) ? sock_wfree : tcp_wfree;
 	skb_set_hash_from_sk(skb, sk);
 	atomic_add(skb->truesize, &sk->sk_wmem_alloc);
 
 	/* Build TCP header and checksum it. */
+	　/* 得到TCP报文头的内存指针，开始构建TCP的报文头部 */
+	/* 这里设置了源端口、目的端口、序列号、确认序列号、包长及标志位 */
 	th = tcp_hdr(skb);
 	th->source		= inet->inet_sport;
 	th->dest		= inet->inet_dport;
@@ -965,7 +975,7 @@ static int tcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
 	th->ack_seq		= htonl(tp->rcv_nxt);
 	*(((__be16 *)th) + 6)	= htons(((tcp_header_size >> 2) << 12) |
 					tcb->tcp_flags);
-
+	/* 如果是SYN包，则TCP窗口不会被扩展 */
 	if (unlikely(tcb->tcp_flags & TCPHDR_SYN)) {
 		/* RFC1323: The window in SYN & SYN/ACK segments
 		 * is never scaled.
@@ -974,10 +984,12 @@ static int tcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
 	} else {
 		th->window	= htons(tcp_select_window(sk));
 	}
+	/* 设置TCP的校验和与紧急指针为0 */
 	th->check		= 0;
 	th->urg_ptr		= 0;
 
 	/* The urg_mode check is necessary during a below snd_una win probe */
+	　/* 检查是否需要设置紧急指针 */
 	if (unlikely(tcp_urg_mode(tp) && before(tcb->seq, tp->snd_up))) {
 		if (before(tp->snd_up, tcb->seq + 0x10000)) {
 			th->urg_ptr = htons(tp->snd_up - tcb->seq);
@@ -987,7 +999,7 @@ static int tcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
 			th->urg = 1;
 		}
 	}
-
+	/* 构建TCP选项部分 */
 	tcp_options_write((__be32 *)(th + 1), tp, &opts);
 	skb_shinfo(skb)->gso_type = sk->sk_gso_type;
 	if (likely((tcb->tcp_flags & TCPHDR_SYN) == 0))
@@ -1001,7 +1013,7 @@ static int tcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
 					       md5, sk, skb);
 	}
 #endif
-
+	/* 计算TCP的校验和 */
 	icsk->icsk_af_ops->send_check(sk, skb);
 
 	if (likely(tcb->tcp_flags & TCPHDR_ACK))
@@ -1025,7 +1037,7 @@ static int tcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
 	/* Cleanup our debris for IP stacks */
 	memset(skb->cb, 0, max(sizeof(struct inet_skb_parm),
 			       sizeof(struct inet6_skb_parm)));
-
+	/* 完成了TCP数据包的构建，将数据包交给IP层 */
 	err = icsk->icsk_af_ops->queue_xmit(sk, skb, &inet->cork.fl);
 
 	if (likely(err <= 0))
@@ -3271,7 +3283,7 @@ int tcp_connect(struct sock *sk)
 	if (unlikely(!buff))
 		return -ENOBUFS;
 	/* 初始化报文 */
-
+	//SYN包的构建
 	tcp_init_nondata_skb(buff, tp->write_seq++, TCPHDR_SYN);
 	 /* 设置TCP控制块相关的发送变量，并发送该SYN报文 */
 	tp->retrans_stamp = tcp_time_stamp;

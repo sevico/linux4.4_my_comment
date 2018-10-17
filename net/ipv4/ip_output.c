@@ -101,6 +101,7 @@ int __ip_local_out(struct net *net, struct sock *sk, struct sk_buff *skb)
 	struct iphdr *iph = ip_hdr(skb);
 
 	iph->tot_len = htons(skb->len);
+	//为分组生成校验和
 	ip_send_check(iph);
 
 	skb->protocol = htons(ETH_P_IP);
@@ -115,6 +116,8 @@ int ip_local_out(struct net *net, struct sock *sk, struct sk_buff *skb)
 	int err;
 
 	err = __ip_local_out(net, sk, skb);
+	//接下来调用dst_output函数。该函数基于确定路由期间找到的skb->dst->output函数
+	//通常指向ip_output
 	if (likely(err == 1))
 		err = dst_output(net, sk, skb);
 
@@ -190,6 +193,7 @@ static int ip_finish_output2(struct net *net, struct sock *sk, struct sk_buff *s
 		IP_UPD_PO_STATS(net, IPSTATS_MIB_OUTBCAST, skb->len);
 
 	/* Be paranoid, rather than too clever. */
+	//该函数检查套接字缓冲区是否仍然有足够的空间容纳产生的硬件首部
 	if (unlikely(skb_headroom(skb) < hh_len && dev->header_ops)) {
 		struct sk_buff *skb2;
 
@@ -231,6 +235,7 @@ static int ip_finish_output_gso(struct net *net, struct sock *sk,
 	int ret = 0;
 
 	/* common case: locally created skb or seglen is <= mtu */
+	//不大于传输介质MTU、无须分片的情况
 	if (((IPCB(skb)->flags & IPSKB_FORWARDED) == 0) ||
 	      skb_gso_network_seglen(skb) <= mtu)
 		return ip_finish_output2(net, sk, skb);
@@ -257,6 +262,7 @@ static int ip_finish_output_gso(struct net *net, struct sock *sk,
 		int err;
 
 		segs->next = NULL;
+		//分片发送
 		err = ip_fragment(net, sk, segs, mtu, ip_finish_output2);
 
 		if (err && ret == 0)
@@ -401,6 +407,7 @@ int ip_queue_xmit(struct sock *sk, struct sk_buff *skb, struct flowi *fl)
 		goto packet_routed;
 
 	/* Make sure we can route this packet. */
+	//查看是否有可用路由
 	rt = (struct rtable *)__sk_dst_check(sk, 0);
 	if (!rt) {
 		__be32 daddr;
@@ -414,6 +421,7 @@ int ip_queue_xmit(struct sock *sk, struct sk_buff *skb, struct flowi *fl)
 		 * keep trying until route appears or the connection times
 		 * itself out.
 		 */
+		 //选择路由
 		rt = ip_route_output_ports(net, fl4, sk,
 					   daddr, inet->inet_saddr,
 					   inet->inet_dport,

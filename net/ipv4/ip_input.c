@@ -191,21 +191,25 @@ bool ip_call_ra_chain(struct sk_buff *skb)
 
 static int ip_local_deliver_finish(struct net *net, struct sock *sk, struct sk_buff *skb)
 {
+//指针操作“删除”IP首部后
+	/* 取走网络层报文头部          重置传输层报文头部*/
 	__skb_pull(skb, skb_network_header_len(skb));
 
 	rcu_read_lock();
 	{
+	 	/* 得到传输层协议 */
 		int protocol = ip_hdr(skb)->protocol;
 		const struct net_protocol *ipprot;
 		int raw;
 
 	resubmit:
+		/* 将数据包传递给对应的原始套接字 */
 		raw = raw_local_deliver(skb, protocol);
-
+		/* 得到注册协议 */
 		ipprot = rcu_dereference(inet_protos[protocol]);
 		if (ipprot) {
 			int ret;
-
+			/* 该协议是否有xfrm策略检查 */
 			if (!ipprot->no_policy) {
 				if (!xfrm4_policy_check(NULL, XFRM_POLICY_IN, skb)) {
 					kfree_skb(skb);
@@ -213,6 +217,7 @@ static int ip_local_deliver_finish(struct net *net, struct sock *sk, struct sk_b
 				}
 				nf_reset(skb);
 			}
+			/* 调用协议的处理函数 */
 			ret = ipprot->handler(skb);
 			if (ret < 0) {
 				protocol = -ret;
@@ -220,7 +225,9 @@ static int ip_local_deliver_finish(struct net *net, struct sock *sk, struct sk_b
 			}
 			IP_INC_STATS_BH(net, IPSTATS_MIB_INDELIVERS);
 		} else {
+			/* 没有对应的网络协议 */
 			if (!raw) {
+				 /* 没有任何已注册的网络协议可以处理这个数据包，因此回复ICMP proto unreachable */
 				if (xfrm4_policy_check(NULL, XFRM_POLICY_IN, skb)) {
 					IP_INC_STATS_BH(net, IPSTATS_MIB_INUNKNOWNPROTOS);
 					icmp_send(skb, ICMP_DEST_UNREACH,
@@ -247,13 +254,14 @@ int ip_local_deliver(struct sk_buff *skb)
 	/*
 	 *	Reassemble IP fragments.
 	 */
+	 /* 得到设备的网络空间 */
 	struct net *net = dev_net(skb->dev);
 
 	if (ip_is_fragment(ip_hdr(skb))) {
 		if (ip_defrag(net, skb, IP_DEFRAG_LOCAL_DELIVER))
 			return 0;
 	}
-
+//调用netfilter挂钩NF_IP_LOCAL_IN，恢复在ip_local_deliver_finish函数中的处理
 	return NF_HOOK(NFPROTO_IPV4, NF_INET_LOCAL_IN,
 		       net, NULL, skb, skb->dev, NULL,
 		       ip_local_deliver_finish);
@@ -387,7 +395,6 @@ int ip_rcv(struct sk_buff *skb, struct net_device *dev, struct packet_type *pt, 
 
 	net = dev_net(dev);
 	IP_UPD_PO_STATS_BH(net, IPSTATS_MIB_IN, skb->len);
-
 	skb = skb_share_check(skb, GFP_ATOMIC);
 	if (!skb) {
 		IP_INC_STATS_BH(net, IPSTATS_MIB_INDISCARDS);
@@ -424,7 +431,7 @@ int ip_rcv(struct sk_buff *skb, struct net_device *dev, struct packet_type *pt, 
 		goto inhdr_error;
 
 	iph = ip_hdr(skb);
-
+	//检查计算的校验和与首部中存储的校验和是否一致
 	if (unlikely(ip_fast_csum((u8 *)iph, iph->ihl)))
 		goto csum_error;
 
@@ -451,7 +458,7 @@ int ip_rcv(struct sk_buff *skb, struct net_device *dev, struct packet_type *pt, 
 
 	/* Must drop socket now because of tproxy. */
 	skb_orphan(skb);
-
+	//NetFilter HOOK,用户空间可以对分组做操作
 	return NF_HOOK(NFPROTO_IPV4, NF_INET_PRE_ROUTING,
 		       net, NULL, skb, dev, NULL,
 		       ip_rcv_finish);

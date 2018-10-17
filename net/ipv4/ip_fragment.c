@@ -508,12 +508,13 @@ found:
 	if (ip_hdr(skb)->frag_off & htons(IP_DF) &&
 	    fragsize > qp->max_df_size)
 		qp->max_df_size = fragsize;
-
+//即第一个和最后一个分片都已经到达，且所有分片中数据的长度之和等于分组预期的总长度
 	if (qp->q.flags == (INET_FRAG_FIRST_IN | INET_FRAG_LAST_IN) &&
 	    qp->q.meat == qp->q.len) {
 		unsigned long orefdst = skb->_skb_refdst;
 
 		skb->_skb_refdst = 0UL;
+		//所有分片都有了
 		err = ip_frag_reasm(qp, prev, dev);
 		skb->_skb_refdst = orefdst;
 		return err;

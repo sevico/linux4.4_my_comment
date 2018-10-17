@@ -1399,14 +1399,17 @@ SYSCALL_DEFINE2(listen, int, fd, int, backlog)
 	struct socket *sock;
 	int err, fput_needed;
 	int somaxconn;
-
+	/* 从文件描述符得到socket结构 */
 	sock = sockfd_lookup_light(fd, &err, &fput_needed);
 	if (sock) {
+		/* 得到系统设置的最大未处理连接队列长度 */
 		somaxconn = sock_net(sock->sk)->core.sysctl_somaxconn;
+		 /*如果用户指定的参数backlog大于系统最大值,则使用系统最大值       */
 		if ((unsigned int)backlog > somaxconn)
 			backlog = somaxconn;
-
+		/* 进行安全性检查 */
 		err = security_socket_listen(sock, backlog);
+		/* 通过检查后，就调用指定协议族的listen实现函数 */
 		if (!err)
 			err = sock->ops->listen(sock, backlog);
 
@@ -1434,22 +1437,23 @@ SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 	struct file *newfile;
 	int err, len, newfd, fput_needed;
 	struct sockaddr_storage address;
-
+	 /* 检查不支持的标志 */
 	if (flags & ~(SOCK_CLOEXEC | SOCK_NONBLOCK))
 		return -EINVAL;
-
+	/* 保证设置的非阻塞标志SOCK_NONBLOCK与O_NONBLOCK相同 */
 	if (SOCK_NONBLOCK != O_NONBLOCK && (flags & SOCK_NONBLOCK))
 		flags = (flags & ~SOCK_NONBLOCK) | O_NONBLOCK;
-
+	 /* 通过文件描述符获得socket结构 */
 	sock = sockfd_lookup_light(fd, &err, &fput_needed);
 	if (!sock)
 		goto out;
 
 	err = -ENFILE;
+	/* 申请一个新的socket结构 */
 	newsock = sock_alloc();
 	if (!newsock)
 		goto out_put;
-
+	/* 新的socket的类型和操作函数与监听socket一致 */
 	newsock->type = sock->type;
 	newsock->ops = sock->ops;
 
@@ -1457,14 +1461,20 @@ SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 	 * We don't need try_module_get here, as the listening socket (sock)
 	 * has the protocol module (sock->ops->owner) held.
 	 */
+	 /* 这里必须增加该套接字模块的引用计数。这是因为这个套接字
+	 模块可能不是Linux内核内置的，为了保证在套接字的使用过程中，
+	 该模块不会被意外卸载，所以，在创建套接字时，需要增加相应
+	 的模块计数
+	 */
 	__module_get(newsock->ops->owner);
-
+	//文件描述符对应的fd
 	newfd = get_unused_fd_flags(flags);
 	if (unlikely(newfd < 0)) {
 		err = newfd;
 		sock_release(newsock);
 		goto out_put;
 	}
+	/* 为新的socket类型，申请一个新的文件描述符 */
 	newfile = sock_alloc_file(newsock, flags, sock->sk->sk_prot_creator->name);
 	if (IS_ERR(newfile)) {
 		err = PTR_ERR(newfile);
@@ -1472,21 +1482,23 @@ SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 		sock_release(newsock);
 		goto out_put;
 	}
-
+	/* 对accept操作进行安全性检查 */
 	err = security_socket_accept(sock, newsock);
 	if (err)
 		goto out_fd;
-
+	/* 执行协议族的accept操作函数 */
 	err = sock->ops->accept(sock, newsock, sock->file->f_flags); //待跟踪
 	if (err < 0)
 		goto out_fd;
-
+	 /* 用户想获得对端地址 */
 	if (upeer_sockaddr) {
+		/* 获得对端地址 */
 		if (newsock->ops->getname(newsock, (struct sockaddr *)&address,
 					  &len, 2) < 0) {
 			err = -ECONNABORTED;
 			goto out_fd;
 		}
+		/* 将得到的地址复制到用户空间 */
 		err = move_addr_to_user(&address,
 					len, upeer_sockaddr, upeer_addrlen);
 		if (err < 0)
@@ -1494,8 +1506,10 @@ SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 	}
 
 	/* File flags are not inherited via accept() unlike another OSes. */
+	/* 将文件描述符newfd和文件管理结构newfile安装到文件表中 */
 
 	fd_install(newfd, newfile);
+	 /* 此时，已保证accept成功执行，将newfd赋给err，并在后面返回err */
 	err = newfd;
 
 out_put:

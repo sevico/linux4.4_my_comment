@@ -307,7 +307,8 @@ struct napi_struct {
 	 * can remove from the list right before clearing the bit.
 	 */
 	struct list_head	poll_list;
-
+	//NAPI_STATE_SCHED:设备将在内核的下一次循环时被轮询
+	//NAPI_STATE_DISABLE: 轮询已经结束且没有更多的分组等待处理,但设备尚未从轮询表移除
 	unsigned long		state;
 	int			weight;
 	unsigned int		gro_count;
@@ -2057,7 +2058,9 @@ static inline struct sk_buff **call_gro_receive(gro_receive_t cb,
 }
 
 struct packet_type {
+	/* 这实际上是htons(ether_type)的值。 */
 	__be16			type;	/* This is really htons(ether_type). */
+	/* NULL在这里表示通配符 */
 	struct net_device	*dev;	/* NULL is wildcarded here	     */
 	int			(*func) (struct sk_buff *,
 					 struct net_device *,
