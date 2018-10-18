@@ -1306,22 +1306,24 @@ static void neigh_hh_init(struct neighbour *n)
 int neigh_resolve_output(struct neighbour *neigh, struct sk_buff *skb)
 {
 	int rc = 0;
-
+	/* 根据具体的邻居发现协议，发送探测邻居数据包。对于IPv4来说，就是ARP请求。如果成功得到邻
+	居的地址，则返回成功（数值0），不然则返回错误值 */
 	if (!neigh_event_send(neigh, skb)) {
+		/* 有了邻居即对端硬件地址，就可以发送数据包了 */
 		int err;
 		struct net_device *dev = neigh->dev;
 		unsigned int seq;
-
+		 /* 如果网卡有地址缓存功能，并且邻居模块没有对应的硬件地址，则调用网卡功能，填充二层硬件地址 */
 		if (dev->header_ops->cache && !neigh->hh.hh_len)
 			neigh_hh_init(neigh);
-
+		 /* 下面的代码与neigh_hh_output类似，利用seqlock在无锁的条件下，保证二层地址读取的完整性。 */
 		do {
 			__skb_pull(skb, skb_network_offset(skb));
 			seq = read_seqbegin(&neigh->ha_lock);
 			err = dev_hard_header(skb, dev, ntohs(skb->protocol),
 					      neigh->ha, NULL, skb->len);
 		} while (read_seqretry(&neigh->ha_lock, seq));
-
+	/* 若成功读取了硬件地址，则调用底层发送函数，将数据包发送出去。 */
 		if (err >= 0)
 			rc = dev_queue_xmit(skb);
 		else

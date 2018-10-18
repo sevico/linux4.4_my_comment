@@ -921,8 +921,12 @@ static int tcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
 	int err;
 
 	BUG_ON(!skb || !tcp_skb_pcount(skb));
-
+	/* 判断是否需要克隆这个数据包 */
 	if (clone_it) {
+		 /*如果该数据包已经被克隆了，则需要复制SKB的私有部分
+		 如未克隆，则直接克隆该数据包
+		 */
+		 //更新时间戳
 		skb_mstamp_get(&skb->skb_mstamp);
 
 		if (unlikely(skb_cloned(skb)))
@@ -937,12 +941,13 @@ static int tcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
 	tp = tcp_sk(sk);
 	tcb = TCP_SKB_CB(skb);
 	memset(&opts, 0, sizeof(opts));
-
+	 /* 根据TCP包的类型计算TCP选项部分的大小 */
 	if (unlikely(tcb->tcp_flags & TCPHDR_SYN))
 		tcp_options_size = tcp_syn_options(sk, skb, &opts, &md5);
 	else
 		tcp_options_size = tcp_established_options(sk, skb, &opts,
 							   &md5);
+	 /* 得到完整的TCP首部大小 */
 	tcp_header_size = tcp_options_size + sizeof(struct tcphdr);
 
 	/* if no packet is in qdisc/device queue, then allow XPS to select
@@ -1002,11 +1007,13 @@ static int tcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
 	/* 构建TCP选项部分 */
 	tcp_options_write((__be32 *)(th + 1), tp, &opts);
 	skb_shinfo(skb)->gso_type = sk->sk_gso_type;
+	 /* 如果不是SYN数据包，则尝试设置ECN状态 */
 	if (likely((tcb->tcp_flags & TCPHDR_SYN) == 0))
 		tcp_ecn_send(sk, skb, tcp_header_size);
 
 #ifdef CONFIG_TCP_MD5SIG
 	/* Calculate the MD5 hash, as we have all we need now */
+	/* 计算TCP MD5 签名 */
 	if (md5) {
 		sk_nocaps_add(sk, NETIF_F_GSO_MASK);
 		tp->af_specific->calc_md5_hash(opts.hash_location,
@@ -1015,13 +1022,14 @@ static int tcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
 #endif
 	/* 计算TCP的校验和 */
 	icsk->icsk_af_ops->send_check(sk, skb);
-
+	/* 如果有ACK标志，则发送ACK事件通知 */
 	if (likely(tcb->tcp_flags & TCPHDR_ACK))
 		tcp_event_ack_sent(sk, tcp_skb_pcount(skb));
+	/* 如果数据包长度大于TCP首部，那么自然是有TCP数据的，所以数据将发送事件通知 */
 
 	if (skb->len != tcp_header_size)
 		tcp_event_data_sent(tp, sk);
-
+	 /* 增加TCP发送数据包的统计计数 */
 	if (after(tcb->end_seq, tp->snd_nxt) || tcb->seq == tcb->end_seq)
 		TCP_ADD_STATS(sock_net(sk), TCP_MIB_OUTSEGS,
 			      tcp_skb_pcount(skb));
@@ -1038,13 +1046,14 @@ static int tcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
 	memset(skb->cb, 0, max(sizeof(struct inet_skb_parm),
 			       sizeof(struct inet6_skb_parm)));
 	/* 完成了TCP数据包的构建，将数据包交给IP层 */
+	/* 调用ip_queue_xmit发送数据报文 */
 	err = icsk->icsk_af_ops->queue_xmit(sk, skb, &inet->cork.fl);
 
 	if (likely(err <= 0))
 		return err;
-
+	/* 判断是否需要进入拥塞窗口来恢复状态 */
 	tcp_enter_cwr(sk);
-
+	/* 因为NET_XMIT_CN 返回值，不能被看作发送错误。 所以对于发送返回的错误，需要调用net_xmit_eval来屏蔽该错误 */
 	return net_xmit_eval(err);
 }
 
@@ -2050,10 +2059,12 @@ static bool tcp_write_xmit(struct sock *sk, unsigned int mss_now, int nonagle,
 	u32 max_segs;
 
 	sent_pkts = 0;
-
+	/* 如果不是push_one（即只发送一个数据包），则进行MTU探测  */
 	if (!push_one) {
 		/* Do MTU probing. */
+	 /* 进行MTU探测 */
 		result = tcp_mtu_probe(sk);
+		 /* 若返回为0，则需要等待探测结果，因此不能发送数据包。*/
 		if (!result) {
 			return false;
 		} else if (result > 0) {
@@ -2062,8 +2073,11 @@ static bool tcp_write_xmit(struct sock *sk, unsigned int mss_now, int nonagle,
 	}
 
 	max_segs = tcp_tso_autosize(sk, mss_now);
+	/* 将发送队列中的数据包，循环发送出去 */
 	while ((skb = tcp_send_head(sk))) {
 		unsigned int limit;
+		/* 初始化这个数据包的TSO状态。TSO是TCP Segment Offload的缩写。当TCP发送数据时，需要将数据拆分成MSS大小的数据包（即多个skb），
+		然后再增加TCP首部、IP首部即可、计算校验和等。而当网卡支持TSO时，内核只需要增加TCP首部即可，其余工作都交由网卡来处理。*/
 
 		tso_segs = tcp_init_tso_segs(skb, mss_now);
 		BUG_ON(!tso_segs);
@@ -2073,7 +2087,7 @@ static bool tcp_write_xmit(struct sock *sk, unsigned int mss_now, int nonagle,
 			skb_mstamp_get(&skb->skb_mstamp);
 			goto repair; /* Skip network transmission */
 		}
-
+		 /* 检查拥塞窗口。若为0，则不能发送 */
 		cwnd_quota = tcp_cwnd_test(tp, skb);
 		if (!cwnd_quota) {
 			if (push_one == 2)
@@ -2082,16 +2096,19 @@ static bool tcp_write_xmit(struct sock *sk, unsigned int mss_now, int nonagle,
 			else
 				break;
 		}
-
+		 /* 检查发送窗口。若为0，则不能发送 */
 		if (unlikely(!tcp_snd_wnd_test(tp, skb, mss_now)))
 			break;
 
 		if (tso_segs == 1) {
+			 /*只有一个TSO数据段，进行nagle算法检查。若返回0，则不发送            */
 			if (unlikely(!tcp_nagle_test(tp, skb, mss_now,
 						     (tcp_skb_is_last(sk, skb) ?
 						      nonagle : TCP_NAGLE_PUSH))))
 				break;
 		} else {
+			 /* 多个TSO数据段*/
+			/* 如果没有设置push_one标志并且TSO发送算法判断推迟发送，则暂不发送这个数据包 */
 			if (!push_one &&
 			    tcp_tso_should_defer(sk, skb, &is_cwnd_limited,
 						 max_segs))
@@ -2099,13 +2116,15 @@ static bool tcp_write_xmit(struct sock *sk, unsigned int mss_now, int nonagle,
 		}
 
 		limit = mss_now;
+		 /* 当TSO分段多于一个并且不是紧急模式,则利用MSS和可分段的个数（拥塞窗口和GSO最大分段数量之间的最小值）
+		 	得到数据的最长限制 */
 		if (tso_segs > 1 && !tcp_urg_mode(tp))
 			limit = tcp_mss_split_point(sk, skb, mss_now,
 						    min_t(unsigned int,
 							  cwnd_quota,
 							  max_segs),
 						    nonagle);
-
+		 /*若数据长度大于限制，则需要分片。        若分片失败，则暂不发送这个数据包。        */
 		if (skb->len > limit &&
 		    unlikely(tso_fragment(sk, skb, limit, mss_now, gfp)))
 			break;
@@ -2133,7 +2152,7 @@ static bool tcp_write_xmit(struct sock *sk, unsigned int mss_now, int nonagle,
 			if (atomic_read(&sk->sk_wmem_alloc) > limit)
 				break;
 		}
-
+		/* 发送数据包 */
 		if (unlikely(tcp_transmit_skb(sk, skb, 1, gfp)))
 			break;
 
@@ -2141,23 +2160,27 @@ repair:
 		/* Advance the send_head.  This one is sent out.
 		 * This call will increment packets_out.
 		 */
+		 /* 处理发送新数据事件，如调整发送队列，则重置重传定时器等 */
 		tcp_event_new_data_sent(sk, skb);
-
+		/* 更新小包（即小于MSS大小）的发送时间 */
 		tcp_minshall_update(tp, mss_now, skb);
 		sent_pkts += tcp_skb_pcount(skb);
-
+		 /* 如果设置了push_one标志，则只发送一个数据包。因此可直接退出 */
 		if (push_one)
 			break;
 	}
 
 	if (likely(sent_pkts)) {
+		  /* 如果当前处于拥塞恢复的状态下，则增加这个状态下的发包数量 */
 		if (tcp_in_cwnd_reduction(sk))
 			tp->prr_out += sent_pkts;
 
 		/* Send one loss probe per tail loss episode. */
 		if (push_one != 2)
 			tcp_schedule_loss_probe(sk);
+		 /* 判断是否有未确认的数据包 */
 		is_cwnd_limited |= (tcp_packets_in_flight(tp) >= tp->snd_cwnd);
+		 /* 如果发送了数据，则校验发送拥塞窗口 */
 		tcp_cwnd_validate(sk, is_cwnd_limited);
 		return false;
 	}
@@ -2313,11 +2336,13 @@ void __tcp_push_pending_frames(struct sock *sk, unsigned int cur_mss,
 	 * In time closedown will finish, we empty the write queue and
 	 * all will be happy.
 	 */
+	 /* 如果套接字是关闭状态，则直接返回 */
 	if (unlikely(sk->sk_state == TCP_CLOSE))
 		return;
-
+	 /* tcp_write_xmit用于将TCP报文发送到网络上 */
 	if (tcp_write_xmit(sk, cur_mss, nonagle, 0,
 			   sk_gfp_atomic(sk, GFP_ATOMIC)))
+		 /* 如果没有要发送的数据，则重置零窗口探测定时器  */
 		tcp_check_probe_timer(sk);
 }
 

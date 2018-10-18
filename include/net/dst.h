@@ -458,6 +458,14 @@ static inline int dst_neigh_output(struct dst_entry *dst, struct neighbour *n,
 	}
 
 	hh = &n->hh;
+	    /* 若邻居状态为连接状态：永久邻居，不需要ARP，
+	    可到达三种情况，    并且存在硬件地址，则直接调用neigh_hh_output来发送。
+	    不然则通过邻居的输出函数发送—会根据邻居状态使用不同的接口。
+	    NUD_NOARP:
+	    	neigh->nud_state = NUD_NOARP;
+	    	neigh->ops = &arp_direct_ops;
+	    	neigh->output = neigh_direct_output;
+	    */
 	if ((n->nud_state & NUD_CONNECTED) && hh->hh_len)
 		return neigh_hh_output(hh, skb);
 	else
@@ -500,6 +508,13 @@ static inline void dst_set_expires(struct dst_entry *dst, int timeout)
 /* Output packet to network from transport.  */
 static inline int dst_output(struct net *net, struct sock *sk, struct sk_buff *skb)
 {
+	/*
+		dst_discard:失效的路由
+		ip_rt_bug:非预期的输出
+		ip_mc_output:本机多播输出
+		ip_output:本机向外发送数据包
+	*/
+	//ip_output
 	return skb_dst(skb)->output(net, sk, skb);
 }
 

@@ -661,11 +661,13 @@ struct sock *inet_csk_clone_lock(const struct sock *sk,
 				 const struct request_sock *req,
 				 const gfp_t priority)
 {
+	/* 克隆一个新的sock结构 */
 	struct sock *newsk = sk_clone_lock(sk, priority);
 
 	if (newsk) {
+		/* 开始克隆面向连接的sock信息 */
 		struct inet_connection_sock *newicsk = inet_csk(newsk);
-
+		/* 将新sock设置为TCP_SYN_RECV状态 */
 		newsk->sk_state = TCP_SYN_RECV;
 		newicsk->icsk_bind_hash = NULL;
 

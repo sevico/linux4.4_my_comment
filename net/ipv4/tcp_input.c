@@ -5443,7 +5443,7 @@ void tcp_finish_connect(struct sock *sk, struct sk_buff *skb)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct inet_connection_sock *icsk = inet_csk(sk);
-
+	 /* 将连接置为“已连接状态” */
 	tcp_set_state(sk, TCP_ESTABLISHED);
 	icsk->icsk_ack.lrcvtime = tcp_time_stamp;
 
@@ -5453,8 +5453,9 @@ void tcp_finish_connect(struct sock *sk, struct sk_buff *skb)
 	}
 
 	/* Make sure socket is routed, for correct metrics.  */
+	 /* 查找路由 */
 	icsk->icsk_af_ops->rebuild_header(sk);
-
+	/* 下面对路由的metric、TCP的阻塞控制和缓存等进行初始化 */
 	tcp_init_metrics(sk);
 
 	tcp_init_congestion_control(sk);
@@ -5465,10 +5466,10 @@ void tcp_finish_connect(struct sock *sk, struct sk_buff *skb)
 	tp->lsndtime = tcp_time_stamp;
 
 	tcp_init_buffer_space(sk);
-
+	/* 如果使用了keepalive，则初始化keepalive定时器 */
 	if (sock_flag(sk, SOCK_KEEPOPEN))
 		inet_csk_reset_keepalive_timer(sk, keepalive_time_when(tp));
-
+	/* 若发送方没有设置窗口扩展选项，则设置TCP快速路径预测标志 */
 	if (!tp->rx_opt.snd_wscale)
 		__tcp_fast_path_on(tp, tp->snd_wnd);
 	else
@@ -5538,11 +5539,11 @@ static int tcp_rcv_synsent_state_process(struct sock *sk, struct sk_buff *skb,
 	struct tcp_fastopen_cookie foc = { .len = -1 };
 	int saved_clamp = tp->rx_opt.mss_clamp;
 	bool fastopen_fail;
-
+	 /* 解析TCP选项 */
 	tcp_parse_options(skb, &tp->rx_opt, 0, &foc);
 	if (tp->rx_opt.saw_tstamp && tp->rx_opt.rcv_tsecr)
 		tp->rx_opt.rcv_tsecr -= tp->tsoffset;
-
+	/* 设置了ACK标志 */
 	if (th->ack) {
 		/* rfc793:
 		 * "If the state is SYN-SENT then
@@ -5552,10 +5553,11 @@ static int tcp_rcv_synsent_state_process(struct sock *sk, struct sk_buff *skb,
 		 *        a reset (unless the RST bit is set, if so drop
 		 *        the segment and return)"
 		 */
+		  /* 若收到的ACK号非法，即不等于我们下次要发的序列号，则重置连接 */
 		if (!after(TCP_SKB_CB(skb)->ack_seq, tp->snd_una) ||
 		    after(TCP_SKB_CB(skb)->ack_seq, tp->snd_nxt))
 			goto reset_and_undo;
-
+		/* 判断TCP时间戳是否合法 */
 		if (tp->rx_opt.saw_tstamp && tp->rx_opt.rcv_tsecr &&
 		    !between(tp->rx_opt.rcv_tsecr, tp->retrans_stamp,
 			     tcp_time_stamp)) {
@@ -5570,6 +5572,7 @@ static int tcp_rcv_synsent_state_process(struct sock *sk, struct sk_buff *skb,
 		 *    connection reset", drop the segment, enter CLOSED state,
 		 *    delete TCB, and return."
 		 */
+		/* 至此，ACK标志已经通过了检查。这时，如果设置了Reset位，则重置连接 */
 
 		if (th->rst) {
 			tcp_reset(sk);
@@ -5583,6 +5586,7 @@ static int tcp_rcv_synsent_state_process(struct sock *sk, struct sk_buff *skb,
 		 *    See note below!
 		 *                                        --ANK(990513)
 		 */
+		  /* 如果没有设置SYN标志，则丢弃该包 */
 		if (!th->syn)
 			goto discard_and_undo;
 
@@ -5592,9 +5596,9 @@ static int tcp_rcv_synsent_state_process(struct sock *sk, struct sk_buff *skb,
 		 *    (our SYN has been ACKed), change the connection
 		 *    state to ESTABLISHED..."
 		 */
-
+		/* 如果TCP套接字设置了ECN标志，但是数据包没有设置ECE标志（表示对端不支持TCP ECN显示拥塞通告），则清除掉本端的ECN标志） */
 		tcp_ecn_rcv_synack(tp, th);
-
+		/* 处理ack数据包，设置TCP发送窗口 */
 		tcp_init_wl(tp, TCP_SKB_CB(skb)->seq);
 		tcp_ack(sk, skb, FLAG_SLOWPATH);
 
@@ -5607,14 +5611,18 @@ static int tcp_rcv_synsent_state_process(struct sock *sk, struct sk_buff *skb,
 		/* RFC1323: The window in SYN & SYN/ACK segments is
 		 * never scaled.
 		 */
+		 /* 根据注释，三次握手时的TCP窗口大小，是不考虑scale选项的 */
 		tp->snd_wnd = ntohs(th->window);
-
+		/* 如果没有windows scale选项 */
 		if (!tp->rx_opt.wscale_ok) {
+			 /* 将接收端和接收端的窗口扩展选项设置为0 */
 			tp->rx_opt.snd_wscale = tp->rx_opt.rcv_wscale = 0;
+			 /* 设置窗口的最大值 */
 			tp->window_clamp = min(tp->window_clamp, 65535U);
 		}
-
+		 /* 判断是否时间戳选项 */
 		if (tp->rx_opt.saw_tstamp) {
+			 /* 设置时间戳选项 */
 			tp->rx_opt.tstamp_ok	   = 1;
 			tp->tcp_header_len =
 				sizeof(struct tcphdr) + TCPOLEN_TSTAMP_ALIGNED;
@@ -5626,7 +5634,7 @@ static int tcp_rcv_synsent_state_process(struct sock *sk, struct sk_buff *skb,
 
 		if (tcp_is_sack(tp) && sysctl_tcp_fack)
 			tcp_enable_fack(tp);
-
+		/* MTU 探测初始化 */
 		tcp_mtup_init(sk);
 		tcp_sync_mss(sk, icsk->icsk_pmtu_cookie);
 		tcp_initialize_rcv_mss(sk);
@@ -5634,6 +5642,7 @@ static int tcp_rcv_synsent_state_process(struct sock *sk, struct sk_buff *skb,
 		/* Remember, tcp_poll() does not lock socket!
 		 * Change state from SYN-SENT only after copied_seq
 		 * is initialized. */
+		 /* 设置未读取的序列号 */
 		tp->copied_seq = tp->rcv_nxt;
 
 		smp_mb();
@@ -5642,13 +5651,16 @@ static int tcp_rcv_synsent_state_process(struct sock *sk, struct sk_buff *skb,
 
 		fastopen_fail = (tp->syn_fastopen || tp->syn_data) &&
 				tcp_rcv_fastopen_synack(sk, skb, &foc);
-
+		 /* 如果sock的状态不是死亡状态 */
 		if (!sock_flag(sk, SOCK_DEAD)) {
+			/* 改变sock状态，唤醒等待进程 */
 			sk->sk_state_change(sk);
+			/* 若有异步等待队列，则给该进程发送异步事件 */
 			sk_wake_async(sk, SOCK_WAKE_IO, POLL_OUT);
 		}
 		if (fastopen_fail)
 			return -1;
+		/*如果该套接字：1）有写操作等待。2）设置了延迟accept。3）没有设置快速ack*/
 		if (sk->sk_write_pending ||
 		    icsk->icsk_accept_queue.rskq_defer_accept ||
 		    icsk->icsk_ack.pingpong) {
@@ -5659,6 +5671,7 @@ static int tcp_rcv_synsent_state_process(struct sock *sk, struct sk_buff *skb,
 			 * look so _wonderfully_ clever, that I was not able
 			 * to stand against the temptation 8)     --ANK
 			 */
+			  /* 满足上面条件之一，则延时确认 */
 			inet_csk_schedule_ack(sk);
 			tcp_enter_quickack_mode(sk);
 			inet_csk_reset_xmit_timer(sk, ICSK_TIME_DACK,
@@ -5668,24 +5681,26 @@ discard:
 			__kfree_skb(skb);
 			return 0;
 		} else {
+			 /* 回复确认 */
 			tcp_send_ack(sk);
 		}
 		return -1;
 	}
 
 	/* No ACK in the segment */
-
+	/* 到此，表示没有ACK标志 */
 	if (th->rst) {
 		/* rfc793:
 		 * "If the RST bit is set
 		 *
 		 *      Otherwise (no ACK) drop the segment and return."
 		 */
-
+		/* 如果没有ACK只有RST，则丢弃该包 */
 		goto discard_and_undo;
 	}
 
 	/* PAWS check. */
+	/* 时间戳检测 */
 	if (tp->rx_opt.ts_recent_stamp && tp->rx_opt.saw_tstamp &&
 	    tcp_paws_reject(&tp->rx_opt, 0))
 		goto discard_and_undo;
@@ -5695,8 +5710,11 @@ discard:
 		 * simultaneous connect with crossed SYNs.
 		 * Particularly, it can be connect to self.
 		 */
+		  /* 若只有SYN标志，没有ACK，则可能是同时发出了多个SYN连接请求，甚至有可能是自己连接自己 */
+		 /* 设置连接状态为收到SYN包 */
 		tcp_set_state(sk, TCP_SYN_RECV);
-
+		 /*后面的代码，与之前收到SYN包的流程基本一致
+		 */
 		if (tp->rx_opt.saw_tstamp) {
 			tp->rx_opt.tstamp_ok = 1;
 			tcp_store_ts_recent(tp);
@@ -5744,13 +5762,16 @@ discard:
 	/* "fifth, if neither of the SYN or RST bits is set then
 	 * drop the segment and return."
 	 */
+	/* 如果既没有SYN也没有RST标志，则丢掉数据包后返回 */
 
 discard_and_undo:
+	/* 丢弃数据包 */
 	tcp_clear_options(&tp->rx_opt);
 	tp->rx_opt.mss_clamp = saved_clamp;
 	goto discard;
 
 reset_and_undo:
+	 /* 重置连接。与丢弃数据包的区别在于返回值。非0时，调用者会重置连接 */
 	tcp_clear_options(&tp->rx_opt);
 	tp->rx_opt.mss_clamp = saved_clamp;
 	return 1;
@@ -5777,17 +5798,21 @@ int tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb)
 	switch (sk->sk_state) {
 	case TCP_CLOSE:
 		goto discard;
-
+	/* sock处于监听状态 */
 	case TCP_LISTEN:
+		  /* 监听状态不应收到ack包 */
 		if (th->ack)
 			return 1;
-
+		 /* 丢弃RST数据包 */
 		if (th->rst)
 			goto discard;
-
+		/* 收到SYN请求包 */
 		if (th->syn) {
+			 /* 若设置了FIN结束标志，则丢弃包 */
 			if (th->fin)
 				goto discard;
+			/* 调用对应的处理连接请求的回调函数 */
+			//ipv4 tcp:tcp_v4_conn_request
 			if (icsk->icsk_af_ops->conn_request(sk, skb) < 0)
 				return 1;
 
@@ -5808,17 +5833,20 @@ int tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb)
 			 * in the interest of security over speed unless
 			 * it's still in use.
 			 */
+			 /* SYN包处理完毕，释放数据包 */
 			kfree_skb(skb);
 			return 0;
 		}
 		goto discard;
 
 	case TCP_SYN_SENT:
+		 /* 处理SYN+ACK，完成三次握手 */
 		queued = tcp_rcv_synsent_state_process(sk, skb, th);
 		if (queued >= 0)
 			return queued;
 
 		/* Do step6 onward by hand. */
+		 /* 处理urgent数据 */
 		tcp_urg(sk, skb, th);
 		__kfree_skb(skb);
 		tcp_data_snd_check(sk);
@@ -5868,24 +5896,33 @@ int tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb)
 			tcp_init_congestion_control(sk);
 
 			tcp_mtup_init(sk);
+			 /* 初始化用户态未读数据的序列号是我们期待接收的下一个序列号 */
 			tp->copied_seq = tp->rcv_nxt;
 			tcp_init_buffer_space(sk);
 		}
 		smp_mb();
+		/* 设置连接状态为已连接 */
 		tcp_set_state(sk, TCP_ESTABLISHED);
+		/*sk_state_change为一个回调函数，默认为sock_def_wakeup, 其会唤醒sleep在该socket的进程*/
 		sk->sk_state_change(sk);
 
 		/* Note, that this wakeup is only for marginal crossed SYN case.
 		 * Passively open sockets are not waked up, because
 		 * sk->sk_sleep == NULL and sk->sk_socket == NULL.
 		 */
+		 /* 若该sock有对应的用户态socket，则执行异步I/O通知 */
+		 /*这里需要注意的是，对于我们目前的情况来说。子sock是从监听sock clone而来的，其中sk_sleep和sk_socket都是NULL。
+ 那么三次握手以后，阻塞在监听socket的进程是如何被唤醒的呢？tcp_child_process在调用tcp_rcv_state_process后，
+ 会检查sock状态是否发生了变化。如果发生了变化，则会调用parent->sk_data_ready(parent, 0);
+ 这样，就可以将事件通知到阻塞在监听sock的进程了。*/
 		if (sk->sk_socket)
 			sk_wake_async(sk, SOCK_WAKE_IO, POLL_OUT);
-
+		/* 初始化未确认回复的序列号 */
 		tp->snd_una = TCP_SKB_CB(skb)->ack_seq;
+		 /* 初始化发送窗口 */
 		tp->snd_wnd = ntohs(th->window) << tp->rx_opt.snd_wscale;
 		tcp_init_wl(tp, TCP_SKB_CB(skb)->seq);
-
+		 /* 如果有时间戳选项，则MSS需要减去时间戳所占的大小 */
 		if (tp->rx_opt.tstamp_ok)
 			tp->advmss -= TCPOLEN_TSTAMP_ALIGNED;
 
@@ -6188,8 +6225,10 @@ int tcp_conn_request(struct request_sock_ops *rsk_ops,
 	 * limitations, they conserve resources and peer is
 	 * evidently real one.
 	 */
+	  /* 接收队列已满，且为第一个数据包 */
 	if ((sysctl_tcp_syncookies == 2 ||
 	     inet_csk_reqsk_queue_is_full(sk)) && !isn) {
+	     /* 判断是否使用syn cookie，如不使用则丢弃该包 */
 		want_cookie = tcp_syn_flood_action(sk, skb, rsk_ops->slab_name);
 		if (!want_cookie)
 			goto drop;
@@ -6201,21 +6240,23 @@ int tcp_conn_request(struct request_sock_ops *rsk_ops,
 	 * clogging syn queue with openreqs with exponentially increasing
 	 * timeout.
 	 */
+	  /* backlog队列已满，并且队列中已有足够多的最近未处理的连接请求。则丢弃该包 */
 	if (sk_acceptq_is_full(sk) && inet_csk_reqsk_queue_young(sk) > 1) {
 		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_LISTENOVERFLOWS);
 		goto drop;
 	}
-
+	 /* 申请一个请求sock(request_sock) */
 	req = inet_reqsk_alloc(rsk_ops, sk, !want_cookie);
 	if (!req)
 		goto drop;
 
 	tcp_rsk(req)->af_specific = af_ops;
-
+	/* 解析TCP选项 */
 	tcp_clear_options(&tmp_opt);
 	tmp_opt.mss_clamp = af_ops->mss_clamp;
 	tmp_opt.user_mss  = tp->rx_opt.user_mss;
 	tcp_parse_options(skb, &tmp_opt, 0, want_cookie ? NULL : &foc);
+	/*若需要syn cookie，但没有时间戳选项，则清除TCP选项*/
 
 	if (want_cookie && !tmp_opt.saw_tstamp)
 		tcp_clear_options(&tmp_opt);
@@ -6254,6 +6295,8 @@ int tcp_conn_request(struct request_sock_ops *rsk_ops,
 			}
 		}
 		/* Kill the following clause, if you dislike this way. */
+		/*下面是在关闭了syn cookie的情况下，内核对syn flood做的简单防护：1）连接队列已经使用了四分之三以上。2）没有对端信息或对端没有时间戳。3）没有路由信息或没有路由的RTT时间。
+ 当同时满足以上条件时，表明队列已接近满队列，同时这个新连接可能还无法正常通信，那么就会放弃这个请求*/
 		else if (!sysctl_tcp_syncookies &&
 			 (sysctl_max_syn_backlog - inet_csk_reqsk_queue_len(sk) <
 			  (sysctl_max_syn_backlog >> 2)) &&
@@ -6270,7 +6313,7 @@ int tcp_conn_request(struct request_sock_ops *rsk_ops,
 				    rsk_ops->family);
 			goto drop_and_release;
 		}
-
+		 /* 初始化本端的序列号 */
 		isn = af_ops->init_seq(skb);
 	}
 	if (!dst) {
@@ -6282,12 +6325,13 @@ int tcp_conn_request(struct request_sock_ops *rsk_ops,
 	tcp_ecn_create_request(req, skb, sk, dst);
 
 	if (want_cookie) {
+		/* 若需要做syn cookie，则产生一个cookie序列号 */
 		isn = cookie_init_sequence(af_ops, sk, skb, &req->mss);
 		req->cookie_ts = tmp_opt.tstamp_ok;
 		if (!tmp_opt.tstamp_ok)
 			inet_rsk(req)->ecn_ok = 0;
 	}
-
+	 /* 保存初始序列号和synack发送时间 */
 	tcp_rsk(req)->snt_isn = isn;
 	tcp_rsk(req)->txhash = net_tx_rndhash();
 	tcp_openreq_init_rwin(req, sk, dst);
@@ -6296,9 +6340,11 @@ int tcp_conn_request(struct request_sock_ops *rsk_ops,
 		fastopen_sk = tcp_try_fastopen(sk, skb, req, &foc, dst);
 	}
 	if (fastopen_sk) {
+		/* 回复SYNACK数据包 */
 		af_ops->send_synack(fastopen_sk, dst, &fl, req,
 				    &foc, false);
 		/* Add the child socket directly into the accept queue */
+		/* 将request sock加入到哈希表中 */
 		inet_csk_reqsk_queue_add(sk, req, fastopen_sk);
 		sk->sk_data_ready(sk);
 		bh_unlock_sock(fastopen_sk);

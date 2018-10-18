@@ -76,7 +76,7 @@ int get_compat_msghdr(struct msghdr *kmsg,
 		kmsg->msg_name = NULL;
 		kmsg->msg_namelen = 0;
 	}
-
+	 /* 消息数据块个数检查 */
 	if (nr_segs > UIO_MAXIOV)
 		return -EMSGSIZE;
 

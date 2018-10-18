@@ -566,6 +566,7 @@ ssize_t compat_rw_copy_check_uvector(int type,
 		goto out;
 	if (nr_segs > fast_segs) {
 		ret = -ENOMEM;
+		/* 在内核空间申请消息数据长度 */
 		iov = kmalloc(nr_segs*sizeof(struct iovec), GFP_KERNEL);
 		if (iov == NULL)
 			goto out;
@@ -605,6 +606,7 @@ ssize_t compat_rw_copy_check_uvector(int type,
 		if (len > MAX_RW_COUNT - tot_len)
 			len = MAX_RW_COUNT - tot_len;
 		tot_len += len;
+		/* 将数据转换为iovec结构，来调用后面的sendmsg */
 		iov->iov_base = compat_ptr(buf);
 		iov->iov_len = (compat_size_t) len;
 		uvector++;

@@ -1652,24 +1652,31 @@ SYSCALL_DEFINE6(sendto, int, fd, void __user *, buff, size_t, len,
 	err = import_single_range(WRITE, buff, len, &iov, &msg.msg_iter);
 	if (unlikely(err))
 		return err;
+	/* 从文件描述符获得套接字socket的结构 */
 	sock = sockfd_lookup_light(fd, &err, &fput_needed);
 	if (!sock)
 		goto out;
-
+	
 	msg.msg_name = NULL;
 	msg.msg_control = NULL;
 	msg.msg_controllen = 0;
 	msg.msg_namelen = 0;
+	/* 如果设置了地址，则设置msg_name */
 	if (addr) {
+		/* 将地址参数复制到内核变量中 */
 		err = move_addr_to_kernel(addr, addr_len, &address);
 		if (err < 0)
 			goto out_put;
 		msg.msg_name = (struct sockaddr *)&address;
 		msg.msg_namelen = addr_len;
 	}
+	/*
+	如果socket设置了非阻塞，则消息的标志设置为DONTWAIT（其实也是非阻塞的语义）
+	*/
 	if (sock->file->f_flags & O_NONBLOCK)
 		flags |= MSG_DONTWAIT;
 	msg.msg_flags = flags;
+	 /* 调用sock_sendmsg来发送数据包 */
 	err = sock_sendmsg(sock, &msg);
 
 out_put:
@@ -1685,6 +1692,9 @@ out:
 SYSCALL_DEFINE4(send, int, fd, void __user *, buff, size_t, len,
 		unsigned int, flags)
 {
+	/*send可以视为sendto的一种特例，即不设置目的地址的sendto调用。	
+	所以内核实现也是让send直接调用sendto。	*/
+
 	return sys_sendto(fd, buff, len, flags, NULL, 0);
 }
 
@@ -1911,8 +1921,9 @@ static int ___sys_sendmsg(struct socket *sock, struct user_msghdr __user *msg,
 	ssize_t err;
 
 	msg_sys->msg_name = &address;
-
+	/* 从用户空间得到用户消息 */
 	if (MSG_CMSG_COMPAT & flags)
+		 /* 紧凑消息类型 */
 		err = get_compat_msghdr(msg_sys, msg_compat, NULL, &iov);
 	else
 		err = copy_msghdr_from_user(msg_sys, msg, NULL, &iov);
@@ -1920,7 +1931,7 @@ static int ___sys_sendmsg(struct socket *sock, struct user_msghdr __user *msg,
 		return err;
 
 	err = -ENOBUFS;
-
+	/* 与消息数据块类似，复制控制消息块 */
 	if (msg_sys->msg_controllen > INT_MAX)
 		goto out_freeiov;
 	ctl_len = msg_sys->msg_controllen;
@@ -1950,7 +1961,9 @@ static int ___sys_sendmsg(struct socket *sock, struct user_msghdr __user *msg,
 			goto out_freectl;
 		msg_sys->msg_control = ctl_buf;
 	}
+	/* 设置消息标志 */
 	msg_sys->msg_flags = flags;
+	/* 如果套接字是非阻塞的，则设置消息标志MSG_DONTWAIT */
 
 	if (sock->file->f_flags & O_NONBLOCK)
 		msg_sys->msg_flags |= MSG_DONTWAIT;
@@ -1960,18 +1973,22 @@ static int ___sys_sendmsg(struct socket *sock, struct user_msghdr __user *msg,
 	 * used_address->name_len is initialized to UINT_MAX so that the first
 	 * destination address never matches.
 	 */
+	 /* 如果这次发送的目的地址与上次成功发送的目的地址一致，那就可以省略安全性检查 */
 	if (used_address && msg_sys->msg_name &&
 	    used_address->name_len == msg_sys->msg_namelen &&
 	    !memcmp(&used_address->name, msg_sys->msg_name,
 		    used_address->name_len)) {
+		    /* 调用不进行安全性检查的函数 */
 		err = sock_sendmsg_nosec(sock, msg_sys);
 		goto out_freectl;
 	}
+	/* 调用sock_sendmsg，需要安全性检查，最终仍然会调用到sock_send_msg_nosec函数 */
 	err = sock_sendmsg(sock, msg_sys);
 	/*
 	 * If this is sendmmsg() and sending to current destination address was
 	 * successful, remember it.
 	 */
+	 /* 如果本次发送成功，则保存当前的目的地址 */
 	if (used_address && err >= 0) {
 		used_address->name_len = msg_sys->msg_namelen;
 		if (msg_sys->msg_name)
@@ -1996,11 +2013,11 @@ long __sys_sendmsg(int fd, struct user_msghdr __user *msg, unsigned flags)
 	int fput_needed, err;
 	struct msghdr msg_sys;
 	struct socket *sock;
-
+	 /* 通过文件描述符获得socket套接字结构 */
 	sock = sockfd_lookup_light(fd, &err, &fput_needed);
 	if (!sock)
 		goto out;
-
+	// /* 调用__sys_sendmsg来发送数据包 */
 	err = ___sys_sendmsg(sock, msg, &msg_sys, flags, NULL);
 
 	fput_light(sock->file, fput_needed);

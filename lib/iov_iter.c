@@ -823,7 +823,7 @@ int import_single_range(int rw, void __user *buf, size_t len,
 		len = MAX_RW_COUNT;
 	if (unlikely(!access_ok(!rw, buf, len)))
 		return -EFAULT;
-
+	/* 将数据转换为iovec结构，来调用后面的sendmsg */
 	iov->iov_base = buf;
 	iov->iov_len = len;
 	iov_iter_init(i, rw, iov, 1, len);

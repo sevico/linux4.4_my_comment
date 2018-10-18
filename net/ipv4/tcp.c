@@ -1119,15 +1119,23 @@ int tcp_sendmsg(struct sock *sk, struct msghdr *msg, size_t size)
 			goto out_err;
 	}
 	//发送的超时时间，非阻塞为0
+	/*根据标志，确定发送消息的超时时间：
+如果设置了MSG_DONTWAIT，则超时时间为0。
+若没有设置MSG_DONTWAIT，则使用套接字的超时时间。
+*/
 	timeo = sock_sndtimeo(sk, flags & MSG_DONTWAIT);
 
 	/* Wait for a connection to finish. One exception is TCP Fast Open
 	 * (passive side) where data is allowed to be sent before a connection
 	 * is fully established.
 	 */
+	 /* 套接字只有处于已连接（ESTABLISHED）和等待关闭（CLOSE_WAIT）的状态下，才能直接发送数据。
+已连接状态不用多说。等待关闭状态是指收到对端关闭(FIN)数据包，但本端应用还没有关闭连接时，这
+时仍然可以发送数据。在TCP协议中，发送FIN，表示本端不会再发送数据。*/
 	if (((1 << sk->sk_state) & ~(TCPF_ESTABLISHED | TCPF_CLOSE_WAIT)) &&
 	    !tcp_passive_fastopen(sk)) {
 	    //等待连接建立，成功返回0
+	    /* 等待连接建立。若失败则返回出错 */
 		err = sk_stream_wait_connect(sk, &timeo);
 		if (err != 0)
 			goto do_error;
@@ -1147,6 +1155,8 @@ int tcp_sendmsg(struct sock *sk, struct msghdr *msg, size_t size)
 	}
 
 	/* This should be in poll */
+	/* 清除SOCK_ASYNC_NOSPACE标志  */
+	 /* 得到当前的MSS长度和数据包的最大长度 */
 	sk_clear_bit(SOCKWQ_ASYNC_NOSPACE, sk);
 	//获取当前tcp mss
 	mss_now = tcp_send_mss(sk, &size_goal, flags);
@@ -1155,35 +1165,40 @@ int tcp_sendmsg(struct sock *sk, struct msghdr *msg, size_t size)
 	copied = 0;
 
 	err = -EPIPE;
+	/* 错误检查 */
 	if (sk->sk_err || (sk->sk_shutdown & SEND_SHUTDOWN))
 		goto out_err;
-
+	 /* 判断出口路由是否支持分散聚合功能 */
 	sg = !!(sk->sk_route_caps & NETIF_F_SG);
-
+	 /* 逐个发送数据段 */
 	while (msg_data_left(msg)) {
 		int copy = 0;
 		int max = size_goal;
-
+		 /* 获得发送队列尾部的skb，查看是否还有剩余空间 */
 		skb = tcp_write_queue_tail(sk);
 		if (tcp_send_head(sk)) {
 			if (skb->ip_summed == CHECKSUM_NONE)
 				max = mss_now;
+			/* 得到本次需要复制的长度 */
 			copy = max - skb->len;
 		}
-
+		 /* 本skb的数据长度已经超过了最大长度，需要申请新的skb */
 		if (copy <= 0) {
 new_segment:
 			/* Allocate new segment. If the interface is SG,
 			 * allocate skb fitting to single page.
 			 */
+			   /* 检查发送缓冲是否已经超出了限制 */
 			if (!sk_stream_memory_free(sk))
+				/* 发送缓冲占用内存过多，需要等待 */
 				goto wait_for_sndbuf;
-
+			/* 申请新的skb */
 			skb = sk_stream_alloc_skb(sk,
 						  select_size(sk, sg),
 						  sk->sk_allocation,
 						  skb_queue_empty(&sk->sk_write_queue));
 			if (!skb)
+				 /* 若分配失败，则需要等待 */
 				goto wait_for_memory;
 
 			/*
@@ -1191,7 +1206,7 @@ new_segment:
 			 */
 			if (sk->sk_route_caps & NETIF_F_ALL_CSUM)
 				skb->ip_summed = CHECKSUM_PARTIAL;
-
+			 /* 加入套接字的发送队列 */
 			skb_entail(sk, skb);
 			copy = size_goal;
 			max = size_goal;
@@ -1205,26 +1220,40 @@ new_segment:
 		}
 
 		/* Try to append data to the end of skb. */
+		/* 复制长度不能超过数据长度 */
 		if (copy > msg_data_left(msg))
 			copy = msg_data_left(msg);
 
 		/* Where to copy to? */
+		 /* 判断skb的线性空间是否还有空闲 */
 		if (skb_availroom(skb) > 0) {
 			/* We have some space in skb head. Superb! */
+		 /* 调整复制长度，不能超过空闲的空间长度 */
 			copy = min_t(int, copy, skb_availroom(skb));
+			 /* 将数据复制到skb的空闲空间中 */
 			err = skb_add_data_nocache(sk, skb, &msg->msg_iter, copy);
 			if (err)
 				goto do_fault;
 		} else {
+		/* 如果该skb没有足够的空闲的线性空间，则把数据复制到分散聚合页中 */
 			bool merge = true;
+		/* 获得数据的分片个数 */
 			int i = skb_shinfo(skb)->nr_frags;
+		/* 获得套接字使用的页 */
 			struct page_frag *pfrag = sk_page_frag(sk);
 
 			if (!sk_page_frag_refill(sk, pfrag))
 				goto wait_for_memory;
-
+			/* 判断数据包是否可以和最后一个分片聚合 */
 			if (!skb_can_coalesce(skb, i, pfrag->page,
 					      pfrag->offset)) {
+				/* 已经达到分片上限，或者网络设备不支持分散聚合。这时不能再向分片增加任
+				何数据了。 */
+				/* 
+				为了给新数据腾出空间，需要将老数据尽快发送出去。
+				 因此设置PUSH标志，并更新pushed_seq。然后跳转到new_segment，
+				 并申请新的skb
+ 				*/
 				if (i >= sysctl_max_skb_frags || !sg) {
 					tcp_mark_push(tp, skb);
 					goto new_segment;
@@ -1246,60 +1275,77 @@ new_segment:
 
 			/* Update the skb. */
 			if (merge) {
+				 /*
+				 若本次数据可以和最后一个分片合并，则更新最后一个分片的长度
+				 */
 				skb_frag_size_add(&skb_shinfo(skb)->frags[i - 1], copy);
 			} else {
+			 /* 这是新的分片，需要为这个分片初始化一些页信息 */
 				skb_fill_page_desc(skb, i, pfrag->page,
 						   pfrag->offset, copy);
 				get_page(pfrag->page);
 			}
+			 /* 更新套接字的发送偏移量 */
 			pfrag->offset += copy;
 		}
-
+		/* 若无须复制任何数据，则清除PUSH标志 */
 		if (!copied)
 			TCP_SKB_CB(skb)->tcp_flags &= ~TCPHDR_PSH;
-
+		/* 更新各种序列号 */
 		tp->write_seq += copy;
 		TCP_SKB_CB(skb)->end_seq += copy;
 		tcp_skb_pcount_set(skb, 0);
-
+		 /* 更新复制信息 */
 		copied += copy;
+		 /* 判断是否完成了所有的数据拷贝 */
 		if (!msg_data_left(msg)) {
+			//更新时间戳
 			tcp_tx_timestamp(sk, skb);
 			goto out;
 		}
-
+		 /* 如果数据包的长度小于限制，或者设置了MSG_OOB标志，则继续向该数据包增加数据 */
 		if (skb->len < max || (flags & MSG_OOB) || unlikely(tp->repair))
 			continue;
-
+		/* 如果当前序列号超过上次push的序列号加上通告窗口的一半，则需要将本次数据包尽快发送出去 */
 		if (forced_push(tp)) {
+			/* 将本数据包设置上PUSH标志，并更新push序列号 */
 			tcp_mark_push(tp, skb);
+			/* 将所有未决的数据包全都发送出去 */
 			__tcp_push_pending_frames(sk, mss_now, TCP_NAGLE_PUSH);
 		} else if (skb == tcp_send_head(sk))
+			/* 如果套接字上只有当前这个数据包，就发送这一个数据包 */
 			tcp_push_one(sk, mss_now);
 		continue;
-
+/* 等待发送缓存 */
 wait_for_sndbuf:
+		 /* 设置没有发送缓存的标志 */
 		set_bit(SOCK_NOSPACE, &sk->sk_socket->flags);
+/* 等待内存 */
 wait_for_memory:
+		/* 判断是否已经复制了部分数据 */
 		if (copied)
+			/* 去掉MSG_MORE标志，表示尽快将复制的数据发送出去 */
 			tcp_push(sk, flags & ~MSG_MORE, mss_now,
 				 TCP_NAGLE_PUSH, size_goal);
-
+		/* 等待空闲内存，可能进入睡眠状态 */
 		err = sk_stream_wait_memory(sk, &timeo);
 		if (err != 0)
 			goto do_error;
-
+		 /* 有了空闲内存，但MSS可能已经发生了变化，所以需要重新获取MSS */
 		mss_now = tcp_send_mss(sk, &size_goal, flags);
 	}
-
+/* out是正常退出路径 */
 out:
+	/* 如果成功复制了数据，则调用tcp_push将数据包发送出去，但不保证立刻就发送 */
 	if (copied)
 		tcp_push(sk, flags, mss_now, tp->nonagle, size_goal);
 out_nopush:
+	/* 释放套接字，返回发送的字节数 */
 	release_sock(sk);
 	return copied + copied_syn;
-
+	 /* 复制用户数据错误 */
 do_fault:
+	/* 如果当前skb的数据长度为0，则需要从套接字的发送队列中将其删除，并释放该skb */
 	if (!skb->len) {
 		tcp_unlink_write_queue(skb, sk);
 		/* It is the one place in all of TCP, except connection
@@ -1310,9 +1356,11 @@ do_fault:
 	}
 
 do_error:
+	/* 若出错时已经复制了部分数据，则将已经复制的数据发送出去 */
 	if (copied + copied_syn)
 		goto out;
 out_err:
+	/* 若没有复制任何数据，则获取错误值，释放套接字并返回错误 */
 	err = sk_stream_error(sk, flags, err);
 	/* make sure we wake any epoll edge trigger waiter */
 	if (unlikely(skb_queue_len(&sk->sk_write_queue) == 0 && err == -EAGAIN))

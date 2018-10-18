@@ -450,6 +450,9 @@ static inline int neigh_hh_output(const struct hh_cache *hh, struct sk_buff *skb
 {
 	unsigned int seq;
 	int hh_len;
+	/*使用seqlock读取硬件地址。 seqlock一般用在频繁读操作，偶尔写操作的情况下。
+	读操作并不会真正地上锁，因此不会阻塞其他读操作和写操作，
+	并通过序号来保证读出数据的完整性；写操作会使用spinlock来保证同一时间只有一个写操作。*/
 
 	do {
 		seq = read_seqbegin(&hh->hh_lock);
@@ -463,8 +466,9 @@ static inline int neigh_hh_output(const struct hh_cache *hh, struct sk_buff *skb
 			memcpy(skb->data - hh_alen, hh->hh_data, hh_alen);
 		}
 	} while (read_seqretry(&hh->hh_lock, seq));
-
+	/* 保存硬件地址 */
 	skb_push(skb, hh_len);
+	/* 调用底层发送数据包接口 */
 	return dev_queue_xmit(skb);
 }
 
