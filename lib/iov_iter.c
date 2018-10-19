@@ -819,6 +819,7 @@ int compat_import_iovec(int type, const struct compat_iovec __user * uvector,
 int import_single_range(int rw, void __user *buf, size_t len,
 		 struct iovec *iov, struct iov_iter *i)
 {
+	 /* 限制读取字节长度的最大值为整数的最大值INT_MAX */
 	if (len > MAX_RW_COUNT)
 		len = MAX_RW_COUNT;
 	if (unlikely(!access_ok(!rw, buf, len)))

@@ -844,6 +844,7 @@ static inline bool sk_rcvqueues_full(const struct sock *sk, unsigned int limit)
 static inline __must_check int sk_add_backlog(struct sock *sk, struct sk_buff *skb,
 					      unsigned int limit)
 {
+	/* 接收队列已满，则返回ENOBUFS错误。所谓的接收队列已满，即接收缓存的数据包占用的内存超过了限制。*/
 	if (sk_rcvqueues_full(sk, limit))
 		return -ENOBUFS;
 
@@ -854,7 +855,7 @@ static inline __must_check int sk_add_backlog(struct sock *sk, struct sk_buff *s
 	 */
 	if (skb_pfmemalloc(skb) && !sock_flag(sk, SOCK_MEMALLOC))
 		return -ENOMEM;
-
+	 /* 将数据包追加到backlog队列中，并增加相应的内存统计。 */
 	__sk_add_backlog(sk, skb);
 	sk->sk_backlog.len += skb->truesize;
 	return 0;

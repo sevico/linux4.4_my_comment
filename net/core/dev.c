@@ -1831,6 +1831,7 @@ static inline void deliver_ptype_list_skb(struct sk_buff *skb,
 	list_for_each_entry_rcu(ptype, ptype_list, list) {
 		if (ptype->type != type)
 			continue;
+		/* 如果数据包类型匹配，并且接收接口设备也匹配，则证明这是正确的协议处理函数。然后调用前面的响应处理函数，将数据包传递给上层协议 */
 		if (pt_prev)
 			deliver_skb(skb, pt_prev, orig_dev);
 		pt_prev = ptype;
@@ -3264,7 +3265,9 @@ int weight_p __read_mostly = 64;            /* old backlog weight */
 static inline void ____napi_schedule(struct softnet_data *sd,
 				     struct napi_struct *napi)
 {
+	/* 将napi加入队尾 */
 	list_add_tail(&napi->poll_list, &sd->poll_list);
+	 /* 触发当前CPU接收软中断（实际上是设置一个标志位） */
 	__raise_softirq_irqoff(NET_RX_SOFTIRQ);
 }
 
@@ -3888,13 +3891,13 @@ static int __netif_receive_skb_core(struct sk_buff *skb, bool pfmemalloc)
 	bool deliver_exact = false;
 	int ret = NET_RX_DROP;
 	__be16 type;
-
+	/* 如果没有打开入队前采样数据包的时间戳功能，则需要在这里进行数据包时间戳采样 */
 	net_timestamp_check(!netdev_tstamp_prequeue, skb);
 
 	trace_netif_receive_skb(skb);
 
 	orig_dev = skb->dev;
-
+	/* 初始化数据包的网络层首部、传输层首部，以及二层MAC首部的长度 */
 	skb_reset_network_header(skb);
 	if (!skb_transport_header_was_set(skb))
 		skb_reset_transport_header(skb);
@@ -3903,18 +3906,21 @@ static int __netif_receive_skb_core(struct sk_buff *skb, bool pfmemalloc)
 	pt_prev = NULL;
 
 another_round:
+	/* 设置网卡的入口网卡 */
 	skb->skb_iif = skb->dev->ifindex;
 
 	__this_cpu_inc(softnet_data.processed);
-
+	 /* 如果是802.1Q协议的数据包 */
 	if (skb->protocol == cpu_to_be16(ETH_P_8021Q) ||
 	    skb->protocol == cpu_to_be16(ETH_P_8021AD)) {
+	    /* 则去掉vlan tag */
 		skb = skb_vlan_untag(skb);
 		if (unlikely(!skb))
 			goto out;
 	}
-
+	/* 内核打开了包分类编译选项 */
 #ifdef CONFIG_NET_CLS_ACT
+	/* 如果数据包被设置了流控结果，则跳过后面的流控处理 */
 	if (skb->tc_verd & TC_NCLS) {
 		skb->tc_verd = CLR_TC_NCLS(skb->tc_verd);
 		goto ncls;
@@ -3923,8 +3929,9 @@ another_round:
 
 	if (pfmemalloc)
 		goto skip_taps;
-
+	/* 遍历注册在ptype_all上的所有节点。ptype_all上的节点需要处理收到的所有以太网数据包 */
 	list_for_each_entry_rcu(ptype, &ptype_all, list) {
+	 	/* 将数据包传递给对应的处理函数 */
 		if (pt_prev)
 			ret = deliver_skb(skb, pt_prev, orig_dev);
 		pt_prev = ptype;
@@ -3953,39 +3960,54 @@ ncls:
 #endif
 	if (pfmemalloc && !skb_pfmemalloc_protocol(skb))
 		goto drop;
-
+	
+	/* 如果这个数据包带有vlan标签 */
 	if (skb_vlan_tag_present(skb)) {
 		if (pt_prev) {
+			 /* 则将数据包传递给之前确定的上层协议 */
 			ret = deliver_skb(skb, pt_prev, orig_dev);
 			pt_prev = NULL;
 		}
+		/* 进行vlan的处理 */
 		if (vlan_do_receive(&skb))
 			goto another_round;
 		else if (unlikely(!skb))
 			goto out;
 	}
-
+	 /* 判断该设备是否注册了接收处理函数。 
+    设备上何时会注册接收处理函数呢？netdev_rx_handler_register是注册设备接收处理函数的接
+    口。通过搜索netdev_rx_handler_register的调用者，可以发现当网卡作为bond加入桥接，或者 
+     创建macvlan时，会注册网卡的处理函数。使用这种方式，就做到了网卡接收处理函数与接收框架的解
+     耦。对于框架来说，通过这个回调函数（用函数指针实现的，内核中充斥着这样的代码），可以完全不用
+     了解具体的细节。未来增加更多的网卡处理函数时，只需要在该具体实现上，调用注册函数，而不用更改接收框架的代码。
+     */
 	rx_handler = rcu_dereference(skb->dev->rx_handler);
 	if (rx_handler) {
 		if (pt_prev) {
+			/* 将数据包传递给之前确定的上层协议 */
 			ret = deliver_skb(skb, pt_prev, orig_dev);
 			pt_prev = NULL;
 		}
+		/* 调用在设备上注册的处理函数 */
 		switch (rx_handler(&skb)) {
 		case RX_HANDLER_CONSUMED:
+			 /* 处理函数已经消耗了这个数据包，直接跳至退出 */
 			ret = NET_RX_SUCCESS;
 			goto out;
 		case RX_HANDLER_ANOTHER:
+			 /* 跳至another_round，即跳至函数开头，重新处理 */
 			goto another_round;
 		case RX_HANDLER_EXACT:
+			 /* 指示必须严格匹配接收网卡 */
 			deliver_exact = true;
 		case RX_HANDLER_PASS:
+			/* 继续后面的处理 */
 			break;
 		default:
 			BUG();
 		}
 	}
-
+	/* 如果数据包还带有vlan tag，则证明该数据包是发给其他终端的 */
 	if (unlikely(skb_vlan_tag_present(skb))) {
 		if (skb_vlan_tag_get_id(skb))
 			skb->pkt_type = PACKET_OTHERHOST;
@@ -3995,7 +4017,7 @@ ncls:
 		 */
 		skb->vlan_tci = 0;
 	}
-
+	  /* 根据数据包的类型，遍历对应的处理函数 */
 	type = skb->protocol;
 
 	/* deliver only exact match when indicated */
@@ -4012,7 +4034,9 @@ ncls:
 		deliver_ptype_list_skb(skb, &pt_prev, orig_dev, type,
 				       &skb->dev->ptype_specific);
 	}
-
+	 /* 最后检查pt_prev是否为真。若为真，则表示前面有匹配的处理函数，然后进行调用。如果为假，则
+	 表示对于这个数据包，内核没有对应的处理函数，那就直接释放这个数据包。 */
+	 
 	if (pt_prev) {
 		if (unlikely(skb_orphan_frags(skb, GFP_ATOMIC)))
 			goto drop;
@@ -4060,26 +4084,31 @@ static int __netif_receive_skb(struct sk_buff *skb)
 static int netif_receive_skb_internal(struct sk_buff *skb)
 {
 	int ret;
-
+	 /* 判断是否在入队前给数据包打时间戳 */
 	net_timestamp_check(netdev_tstamp_prequeue, skb);
 
 	if (skb_defer_rx_timestamp(skb))
 		return NET_RX_SUCCESS;
 
 	rcu_read_lock();
-
+	/* 是否打开了RPS（Receive Packet Steering）编译开关，其根据数据包的IP地址和端口号进
+	行hash运算，将其发送给对应的CPU。这样，一方面保证了CPU间的负载均衡，另一方面将同一特征
+	的数据包发给相同的CPU，可以提高cache的命中率。 */
 #ifdef CONFIG_RPS
 	if (static_key_false(&rps_needed)) {
 		struct rps_dev_flow voidflow, *rflow = &voidflow;
+		/* 根据RPS算法，计算得到处理这个数据包的CPU */
 		int cpu = get_rps_cpu(skb->dev, skb, &rflow);
-
+		 /* 当CPU大于等于0时，表示RPS计算得到了正确的CPU  */
 		if (cpu >= 0) {
+			 /* 向其他CPU的接收队列追加这个数据包 */
 			ret = enqueue_to_backlog(skb, cpu, &rflow->last_qtail);
 			rcu_read_unlock();
 			return ret;
 		}
 	}
 #endif
+	/* 本CPU继续处理该数据包 */
 	ret = __netif_receive_skb(skb);
 	rcu_read_unlock();
 	return ret;
@@ -4691,8 +4720,9 @@ static int process_backlog(struct napi_struct *napi, int quota)
 void __napi_schedule(struct napi_struct *n)
 {
 	unsigned long flags;
-
+	/* 禁止本地中断，保护添加poll list的临界区 */
 	local_irq_save(flags);
+	/* 加入到当前CPU的poll列表中 */
 	____napi_schedule(this_cpu_ptr(&softnet_data), n);
 	local_irq_restore(flags);
 }
@@ -4871,9 +4901,9 @@ static int napi_poll(struct napi_struct *n, struct list_head *repoll)
 	int work, weight;
 
 	list_del_init(&n->poll_list);
-
+	 /* 获得该设备的netpoll锁 */
 	have = netpoll_poll_lock(n);
-
+	/* 得到该网卡的权重，其意义一般为在这个网卡上接收几个数据包 */
 	weight = n->weight;
 
 	/* This NAPI_STATE_SCHED test is for avoiding a race
@@ -4883,7 +4913,9 @@ static int napi_poll(struct napi_struct *n, struct list_head *repoll)
 	 * accidentally calling ->poll() when NAPI is not scheduled.
 	 */
 	work = 0;
+	 /* 再次检查该网卡是否有NAPI调用（因为与netpoll有竞争） */
 	if (test_bit(NAPI_STATE_SCHED, &n->state)) {
+		 /* 对网卡进行查询操作，work值为读取的数据包个数 */
 		work = n->poll(n, weight);
 		trace_napi_poll(n);
 	}
@@ -4898,7 +4930,9 @@ static int napi_poll(struct napi_struct *n, struct list_head *repoll)
 	 * still "owns" the NAPI instance and therefore can
 	 * move the instance around on the list at-will.
 	 */
+	  /* 判断该网卡的NAPI是否被禁止了 */
 	if (unlikely(napi_disable_pending(n))) {
+		/* 若NAPI已经被禁止了，则执行NAPI的完成处理 */
 		napi_complete(n);
 		goto out_unlock;
 	}
@@ -4918,10 +4952,11 @@ static int napi_poll(struct napi_struct *n, struct list_head *repoll)
 			     n->dev ? n->dev->name : "backlog");
 		goto out_unlock;
 	}
-
+	 /* 若该设备仍要继续进行NAPI操作，则将其移至队尾 */
 	list_add_tail(&n->poll_list, repoll);
 
 out_unlock:
+	/* 释放netpoll锁 */
 	netpoll_poll_unlock(have);
 
 	return work;
@@ -4929,25 +4964,29 @@ out_unlock:
 
 static void net_rx_action(struct softirq_action *h)
 {
+	/* 接收数据包的per cpu队列 */
 	struct softnet_data *sd = this_cpu_ptr(&softnet_data);
+	/* 最长的运行时间限制为2个jiffies */
 	unsigned long time_limit = jiffies + 2;
+	/*    一次软中断最多处理的包个数。
+	netdev_budget的值为/proc/sys/net/core/netdev_budget    */
 	int budget = netdev_budget;
 	LIST_HEAD(list);
 	LIST_HEAD(repoll);
-
+	/* 因为网卡驱动会访问poll list，因此需要禁止本地硬中断以进行保护 */
 	local_irq_disable();
 	list_splice_init(&sd->poll_list, &list);
 	local_irq_enable();
 
 	for (;;) {
 		struct napi_struct *n;
-
+		/* 遍历加入到poll链表的所有网卡 */
 		if (list_empty(&list)) {
 			if (!sd_has_rps_ipi_waiting(sd) && list_empty(&repoll))
 				return;
 			break;
 		}
-
+		 /* 这里在打开硬中断时，虽然访问了poll_list，但仍然是安全的。因为硬中断只是在往poll_list的末尾插入，并不会影响第一个元素。 */
 		n = list_first_entry(&list, struct napi_struct, poll_list);
 		//调用poll方法
 		budget -= napi_poll(n, &repoll);
@@ -4956,7 +4995,8 @@ static void net_rx_action(struct softirq_action *h)
 		 * Allow this to run for 2 jiffies since which will allow
 		 * an average latency of 1.5/HZ.
 		 */
-		 //预算用尽或处理时间过长?
+		 //预算用尽或处理时间过长?		 
+		/* 如果已经处理完了允许的最大包个数，或超出了允许的时间限制，则退出此次处理 */
 		if (unlikely(budget <= 0 ||
 			     time_after_eq(jiffies, time_limit))) {
 			sd->time_squeeze++;
@@ -4972,7 +5012,7 @@ static void net_rx_action(struct softirq_action *h)
 	//预算用尽或处理时间过长,引发NET_RX_SOFTIRQ中断
 	if (!list_empty(&sd->poll_list))
 		__raise_softirq_irqoff(NET_RX_SOFTIRQ);
-
+	 /* 执行RPS处理并打开本地硬中断 */
 	net_rps_action_and_irq_enable(sd);
 }
 

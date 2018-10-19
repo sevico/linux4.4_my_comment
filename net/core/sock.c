@@ -2009,7 +2009,7 @@ static void __release_sock(struct sock *sk)
 	__acquires(&sk->sk_lock.slock)
 {
 	struct sk_buff *skb = sk->sk_backlog.head;
-
+	 /* 处理backlog队列的数据包 */
 	do {
 		sk->sk_backlog.head = sk->sk_backlog.tail = NULL;
 		bh_unlock_sock(sk);

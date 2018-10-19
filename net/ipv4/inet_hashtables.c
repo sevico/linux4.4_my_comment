@@ -174,16 +174,25 @@ static inline int compute_score(struct sock *sk, struct net *net,
 {
 	int score = -1;
 	struct inet_sock *inet = inet_sk(sk);
-
+	/* 必须匹配名称空间和目的端口 */
 	if (net_eq(sock_net(sk), net) && inet->inet_num == hnum &&
 			!ipv6_only_sock(sk)) {
 		__be32 rcv_saddr = inet->inet_rcv_saddr;
+		/* 若协议族为PF_INET，则得分加2,不是加1 */
 		score = sk->sk_family == PF_INET ? 2 : 1;
+		 /*
+ 		若套接字指定了接收地址，则接收地址必须与目的地址相同。
+ 		不同则不匹配，相同则得分加4。
+ 		 */
 		if (rcv_saddr) {
 			if (rcv_saddr != daddr)
 				return -1;
 			score += 4;
 		}
+		/*
+		如果套接字绑定了网卡，则接收网卡必须相同。
+		不同则不匹配，相同则得分加2。
+ 		*/
 		if (sk->sk_bound_dev_if) {
 			if (sk->sk_bound_dev_if != dif)
 				return -1;
@@ -211,6 +220,7 @@ struct sock *__inet_lookup_listener(struct net *net,
 {
 	struct sock *sk, *result;
 	struct hlist_nulls_node *node;
+	 /* 根据源端口计算监听hash表对应的桶索引 */
 	unsigned int hash = inet_lhashfn(net, hnum);
 	struct inet_listen_hashbucket *ilb = &hashinfo->listening_hash[hash];
 	int score, hiscore, matches = 0, reuseport = 0;
@@ -220,7 +230,9 @@ struct sock *__inet_lookup_listener(struct net *net,
 begin:
 	result = NULL;
 	hiscore = 0;
+	 /* 遍历该桶中的套接字，与UDP相似，得分最高的套接字为匹配套接字 */
 	sk_nulls_for_each_rcu(sk, node, &ilb->head) {
+	 	/* 计算套接字的得分 */
 		score = compute_score(sk, net, hnum, daddr, dif);
 		if (score > hiscore) {
 			result = sk;
@@ -245,9 +257,12 @@ begin:
 	 */
 	if (get_nulls_value(node) != hash + LISTENING_NULLS_BASE)
 		goto begin;
+	 /* 找到了匹配的套接字 */
 	if (result) {
+		/* 增加套接字引用计数 */
 		if (unlikely(!atomic_inc_not_zero(&result->sk_refcnt)))
 			result = NULL;
+		 /* 需要再次检查该套接字的得分 */
 		else if (unlikely(compute_score(result, net, hnum, daddr,
 				  dif) < hiscore)) {
 			sock_put(result);
@@ -293,19 +308,31 @@ struct sock *__inet_lookup_established(struct net *net,
 	/* Optimize here for direct hit, only listening connections can
 	 * have wildcards anyways.
 	 */
+	 /* 根据目的地址、目的端口、源地址、源端口计算得到已经连接了
+	 hash表的桶索引 */
 	unsigned int hash = inet_ehashfn(net, daddr, hnum, saddr, sport);
 	unsigned int slot = hash & hashinfo->ehash_mask;
 	struct inet_ehash_bucket *head = &hashinfo->ehash[slot];
 
 	rcu_read_lock();
 begin:
+	 /* 遍历该桶节点 */
 	sk_nulls_for_each_rcu(sk, node, &head->chain) {
 		if (sk->sk_hash != hash)
 			continue;
+		 /* 
+ 比较源地址、目的地址、源端口、目的端口及接收网卡。
+  这里有两个参数acookie和ports，这两个参数用于加速匹配。在64位机器上，
+ acookie为源地址和目的地址合成的64位整数，在32位机器上acookie并无意义。ports为源端
+ 口和目的端口合成的32位整数。通过直接比较组合的整数，可以加速匹配。*/
 		if (likely(INET_MATCH(sk, net, acookie,
 				      saddr, daddr, ports, dif))) {
+			/* 增加套接字引用计数 */
 			if (unlikely(!atomic_inc_not_zero(&sk->sk_refcnt)))
 				goto out;
+			/*
+			再次检测，防止套接字在INET_MATCH和增加计数之间被改变
+			*/
 			if (unlikely(!INET_MATCH(sk, net, acookie,
 						 saddr, daddr, ports, dif))) {
 				sock_gen_put(sk);

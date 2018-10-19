@@ -1787,19 +1787,27 @@ static int __init inet_init(void)
 	/*
 	 *	Add all the base protocols.
 	 */
-
+	/* 添加ICMP协议 */
 	if (inet_add_protocol(&icmp_protocol, IPPROTO_ICMP) < 0)
 		pr_crit("%s: Cannot add ICMP protocol\n", __func__);
+	 /* 添加UDP协议 */
 	if (inet_add_protocol(&udp_protocol, IPPROTO_UDP) < 0)
 		pr_crit("%s: Cannot add UDP protocol\n", __func__);
+	 /* 添加TCP协议 */
 	if (inet_add_protocol(&tcp_protocol, IPPROTO_TCP) < 0)
 		pr_crit("%s: Cannot add TCP protocol\n", __func__);
 #ifdef CONFIG_IP_MULTICAST
+	/* 添加IGMP协议 */
 	if (inet_add_protocol(&igmp_protocol, IPPROTO_IGMP) < 0)
 		pr_crit("%s: Cannot add IGMP protocol\n", __func__);
 #endif
 
 	/* Register the socket-side information for inet_create. */
+	//注册AF_INET的各种协议，如UDP、TCP等
+	/*
+	inet_add_proto-col面向的是底层接口，而inet_register_protosw面向的是上层应用，
+	所以将其分为了两个结构。
+	*/
 	for (r = &inetsw[0]; r < &inetsw[SOCK_MAX]; ++r)
 		INIT_LIST_HEAD(r);
 

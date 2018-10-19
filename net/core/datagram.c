@@ -87,35 +87,42 @@ static int wait_for_more_packets(struct sock *sk, int *err, long *timeo_p,
 				 const struct sk_buff *skb)
 {
 	int error;
+	/* 定义等待队列和回调的唤醒函数 */
 	DEFINE_WAIT_FUNC(wait, receiver_wake_function);
-
+	 /* 初始化等待队列，需要注意的是TASK_INTERRUPTIBLE。这表明进程在睡眠等待时，是可以被中断的。 */
 	prepare_to_wait_exclusive(sk_sleep(sk), &wait, TASK_INTERRUPTIBLE);
 
 	/* Socket errors? */
+	 /* 检查套接字是否出错，如被RESET。如有错误，则直接退出。 */
 	error = sock_error(sk);
 	if (error)
 		goto out_err;
-
+	 /* 若接收队列不为空，则可以直接退出 */
 	if (sk->sk_receive_queue.prev != skb)
 		goto out;
 
 	/* Socket shut down? */
+	/* 检查套接字是否已经做了接收半关闭 */
 	if (sk->sk_shutdown & RCV_SHUTDOWN)
 		goto out_noerr;
 
 	/* Sequenced packets can come disconnected.
 	 * If so we report the problem
 	 */
+	 /* 如果套接字是基于连接的，并且不是处于已连接状态或监听状态，则报错退出 */
 	error = -ENOTCONN;
 	if (connection_based(sk) &&
 	    !(sk->sk_state == TCP_ESTABLISHED || sk->sk_state == TCP_LISTEN))
 		goto out_err;
 
 	/* handle signals */
+	/* 是否有未处理的信号 */
 	if (signal_pending(current))
 		goto interrupted;
 
 	error = 0;
+	/* 将当前进程调度出去，直到超时，即进程已经休眠了设定的超时时间。但是由于某些原因，进程被提前唤  醒，
+	所以需要保存返回的时间*timeo_p，表示还剩下多少时间。 */
 	*timeo_p = schedule_timeout(*timeo_p);
 out:
 	finish_wait(sk_sleep(sk), &wait);
@@ -201,11 +208,12 @@ struct sk_buff *__skb_recv_datagram(struct sock *sk, unsigned int flags,
 	/*
 	 * Caller is allowed not to check sk->sk_err before skb_recv_datagram()
 	 */
+	 /* 检查套接字是否出错 */
 	int error = sock_error(sk);
 
 	if (error)
 		goto no_packet;
-
+	 /* 得到超时时间，如果设置了MSG_DONTWAIT，则超时为0。 */
 	timeo = sock_rcvtimeo(sk, flags & MSG_DONTWAIT);
 
 	do {
@@ -222,6 +230,7 @@ struct sk_buff *__skb_recv_datagram(struct sock *sk, unsigned int flags,
 		skb_queue_walk(queue, skb) {
 			last = skb;
 			*peeked = skb->peeked;
+			/* 如果只是查看动作，则要增加数据包的引用计数，并不用把数据包从队列中移除。 */
 			if (flags & MSG_PEEK) {
 				if (_off >= skb->len && (skb->len || _off ||
 							 skb->peeked)) {
@@ -236,10 +245,12 @@ struct sk_buff *__skb_recv_datagram(struct sock *sk, unsigned int flags,
 
 				atomic_inc(&skb->users);
 			} else
+				/* 将数据包从接收队列中删除 */
 				__skb_unlink(skb, queue);
 
 			spin_unlock_irqrestore(&queue->lock, cpu_flags);
 			*off = _off;
+			 /* 得到了数据包，直接返回 */
 			return skb;
 		}
 		spin_unlock_irqrestore(&queue->lock, cpu_flags);
@@ -249,10 +260,11 @@ struct sk_buff *__skb_recv_datagram(struct sock *sk, unsigned int flags,
 			continue;
 
 		/* User doesn't want to wait */
+		/* 若已经没有了剩余的超时时间，则跳转到no_packet并返回NULL */
 		error = -EAGAIN;
 		if (!timeo)
 			goto no_packet;
-
+	/* 使task在套接字上等待 */
 	} while (!wait_for_more_packets(sk, err, &timeo, last));
 
 	return NULL;

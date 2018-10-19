@@ -1653,16 +1653,17 @@ int tcp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int nonblock,
 	if (sk_can_busy_loop(sk) && skb_queue_empty(&sk->sk_receive_queue) &&
 	    (sk->sk_state == TCP_ESTABLISHED))
 		sk_busy_loop(sk, nonblock);
-
+	/* 对套接字上锁 */
 	lock_sock(sk);
-
+	/* 如果套接字为监听状态，则跳转到退出分支 */
 	err = -ENOTCONN;
 	if (sk->sk_state == TCP_LISTEN)
 		goto out;
-
+	/* 与UDP类似，得到超时时间 */
 	timeo = sock_rcvtimeo(sk, nonblock);
 
 	/* Urgent data needs to be handled specially. */
+	 /* 设置了MSG_OOB标志，即带外数据，对于TCP来说，就是接收紧急数据 */
 	if (flags & MSG_OOB)
 		goto recv_urg;
 
@@ -1680,12 +1681,16 @@ int tcp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int nonblock,
 
 		/* 'common' recv queue MSG_PEEK-ing */
 	}
-
+	/* 得到与预读取TCP数据相对应的序列号 */
 	seq = &tp->copied_seq;
 	if (flags & MSG_PEEK) {
 		peek_seq = tp->copied_seq;
 		seq = &peek_seq;
 	}
+	/*	  因为TCP是流协议，数据没有边界，所以需要计算接收数据的最小长度。
+	1）若设置了MSG_WAITALL，则目标为用户指定的长度；
+	2）不然，则选择套接字的低水线和用户指定长度的最小值；
+	3）如果第二种情况的最小值为0，则数据长度为1字节；	*/
 
 	target = sock_rcvlowat(sk, flags & MSG_WAITALL, len);
 
@@ -1693,9 +1698,12 @@ int tcp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int nonblock,
 		u32 offset;
 
 		/* Are we at urgent data? Stop if we have read anything or have SIGURG pending. */
+	 /* 判断是否正在读取紧急数据 */
 		if (tp->urg_data && tp->urg_seq == *seq) {
+			 /* 如果已经读取了一定量的数据，则结束读取 */
 			if (copied)
 				break;
+			/* 如果有未处理的信号，也结束读取 */
 			if (signal_pending(current)) {
 				copied = timeo ? sock_intr_errno(timeo) : -EAGAIN;
 				break;
@@ -1703,8 +1711,9 @@ int tcp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int nonblock,
 		}
 
 		/* Next get a buffer. */
-
+		//处理receive_queue
 		last = skb_peek_tail(&sk->sk_receive_queue);
+		/* 遍历接收队列 */
 		skb_queue_walk(&sk->sk_receive_queue, skb) {
 			last = skb;
 			/* Now that we have two receive queues this
@@ -1715,12 +1724,15 @@ int tcp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int nonblock,
 				 *seq, TCP_SKB_CB(skb)->seq, tp->rcv_nxt,
 				 flags))
 				break;
-
+			/* 取得在数据包中的偏移，即上次没有将这个数据包读取完毕 */
 			offset = *seq - TCP_SKB_CB(skb)->seq;
+			 /* syn标志会占用一个sequence，所以偏移减一 */
 			if (TCP_SKB_CB(skb)->tcp_flags & TCPHDR_SYN)
 				offset--;
+			 /* 若偏移小于数据包长度，则这个数据包就是要接收的数据包 */
 			if (offset < skb->len)
 				goto found_ok_skb;
+			/* 如果当前数据包包含FIN标志，则跳转到fin处*/
 			if (TCP_SKB_CB(skb)->tcp_flags & TCPHDR_FIN)
 				goto found_fin_ok;
 			WARN(!(flags & MSG_PEEK),
@@ -1729,11 +1741,23 @@ int tcp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int nonblock,
 		}
 
 		/* Well, if we have backlog, try to process it now yet. */
-
+		/* 若已经复制了超过目标的数据并且有积压的数据，则立刻跳出，并尝试处理积压数据。 */
 		if (copied >= target && !sk->sk_backlog.tail)
 			break;
-
+		/*
+ 这里针对是否已经复制了部分数据做了条件判断，而且每个分支中都有相似的条件判断，
+ 为什么要    分两种情况呢？因为在读取过程中，如果发生了同样的错误，只读取了部分数据，那么系统调用的        返回值要返回成功读取的字节数；而未读取任何数据，则返回-1错误。
+ */
 		if (copied) {
+			/*
+已复制了部分数据，检查下面几个条件：
+1）套接字出错。
+2）连接已经关闭。
+3）套接字关闭了接收端。
+4）已经超时。
+5）有待处理的信号。
+若有一个条件符合，则跳出接收数据循环。
+*/
 			if (sk->sk_err ||
 			    sk->sk_state == TCP_CLOSE ||
 			    (sk->sk_shutdown & RCV_SHUTDOWN) ||
@@ -1741,17 +1765,22 @@ int tcp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int nonblock,
 			    signal_pending(current))
 				break;
 		} else {
+			/*
+若套接字设置了SOCK_DONE标志，则跳出循环。
+对于TCP来说，被动关闭时，套接字会被设置上这个标志。这就意味着对端已经关闭，所以不
+可能再有新的数据了。
+*/
 			if (sock_flag(sk, SOCK_DONE))
 				break;
-
+			/* 判断套接字是否出错 */
 			if (sk->sk_err) {
 				copied = sock_error(sk);
 				break;
 			}
-
+			/* 套接字关闭了接收端 */
 			if (sk->sk_shutdown & RCV_SHUTDOWN)
 				break;
-
+			/* 套接字状态为关闭状态但又没有设置SOCK_DONE标志，这种情况只发生在用户企图从一个未连接的套接字中读取数据时。 */
 			if (sk->sk_state == TCP_CLOSE) {
 				if (!sock_flag(sk, SOCK_DONE)) {
 					/* This occurs when user tries to read
@@ -1762,22 +1791,23 @@ int tcp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int nonblock,
 				}
 				break;
 			}
-
+			 /* 已经超时 */
 			if (!timeo) {
 				copied = -EAGAIN;
 				break;
 			}
-
+			 /* 有未处理的信号 */
 			if (signal_pending(current)) {
 				copied = sock_intr_errno(timeo);
 				break;
 			}
 		}
-
+		/* 清除已经读取的数据包 */
 		tcp_cleanup_rbuf(sk, copied);
-
+		 /* 要进行低延时的TCP处理 */
 		if (!sysctl_tcp_low_latency && tp->ucopy.task == user_recv) {
 			/* Install new reader */
+		 /* 保存用户进程地址 */
 			if (!user_recv && !(flags & (MSG_TRUNC | MSG_PEEK))) {
 				user_recv = current;
 				tp->ucopy.task = user_recv;
@@ -1815,6 +1845,13 @@ int tcp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int nonblock,
 			 * is not empty. It is more elegant, but eats cycles,
 			 * unfortunately.
 			 */
+			 /*
+处理完receive queue，需要处理prequeue 。
+TCP套接字有三个队列，需要按照以下顺序来处理：
+1）receive_queue;
+2）prequeue；
+3）backlog；
+*/
 			if (!skb_queue_empty(&tp->ucopy.prequeue))
 				goto do_prequeue;
 
@@ -1823,9 +1860,11 @@ int tcp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int nonblock,
 
 		if (copied >= target) {
 			/* Do not sleep, just process backlog. */
+		 /* 若已经复制了超过目标的数据量，则释放该套接字 */
 			release_sock(sk);
 			lock_sock(sk);
 		} else {
+			 /* 等待更多的数据 */
 			sk_wait_data(sk, &timeo, last);
 		}
 
@@ -1840,12 +1879,12 @@ int tcp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int nonblock,
 				len -= chunk;
 				copied += chunk;
 			}
-
+			 /* 处理完receive_queue，再继续处理prequeue */
 			if (tp->rcv_nxt == tp->copied_seq &&
 			    !skb_queue_empty(&tp->ucopy.prequeue)) {
 do_prequeue:
 				tcp_prequeue_process(sk);
-
+				 /* 处理完receive_queue，再继续处理prequeue */
 				chunk = len - tp->ucopy.len;
 				if (chunk != 0) {
 					NET_ADD_STATS_USER(sock_net(sk), LINUX_MIB_TCPDIRECTCOPYFROMPREQUEUE, chunk);
@@ -1865,16 +1904,23 @@ do_prequeue:
 
 	found_ok_skb:
 		/* Ok so how much can we use? */
+	 /* 找到了正确的skb，计算该skb未读的可用数据长度 */
 		used = skb->len - offset;
+		 /* 如果用户要读取的长度小于当前的剩余长度，则调整可用长度 */
 		if (len < used)
 			used = len;
 
 		/* Do we have urgent data here? */
+		/*判断是否有紧急数据。TCP的紧急数据又称带外数据，在协议定义本身一直都有些争议。所以其实现代码也比较奇怪。一般不推荐在日常编码中使用紧急数据*/
 		if (tp->urg_data) {
+			 /* 得到紧急数据的偏移 */
 			u32 urg_offset = tp->urg_seq - *seq;
+			  /* 判断紧急数据是否在我们要读取的数据范围内 */
 			if (urg_offset < used) {
 				if (!urg_offset) {
+					/* 判断紧急数据是否在普通数据流中 */
 					if (!sock_flag(sk, SOCK_URGINLINE)) {
+						/* 若不在普通数据流中，则要忽略当前这个字节 */
 						++*seq;
 						urg_hole++;
 						offset++;
@@ -1886,8 +1932,9 @@ do_prequeue:
 					used = urg_offset;
 			}
 		}
-
+		/* 没有设置截断标志 */
 		if (!(flags & MSG_TRUNC)) {
+			/* 复制数据到用户空间 */
 			err = skb_copy_datagram_msg(skb, offset, msg, used);
 			if (err) {
 				/* Exception. Bailout! */
@@ -1896,41 +1943,51 @@ do_prequeue:
 				break;
 			}
 		}
-
+		/* 调整序列号*seq、已复制长度、剩余长度 */
 		*seq += used;
 		copied += used;
 		len -= used;
-
+		/* 因为成功读取了数据，所以要调整TCP套接字的接收缓存 */
 		tcp_rcv_space_adjust(sk);
 
 skip_copy:
+	 /* 如果正在读取，并且已读取的序列号大于紧急数据，则意味着已经读取完了紧急数据，那么就
+ 要重置urg_data，并且进行TCP快速路径检查（如果通过了检查条件，则打开快速路径开关。打开快速路径的时候，表示接收的数据包是预期的数据包，
+ TCP接收数据包时会做比较少的检查，因此接收更为快速） */	
 		if (tp->urg_data && after(tp->copied_seq, tp->urg_seq)) {
 			tp->urg_data = 0;
 			tcp_fast_path_check(sk);
 		}
+		/* 使用的数据长度加上偏移若小于数据包的长度，则该数据包可以继续使用 */
 		if (used + offset < skb->len)
 			continue;
-
+		 /* 如果该数据包有FIN标志，则跳转到found_fin_ok */
 		if (TCP_SKB_CB(skb)->tcp_flags & TCPHDR_FIN)
 			goto found_fin_ok;
+		/* 如果没有设置MSG_PEEK标志，则需要从接收队列中消耗掉这个数据包，并根据copied_early标志，将其直接释放，或者放置到异步队列 */
 		if (!(flags & MSG_PEEK))
 			sk_eat_skb(sk, skb);
 		continue;
 
 	found_fin_ok:
 		/* Process the FIN. */
+	 /* 这里开始处理FIN数据包 */
+		 /* FIN标志也占用一个序列号，因此要给序列号加一 */
 		++*seq;
+		/* 如果没有设置MSG_PEEK标志，则需要从接收队列中消耗掉这个数据包 */
 		if (!(flags & MSG_PEEK))
 			sk_eat_skb(sk, skb);
+		 /* 接收到FIN标志，表示对端已经关闭了写通道，那么对于本端来说，这是最后一个可读数据包，因此退出循环 */
 		break;
 	} while (len > 0);
 
 	if (user_recv) {
+		 /* prequeue队列中仍然有未读取的数据包 */
 		if (!skb_queue_empty(&tp->ucopy.prequeue)) {
 			int chunk;
-
+			 /* 设置要读取的长度 */
 			tp->ucopy.len = copied > 0 ? len : 0;
-
+			/* 处理prequeue队列 */
 			tcp_prequeue_process(sk);
 
 			if (copied > 0 && (chunk = len - tp->ucopy.len) != 0) {
@@ -1949,8 +2006,9 @@ skip_copy:
 	 */
 
 	/* Clean up data we have read: This will do ACK frames. */
+	 /* 释放已经读取的数据包 */
 	tcp_cleanup_rbuf(sk, copied);
-
+	 /* 释放套接字控制权 */
 	release_sock(sk);
 	return copied;
 
@@ -1959,6 +2017,7 @@ out:
 	return err;
 
 recv_urg:
+	 /* 接收紧急数据 */
 	err = tcp_recv_urg(sk, msg, len, flags);
 	goto out;
 

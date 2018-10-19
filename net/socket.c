@@ -1718,22 +1718,26 @@ SYSCALL_DEFINE6(recvfrom, int, fd, void __user *, ubuf, size_t, size,
 	err = import_single_range(READ, ubuf, size, &iov, &msg.msg_iter);
 	if (unlikely(err))
 		return err;
+	 /* 从文件描述符得到套接字结构 */
 	sock = sockfd_lookup_light(fd, &err, &fput_needed);
 	if (!sock)
 		goto out;
-
+	 /* 设置消息的存储地址信息 */
 	msg.msg_control = NULL;
 	msg.msg_controllen = 0;
+	/* 设置消息的数据段信息 */
 	/* Save some cycles and don't copy the address if not needed */
 	msg.msg_name = addr ? (struct sockaddr *)&address : NULL;
 	/* We assume all kernel code knows the size of sockaddr_storage */
 	msg.msg_namelen = 0;
 	msg.msg_iocb = NULL;
 	msg.msg_flags = 0;
+	/* 如果套接字设置了O_NONBLOCK标志，即非阻塞标志，则设置MSG_DONTWAIT标志，表示此次接收消息，无须等待 */
 	if (sock->file->f_flags & O_NONBLOCK)
 		flags |= MSG_DONTWAIT;
+	/* 调用sock_recvmsg接收数据 */
 	err = sock_recvmsg(sock, &msg, iov_iter_count(&msg.msg_iter), flags);
-
+	/* 将地址信息复制到用户空间 */
 	if (err >= 0 && addr != NULL) {
 		err2 = move_addr_to_user(&address,
 					 msg.msg_namelen, addr, addr_len);
@@ -2121,7 +2125,7 @@ static int ___sys_recvmsg(struct socket *sock, struct user_msghdr __user *msg,
 	int __user *uaddr_len = COMPAT_NAMELEN(msg);
 
 	msg_sys->msg_name = &addr;
-
+	/* 将消息头从用户空间复制到内核空间 */
 	if (MSG_CMSG_COMPAT & flags)
 		err = get_compat_msghdr(msg_sys, msg_compat, &uaddr, &iov);
 	else
@@ -2143,7 +2147,7 @@ static int ___sys_recvmsg(struct socket *sock, struct user_msghdr __user *msg,
 	if (err < 0)
 		goto out_freeiov;
 	len = err;
-
+	/* 将发送端的地址复制到用户空间 */
 	if (uaddr != NULL) {
 		err = move_addr_to_user(&addr,
 					msg_sys->msg_namelen, uaddr,

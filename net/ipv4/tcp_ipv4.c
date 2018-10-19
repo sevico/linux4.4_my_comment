@@ -1520,7 +1520,7 @@ void tcp_v4_early_demux(struct sk_buff *skb)
 bool tcp_prequeue(struct sock *sk, struct sk_buff *skb)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
-
+	  /* 配置了低延时TCP，或者该套接字没有对应的用户态进程，返回失败。让内核直接处理TCP数据包。 */
 	if (sysctl_tcp_low_latency || !tp->ucopy.task)
 		return false;
 
@@ -1538,14 +1538,15 @@ bool tcp_prequeue(struct sock *sk, struct sk_buff *skb)
 		skb_dst_drop(skb);
 	else
 		skb_dst_force_safe(skb);
-
+	/* 将数据包追加到prequeue队列中，并增加相应的内存统计。 */
 	__skb_queue_tail(&tp->ucopy.prequeue, skb);
 	tp->ucopy.memory += skb->truesize;
 	if (tp->ucopy.memory > sk->sk_rcvbuf) {
+		 /* 当超过了套接字指定的接收缓存大小时 */
 		struct sk_buff *skb1;
 
 		BUG_ON(sock_owned_by_user(sk));
-
+		/* 将数据包从prequeue中转移到backlog中 */
 		while ((skb1 = __skb_dequeue(&tp->ucopy.prequeue)) != NULL) {
 			sk_backlog_rcv(sk, skb1);
 			NET_INC_STATS_BH(sock_net(sk),
@@ -1554,8 +1555,10 @@ bool tcp_prequeue(struct sock *sk, struct sk_buff *skb)
 
 		tp->ucopy.memory = 0;
 	} else if (skb_queue_len(&tp->ucopy.prequeue) == 1) {
+		 /* 如果该数据包是prequeue中的第一个数据包，则唤醒在该套接字中等待接收的进程 */
 		wake_up_interruptible_sync_poll(sk_sleep(sk),
 					   POLLIN | POLLRDNORM | POLLRDBAND);
+		  /* 如果ack定时器没有被调度，则设置ack定时器 */
 		if (!inet_csk_ack_scheduled(sk))
 			inet_csk_reset_xmit_timer(sk, ICSK_TIME_DACK,
 						  (3 * tcp_rto_min(sk)) / 4,
@@ -1592,20 +1595,25 @@ int tcp_v4_rcv(struct sk_buff *skb)
 	int ret;
 	struct net *net = dev_net(skb->dev);
 	/* 如果数据包不是发给本机的，则drop掉 */
+	/* 丢弃不是发给自己的数据包 */
 	if (skb->pkt_type != PACKET_HOST)
 		goto discard_it;
 
 	/* Count it even if it's bad */
 	TCP_INC_STATS_BH(net, TCP_MIB_INSEGS);
 	 /* 数据包至少还有一个TCP报文头部长度 */
+	/* 检查数据包至少要有TCP固定首部的大小 */
 	if (!pskb_may_pull(skb, sizeof(struct tcphdr)))
 		goto discard_it;
 	/* 得到TCP报文头部 */
+	 /* 获得TCP首部地址 */
 	th = tcp_hdr(skb);
 	 /* 检查TCP的数据偏移，至少要比头部大 */
+	/* 检查TCP的数据偏移量是否合法 ，不能小于TCP固定首部的大小 */
 	if (th->doff < sizeof(struct tcphdr) / 4)
 		goto bad_packet;
 	 /* 检查数据段长度  */
+	/* 检查数据包的大小是否满足TCP指定的数据偏移位置 */
 	if (!pskb_may_pull(skb, th->doff * 4))
 		goto discard_it;
 
@@ -1614,6 +1622,7 @@ int tcp_v4_rcv(struct sk_buff *skb)
 	 * provided case of th->doff==0 is eliminated.
 	 * So, we defer the checks. */
 	/* 计算校验和 */
+	 /* 如果需要检查校验和，则进行校验和初始化 */
 	if (skb_checksum_init(skb, IPPROTO_TCP, inet_compute_pseudo))
 		goto csum_error;
 	 /* 重新得到TCP头部。因为前面的代码可能会重新申请skb*/
@@ -1627,6 +1636,7 @@ int tcp_v4_rcv(struct sk_buff *skb)
 		sizeof(struct inet_skb_parm));
 	barrier();
 	 /* 设置TCP控制块的序列号，结束序列号，确认序列号等 */
+	/* 根据TCP报文信息，设置skb的TCP控制块 */
 	TCP_SKB_CB(skb)->seq = ntohl(th->seq);
 	TCP_SKB_CB(skb)->end_seq = (TCP_SKB_CB(skb)->seq + th->syn + th->fin +
 				    skb->len - th->doff * 4);
@@ -1638,10 +1648,11 @@ int tcp_v4_rcv(struct sk_buff *skb)
 
 lookup:
 	/*根据端口信息，找到对应的sock结构。这里先对已经连接的sock进行查找，然后对监听的sock进行查找*/
+	/* 查找匹配的TCP套接字 */
 	sk = __inet_lookup_skb(&tcp_hashinfo, skb, th->source, th->dest);
 	if (!sk)
 		goto no_tcp_socket;
-
+	 /* 找到匹配的套接字并开始处理，*/
 process:
 	/* 如果sock处于TIME_WAIT状态，则跳转到do_time_wait */
 	if (sk->sk_state == TCP_TIME_WAIT)
@@ -1713,12 +1724,13 @@ process:
 	tcp_sk(sk)->segs_in += max_t(u16, 1, skb_shinfo(skb)->gso_segs);
 	ret = 0;
 	if (!sock_owned_by_user(sk)) {
+		 /* 用户态没有正在使用这个套接字 */
 		 /* 把数据包放到prequeue中 */
 		if (!tcp_prequeue(sk, skb))
 			/* 如果放到prequeue中失败，则只能即时处理该数据包 */
 			ret = tcp_v4_do_rcv(sk, skb);
 	} 　　    /* else if的时候，意味着用户进程正在使用这个套接字
-			那么就把数据包保存到backlog中。*/
+			那么就把数据包保存到backlog中。如果失败的话，就丢弃这个包*/
 		else if (unlikely(sk_add_backlog(sk, skb,
 					   sk->sk_rcvbuf + sk->sk_sndbuf))) {
 		bh_unlock_sock(sk);

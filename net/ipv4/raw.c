@@ -121,9 +121,18 @@ EXPORT_SYMBOL_GPL(raw_unhash_sk);
 static struct sock *__raw_v4_lookup(struct net *net, struct sock *sk,
 		unsigned short num, __be32 raddr, __be32 laddr, int dif)
 {
+	/* 遍历套接字 */
 	sk_for_each_from(sk) {
 		struct inet_sock *inet = inet_sk(sk);
-
+		/*
+检查如下几个条件：
+1）检查名称空间。
+2）比较协议号。
+3）如果套接字设置了目的地址且地址相同。
+4）如果套接字设置了源地址且地址相同。
+5）如果套接字绑定了网卡，且网卡相同。
+只有当以上五个条件都匹配的时候，该套接字才匹配。
+*/
 		if (net_eq(sock_net(sk), net) && inet->inet_num == num	&&
 		    !(inet->inet_daddr && inet->inet_daddr != raddr) 	&&
 		    !(inet->inet_rcv_saddr && inet->inet_rcv_saddr != laddr) &&
@@ -171,28 +180,35 @@ static int raw_v4_input(struct sk_buff *skb, const struct iphdr *iph, int hash)
 	struct hlist_head *head;
 	int delivered = 0;
 	struct net *net;
-
+	 /* 与raw_local_deliver不同，因为需要使用到头结点中的内容，所以需要对这个桶上锁，才能保证
+ 在处理这个桶的过程中，所有节点都是有效的。*/
 	read_lock(&raw_v4_hashinfo.lock);
+	  /* 再次检查头结点 */
 	head = &raw_v4_hashinfo.ht[hash];
 	if (hlist_empty(head))
 		goto out;
-
+	 /* 获得网络名称空间 */
 	net = dev_net(skb->dev);
+	 /* 查询匹配的原始套接字 */
 	sk = __raw_v4_lookup(net, __sk_head(head), iph->protocol,
 			     iph->saddr, iph->daddr,
 			     skb->dev->ifindex);
-
+	 /* 若找到了匹配的原始套接字，则继续处理 */
 	while (sk) {
 		delivered = 1;
+		 /* 如果数据包不是ICMP数据包，或者不是被指定要过滤的ICMP类型 */
 		if ((iph->protocol != IPPROTO_ICMP || !icmp_filter(sk, skb)) &&
 		    ip_mc_sf_allow(sk, iph->daddr, iph->saddr,
 				   skb->dev->ifindex)) {
+			/* 数据包要发给该套接字，需要clone一个新的skb */
 			struct sk_buff *clone = skb_clone(skb, GFP_ATOMIC);
 
 			/* Not releasing hash table! */
+			 /* 若clone成功，则调用原始套接字的接收函数 */
 			if (clone)
 				raw_rcv(sk, clone);
 		}
+		/* 继续查询后面的套接字 */
 		sk = __raw_v4_lookup(net, sk_next(sk), iph->protocol,
 				     iph->saddr, iph->daddr,
 				     skb->dev->ifindex);
@@ -206,14 +222,17 @@ int raw_local_deliver(struct sk_buff *skb, int protocol)
 {
 	int hash;
 	struct sock *raw_sk;
-
+	/* 根据传输层协议确定hash桶索引 */
 	hash = protocol & (RAW_HTABLE_SIZE - 1);
+	 /* 获得该桶的头结点 */
 	raw_sk = sk_head(&raw_v4_hashinfo.ht[hash]);
 
 	/* If there maybe a raw socket we must check - if not we
 	 * don't care less
 	 */
+	  /* 当头结点不为空时，才进入raw_v4_input做进一步检查 */
 	if (raw_sk && !raw_v4_input(skb, ip_hdr(skb), hash))
+		 /* 如果没有找到匹配的原始套接字，则重置raw_sk为NULL。 */
 		raw_sk = NULL;
 
 	return raw_sk != NULL;

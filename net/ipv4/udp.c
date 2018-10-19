@@ -342,34 +342,38 @@ static inline int compute_score(struct sock *sk, struct net *net,
 {
 	int score;
 	struct inet_sock *inet;
-
+	/* 比较名称空间，端口等 */
 	if (!net_eq(sock_net(sk), net) ||
 	    udp_sk(sk)->udp_port_hash != hnum ||
 	    ipv6_only_sock(sk))
 		return -1;
-
+	/* 若套接字指明为PF_INET，则加1分 */
 	score = (sk->sk_family == PF_INET) ? 2 : 1;
 	inet = inet_sk(sk);
-
+	/* 套接字绑定了接收地址 */
 	if (inet->inet_rcv_saddr) {
+		/* 如果数据包的目的地址与绑定接收地址不符，则分数为-1，相同则增加4分。*/
 		if (inet->inet_rcv_saddr != daddr)
 			return -1;
 		score += 4;
 	}
-
+	 /* 套接字设置了对端目的地址 */
 	if (inet->inet_daddr) {
+		/* 如果数据包的源地址与设置的目的地址不同，则分数为-1，相同则增加4分 */
 		if (inet->inet_daddr != saddr)
 			return -1;
 		score += 4;
 	}
-
+	/* 套接字设置了对端目的端口 */
 	if (inet->inet_dport) {
+		/* 如果数据包的源端口与设置的目的端口不同，则分数为-1，相同则增加4分 */
 		if (inet->inet_dport != sport)
 			return -1;
 		score += 4;
 	}
-
+	/* 套接字绑定了网卡 */
 	if (sk->sk_bound_dev_if) {
+		 /* 如果接受数据包的网卡与绑定网卡不同，则分数为-1，相同则增加4分 */
 		if (sk->sk_bound_dev_if != dif)
 			return -1;
 		score += 4;
@@ -499,29 +503,46 @@ struct sock *__udp4_lib_lookup(struct net *net, __be32 saddr,
 	struct sock *sk, *result;
 	struct hlist_nulls_node *node;
 	unsigned short hnum = ntohs(dport);
+	 /* 使用目的端口确定hash桶索引 */
 	unsigned int hash2, slot2, slot = udp_hashfn(net, hnum, udptable->mask);
 	struct udp_hslot *hslot2, *hslot = &udptable->hash[slot];
 	int score, badness, matches = 0, reuseport = 0;
 	u32 hash = 0;
 
 	rcu_read_lock();
+	/* 若该桶的套接字个数多于10个，则需要再次定位 */
 	if (hslot->count > 10) {
+		 /* 使用目的地址和目的端口确定hash桶索引 */
 		hash2 = udp4_portaddr_hash(net, daddr, hnum);
 		slot2 = hash2 & udptable->mask;
+	/*
+UDP套接字表维护了两个hash表：
+ 第一个hash表，使用端口来索引
+ 第二个hash表，使用地址+端口来索引
+ 在进行UDP套接字匹配的时候，优先使用第一个hash表，因为第一个hash表使用的是端口进行散
+ 列索引，那么只要端口相同，无论是监听的指定IP还是任意IP，都可以在一个桶中进行匹配。但
+ 是由于端口只有65535种可能，所以可能导致不够分散，一个桶的套接字个数会比较多。而第二个
+ hash表是使用地址+端口来索引的，因此理论上套接字的分布会比第一个hash表更加分散。
+ 因此当第一个hash表对应桶的套接字多于10个时，内核会尝试去第二个hash表中进行匹配查找。
+ */
 		hslot2 = &udptable->hash2[slot2];
+	/* 尽管第二个hash表理论上会比第一个hash表分散，但是如果实际上第二个表的桶中套接字个数大于第一个表的桶中套接字个数，
+那么这时还是利用第一个hash表进行匹配 */
 		if (hslot->count < hslot2->count)
 			goto begin;
-
+		/* 在第二个hash表的桶中匹配查找套接字 */
 		result = udp4_lib_lookup2(net, saddr, sport,
 					  daddr, hnum, dif,
 					  hslot2, slot2);
 		if (!result) {
+			/* 若利用指定的IP和端口在该桶中没能找到匹配的套接字，则通常使用任意IP+端口来进行散列索引 */
 			hash2 = udp4_portaddr_hash(net, htonl(INADDR_ANY), hnum);
 			slot2 = hash2 & udptable->mask;
 			hslot2 = &udptable->hash2[slot2];
+			/* 还是要与第一个hash桶中的个数进行比较 */
 			if (hslot->count < hslot2->count)
 				goto begin;
-
+			/* 在第二个hash表中使用任意IP+端口进行匹配查找 */
 			result = udp4_lib_lookup2(net, saddr, sport,
 						  htonl(INADDR_ANY), hnum, dif,
 						  hslot2, slot2);
@@ -532,7 +553,9 @@ struct sock *__udp4_lib_lookup(struct net *net, __be32 saddr,
 begin:
 	result = NULL;
 	badness = 0;
+	/* 在第一个hash表的桶中进行查找 */
 	sk_nulls_for_each_rcu(sk, node, &hslot->head) {
+	 /* 计算该套接字的匹配得分 */
 		score = compute_score(sk, net, saddr, hnum, sport,
 				      daddr, dport, dif);
 		if (score > badness) {
@@ -556,12 +579,15 @@ begin:
 	 * not the expected one, we must restart lookup.
 	 * We probably met an item that was moved to another chain.
 	 */
+	 /*检查在查找的过程中，是否遇到了某个套接字被移到另外一个桶内的情况。这时，需要重新进行匹配。*/
 	if (get_nulls_value(node) != slot)
 		goto begin;
-
+	 /* 找到了匹配的套接字 */
 	if (result) {
+		/* 增加套接字引用计数 */
 		if (unlikely(!atomic_inc_not_zero_hint(&result->sk_refcnt, 2)))
 			result = NULL;
+		 /* 再次计算套接字得分，如小于最大分数，则重新匹配查找。之所以做二次检查，也是为了防止在匹配与增加引用的过程中，套接字发生变化。 */
 		else if (unlikely(compute_score(result, net, saddr, hnum, sport,
 				  daddr, dport, dif) < badness)) {
 			sock_put(result);
@@ -1317,6 +1343,7 @@ int udp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int noblock,
 		int flags, int *addr_len)
 {
 	struct inet_sock *inet = inet_sk(sk);
+	/* 让sin指向msg_name，用于保存发送端地址 */
 	DECLARE_SOCKADDR(struct sockaddr_in *, sin, msg->msg_name);
 	struct sk_buff *skb;
 	unsigned int ulen, copied;
@@ -1325,18 +1352,21 @@ int udp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int noblock,
 	int is_udplite = IS_UDPLITE(sk);
 	bool checksum_valid = false;
 	bool slow;
-
+	/* 用户设置了MSG_ERRQUEUE标志，用于接收错误消息。因为这个应用并不广泛，因此在此忽略这种情况，不进入该函数。 */
 	if (flags & MSG_ERRQUEUE)
 		return ip_recv_error(sk, msg, len, addr_len);
 
 try_again:
+	/* 接收了一个数据报文 */
 	skb = __skb_recv_datagram(sk, flags | (noblock ? MSG_DONTWAIT : 0),
 				  &peeked, &off, &err);
 	if (!skb)
 		goto out;
-
+	 /* 得到UDP的数据长度 */
 	ulen = skb->len - sizeof(struct udphdr);
+	/* 要复制的长度被初始化为用户指定的长度 */
 	copied = len;
+	 /* 若复制长度大于UDP的数据长度，则调整复制长度为数据长度。若复制长度小于数据长度，则设置标志MSG_TRUNC，表示数据发生了截断。 */
 	if (copied > ulen)
 		copied = ulen;
 	else if (copied < ulen)
@@ -1347,24 +1377,30 @@ try_again:
 	 * data.  If the data is truncated, or if we only want a partial
 	 * coverage checksum (UDP-Lite), do it before the copy.
 	 */
+	  /*    如果发生了数据截断，或者我们只需要部分覆盖的校验和，那么就在
+	  复制前进行校验。
+	  */
 
 	if (copied < ulen || UDP_SKB_CB(skb)->partial_cov) {
+		 /* 进行UDP校验和校验 */
 		checksum_valid = !udp_lib_checksum_complete(skb);
 		if (!checksum_valid)
 			goto csum_copy_err;
 	}
-
+	/* 判断是否需要进行校验和校验 */
 	if (checksum_valid || skb_csum_unnecessary(skb))
+		 /*  若不需要进行校验，则直接复制数据包内容到msg_iov中 */
 		err = skb_copy_datagram_msg(skb, sizeof(struct udphdr),
 					    msg, copied);
 	else {
+		 /* 复制数据包内容的同时，进行校验和校验 */
 		err = skb_copy_and_csum_datagram_msg(skb, sizeof(struct udphdr),
 						     msg);
 
 		if (err == -EINVAL)
 			goto csum_copy_err;
 	}
-
+	/* 复制错误检查 */
 	if (unlikely(err)) {
 		trace_kfree_skb(skb, udp_recvmsg);
 		if (!peeked) {
@@ -1374,14 +1410,15 @@ try_again:
 		}
 		goto out_free;
 	}
-
+	/* 如果不是peek动作，则增加相应的统计计数 */
 	if (!peeked)
 		UDP_INC_STATS_USER(sock_net(sk),
 				UDP_MIB_INDATAGRAMS, is_udplite);
-
+	/* 更新套接字的最新的接收数据包时间戳及丢包消息 */
 	sock_recv_ts_and_drops(msg, sk, skb);
 
 	/* Copy the address. */
+	 /* 如果用户指定了保存对端地址的参数，则从数据包中复制地址和端口信息 */
 	if (sin) {
 		sin->sin_family = AF_INET;
 		sin->sin_port = udp_hdr(skb)->source;
@@ -1389,18 +1426,21 @@ try_again:
 		memset(sin->sin_zero, 0, sizeof(sin->sin_zero));
 		*addr_len = sizeof(*sin);
 	}
+	/* 设置了接收控制消息 */
 	if (inet->cmsg_flags)
 		ip_cmsg_recv_offset(msg, skb, sizeof(struct udphdr), off);
-
+	/* 设置了已复制的字节长度 */
 	err = copied;
 	if (flags & MSG_TRUNC)
 		err = ulen;
 
 out_free:
+	/* 释放接收到的这个数据包 */
 	skb_free_datagram_locked(sk, skb);
 out:
+	 /* 返回读取的字节数 */
 	return err;
-
+	/* 错误处理 */
 csum_copy_err:
 	slow = lock_sock_fast(sk);
 	if (!skb_kill_datagram(sk, skb, flags)) {
@@ -1820,24 +1860,31 @@ int __udp4_lib_rcv(struct sk_buff *skb, struct udp_table *udptable,
 	/*
 	 *  Validate the packet.
 	 */
+	 /* 校验数据包至少要有UDP首部大小 */
 	if (!pskb_may_pull(skb, sizeof(struct udphdr)))
 		goto drop;		/* No space for header. */
-
+	 /* 得到UDP首部指针 */
 	uh   = udp_hdr(skb);
 	ulen = ntohs(uh->len);
 	saddr = ip_hdr(skb)->saddr;
 	daddr = ip_hdr(skb)->daddr;
-
+	 /* 如果UDP数据包长度超过数据包的实际长度，则出错 */
 	if (ulen > skb->len)
 		goto short_packet;
-
+	/*
+判断协议是否为UDP协议。
+也许有的读者会觉得很奇怪，为什么在UDP的接收函数中还要判断协议是否为UDP？
+因为这个函数还用于处理UDPLITE协议。
+ */
 	if (proto == IPPROTO_UDP) {
 		/* UDP validates ulen. */
+	 /* 如果是UDP协议，则将数据包的长度更新为UDP指定的长度，并更新校验和 */
 		if (ulen < sizeof(*uh) || pskb_trim_rcsum(skb, ulen))
 			goto short_packet;
+		 /* 因为前面的操作可能会导致skb内存变化，所以需要重新获得UDP首部指针 */
 		uh = udp_hdr(skb);
 	}
-
+	/* 初始化UDP校验和 */
 	if (udp4_csum_init(skb, uh, proto))
 		goto csum_error;
 
@@ -1858,11 +1905,11 @@ int __udp4_lib_rcv(struct sk_buff *skb, struct udp_table *udptable,
 			return -ret;
 		return 0;
 	}
-
+	 /* 如果路由标志位广播或多播，则表明该UDP数据包为广播或多播 */
 	if (rt->rt_flags & (RTCF_BROADCAST|RTCF_MULTICAST))
 		return __udp4_lib_mcast_deliver(net, skb, uh,
 						saddr, daddr, udptable, proto);
-
+	/* 确定匹配的UDP套接字 */
 	sk = __udp4_lib_lookup_skb(skb, uh->source, uh->dest, udptable);
 	if (sk) {
 		int ret;
@@ -1870,7 +1917,8 @@ int __udp4_lib_rcv(struct sk_buff *skb, struct udp_table *udptable,
 		if (inet_get_convert_csum(sk) && uh->check && !IS_UDPLITE(sk))
 			skb_checksum_try_convert(skb, IPPROTO_UDP, uh->check,
 						 inet_compute_pseudo);
-
+		/* 找到了匹配的套接字 */
+		/* 将数据包加入到UDP的接收队列 */
 		ret = udp_queue_rcv_skb(sk, skb);
 		sock_put(sk);
 
@@ -1881,15 +1929,17 @@ int __udp4_lib_rcv(struct sk_buff *skb, struct udp_table *udptable,
 			return -ret;
 		return 0;
 	}
-
+	/* 进行xfrm策略检查 */
 	if (!xfrm4_policy_check(NULL, XFRM_POLICY_IN, skb))
 		goto drop;
+	/* 重置netfilter信息 */
 	nf_reset(skb);
 
 	/* No socket. Drop packet silently, if checksum is wrong */
+	/* 检查UDP检验和 */
 	if (udp_lib_checksum_complete(skb))
 		goto csum_error;
-
+	 /* 若不知道匹配的UDP套接字，则发送ICMP错误消息 */
 	UDP_INC_STATS_BH(net, UDP_MIB_NOPORTS, proto == IPPROTO_UDPLITE);
 	icmp_send(skb, ICMP_DEST_UNREACH, ICMP_PORT_UNREACH, 0);
 
