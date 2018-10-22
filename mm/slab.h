@@ -357,7 +357,9 @@ struct kmem_cache_node {
 	unsigned long nr_partial;
 	struct list_head partial;
 #ifdef CONFIG_SLUB_DEBUG
+	/* 该node中此kmem_cache的所有slab的数量 */
 	atomic_long_t nr_slabs;
+	/* 该node中此kmem_cache中所有对象的数量 */
 	atomic_long_t total_objects;
 	struct list_head full;
 #endif
