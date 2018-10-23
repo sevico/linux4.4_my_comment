@@ -13,6 +13,11 @@ enum { MAX_NESTED_LINKS = 8 };
 /*
  * Type of the last component on LOOKUP_PARENT
  */
+ //LAST_NORM 普通的路径名
+ //LAST_ROOT "/"
+ //LAST_DOT  "."
+ //LAST_DOTDOT ".."
+ //LAST_BIND 符号链接
 enum {LAST_NORM, LAST_ROOT, LAST_DOT, LAST_DOTDOT, LAST_BIND};
 
 /*

@@ -1010,33 +1010,38 @@ EXPORT_SYMBOL(file_open_root);
 long do_sys_open(int dfd, const char __user *filename, int flags, umode_t mode)
 {
 	struct open_flags op;
+	//检查并包装标志
 	int fd = build_open_flags(flags, mode, &op);
 	struct filename *tmp;
 
 	if (fd)
 		return fd;
-
+	//用户空间的路径名复制到内核空间
 	tmp = getname(filename);
 	if (IS_ERR(tmp))
 		return PTR_ERR(tmp);
-
+	//取得空闲的文件表述符
 	fd = get_unused_fd_flags(flags);
 	if (fd >= 0) {
+		//路径的搜寻和文件的打开
 		struct file *f = do_filp_open(dfd, tmp, &op);
 		if (IS_ERR(f)) {
 			put_unused_fd(fd);
 			fd = PTR_ERR(f);
 		} else {
+			//唤醒文件系统中的监控进程
 			fsnotify_open(f);
-			fd_install(fd, f);
+			fd_install(fd, f); //为这个文件描述符安装文件
 		}
 	}
 	putname(tmp);
+	//将文件描述符返回用户空间
 	return fd;
 }
 
 SYSCALL_DEFINE3(open, const char __user *, filename, int, flags, umode_t, mode)
 {
+	//64位系统强制开启O_LARGEFILE
 	if (force_o_largefile())
 		flags |= O_LARGEFILE;
 

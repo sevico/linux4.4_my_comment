@@ -354,6 +354,7 @@ struct kmem_cache_node {
 #endif
 
 #ifdef CONFIG_SLUB
+	//slab节点中slab的数量
 	unsigned long nr_partial;
 	struct list_head partial;
 #ifdef CONFIG_SLUB_DEBUG

@@ -127,11 +127,12 @@ getname_flags(const char __user *filename, int flags, int *empty)
 	struct filename *result;
 	char *kname;
 	int len;
-
+	//根据uptr检查是否已存在内核响应的filename条目
 	result = audit_reusename(filename);
 	if (result)
 		return result;
-
+	//申请4KB的内存页来存储从用户空间拷贝来的文件名
+	//在开始的一小块空间放置结构体 struct filename，之后的空间放置字符串
 	result = __getname();
 	if (unlikely(!result))
 		return ERR_PTR(-ENOMEM);
@@ -140,9 +141,10 @@ getname_flags(const char __user *filename, int flags, int *empty)
 	 * First, try to embed the struct filename inside the names_cache
 	 * allocation
 	 */
+	 //初始化字符串指针 kname，使其指向这个字符串的首地址
 	kname = (char *)result->iname;
 	result->name = kname;
-
+	
 	len = strncpy_from_user(kname, filename, EMBEDDED_NAME_MAX);
 	if (unlikely(len < 0)) {
 		__putname(result);
@@ -155,16 +157,18 @@ getname_flags(const char __user *filename, int flags, int *empty)
 	 * names_cache allocation for the pathname, and re-do the copy from
 	 * userland.
 	 */
+	 //如果这个字符串已经填满了内存页剩余空间
+	 //需要将结构体 struct filename 从这个内存页中分离并单独分配空间
 	if (unlikely(len == EMBEDDED_NAME_MAX)) {
 		const size_t size = offsetof(struct filename, iname[1]);
-		kname = (char *)result;
+		kname = (char *)result;	
 
 		/*
 		 * size is chosen that way we to guarantee that
 		 * result->iname[0] is within the same object and that
 		 * kname can't be equal to result->iname, no matter what.
 		 */
-		result = kzalloc(size, GFP_KERNEL);
+		result = kzalloc(size, GFP_KERNEL); //分配独立的struct filename
 		if (unlikely(!result)) {
 			__putname(kname);
 			return ERR_PTR(-ENOMEM);
@@ -196,6 +200,7 @@ getname_flags(const char __user *filename, int flags, int *empty)
 
 	result->uptr = filename;
 	result->aname = NULL;
+	//将该结构体加入缓存队列
 	audit_getname(result);
 	return result;
 }
@@ -495,13 +500,21 @@ EXPORT_SYMBOL(path_put);
 
 #define EMBEDDED_LEVELS 2
 struct nameidata {
+	//保存当前搜索到的路径
 	struct path	path;
+	//保存当前子路径名及其散列值
 	struct qstr	last;
+	//保存根目录的信息
 	struct path	root;
+	//指向当前找到的目录项的 inode 结构
 	struct inode	*inode; /* path.dentry.d_inode */
+	//一些和查找（lookup）相关的标志位
 	unsigned int	flags;
+	//seq 是相关目录项的顺序锁序号,m_seq 是相关文件系统（其实是 mount）的顺序锁序号
 	unsigned	seq, m_seq;
+	//当前节点类型
 	int		last_type;
+	//记录在解析符号链接过程中的递归深度
 	unsigned	depth;
 	int		total_link_count;
 	struct saved {
@@ -1298,12 +1311,15 @@ static bool __follow_mount_rcu(struct nameidata *nd, struct path *path,
 static int follow_dotdot_rcu(struct nameidata *nd)
 {
 	struct inode *inode = nd->inode;
+	//获取根目录
 	if (!nd->root.mnt)
 		set_root_rcu(nd);
 
 	while (1) {
+		//当前路径就是预设根目录的话,跳出循环
 		if (path_equal(&nd->path, &nd->root))
 			break;
+		//当前路径不是预设根目录，也不是当前文件系统的根目录，向上走一层
 		if (nd->path.dentry != nd->path.mnt->mnt_root) {
 			struct dentry *old = nd->path.dentry;
 			struct dentry *parent = old->d_parent;
@@ -1313,7 +1329,7 @@ static int follow_dotdot_rcu(struct nameidata *nd)
 			seq = read_seqcount_begin(&parent->d_seq);
 			if (unlikely(read_seqcount_retry(&old->d_seq, nd->seq)))
 				return -ECHILD;
-			nd->path.dentry = parent;
+			nd->path.dentry = parent; //直接将父目录项拿过来
 			nd->seq = seq;
 			if (unlikely(!path_connected(&nd->path)))
 				return -ENOENT;
@@ -1737,6 +1753,7 @@ static int walk_component(struct nameidata *nd, int flags)
 	 * parent relationships.
 	 */
 	if (unlikely(nd->last_type != LAST_NORM)) {
+		//处理“.”或“..”
 		err = handle_dots(nd, nd->last_type);
 		if (flags & WALK_PUT)
 			put_link(nd);
@@ -1900,7 +1917,7 @@ static inline u64 hash_name(const char *name)
 static int link_path_walk(const char *name, struct nameidata *nd)
 {
 	int err;
-
+	//略过连续的“/”
 	while (*name=='/')
 		name++;
 	if (!*name)
@@ -1918,6 +1935,7 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 		hash_len = hash_name(name);
 
 		type = LAST_NORM;
+		//子路径名是否是“.”或“..”并做好标记
 		if (name[0] == '.') switch (hashlen_len(hash_len)) {
 			case 2:
 				if (name[1] == '.') {
@@ -1931,6 +1949,7 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 		if (likely(type == LAST_NORM)) {
 			struct dentry *parent = nd->path.dentry;
 			nd->flags &= ~LOOKUP_JUMPED;
+			//这个当前目录项是否需要重新计算一下散列值
 			if (unlikely(parent->d_flags & DCACHE_OP_HASH)) {
 				struct qstr this = { { .hash_len = hash_len }, .name = name };
 				err = parent->d_op->d_hash(parent, &this);
@@ -1940,18 +1959,20 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 				name = this.name;
 			}
 		}
-
+		//把子路径名更新一下
 		nd->last.hash_len = hash_len;
 		nd->last.name = name;
 		nd->last_type = type;
 
 		name += hashlen_len(hash_len);
+		//完成
 		if (!*name)
 			goto OK;
 		/*
 		 * If it wasn't NUL, we know it was '/'. Skip that
 		 * slash, and continue until no more slashes.
 		 */
+		 //略过连续"/",并让 name 指向下一个子路径
 		do {
 			name++;
 		} while (unlikely(*name == '/'));
@@ -2004,7 +2025,7 @@ static const char *path_init(struct nameidata *nd, unsigned flags)
 
 	if (!*s)
 		flags &= ~LOOKUP_RCU;
-
+	//LAST_ROOT，意思就是在路径名中只有“/”
 	nd->last_type = LAST_ROOT; /* if there are only slashes... */
 	nd->flags = flags | LOOKUP_JUMPED | LOOKUP_PARENT;
 	nd->depth = 0;
@@ -2034,6 +2055,7 @@ static const char *path_init(struct nameidata *nd, unsigned flags)
 	nd->root.mnt = NULL;
 
 	nd->m_seq = read_seqbegin(&mount_lock);
+	//如果路径是绝对路径（以“/”开头）的话，就把起始路径指向进程的根目录
 	if (*s == '/') {
 		if (flags & LOOKUP_RCU) {
 			rcu_read_lock();
@@ -2045,6 +2067,8 @@ static const char *path_init(struct nameidata *nd, unsigned flags)
 		}
 		nd->path = nd->root;
 	} else if (nd->dfd == AT_FDCWD) {
+		//如果路径是相对路径，并且 dfd 是AT_FDCWD
+		//那就说明起始路径需要指向当前工作目录
 		if (flags & LOOKUP_RCU) {
 			struct fs_struct *fs = current->fs;
 			unsigned seq;
@@ -2053,13 +2077,14 @@ static const char *path_init(struct nameidata *nd, unsigned flags)
 
 			do {
 				seq = read_seqcount_begin(&fs->seq);
-				nd->path = fs->pwd;
+				nd->path = fs->pwd;//设置起始路径指向当前工作目录
 				nd->seq = __read_seqcount_begin(&nd->path.dentry->d_seq);
 			} while (read_seqcount_retry(&fs->seq, seq));
 		} else {
 			get_fs_pwd(current->fs, &nd->path);
 		}
 	} else {
+		//如果给了一个有效的 dfd，那就需要把起始路径指向这个给定的目录
 		/* Caller must check execute permissions on the starting path component */
 		struct fd f = fdget_raw(nd->dfd);
 		struct dentry *dentry;
@@ -3306,19 +3331,20 @@ static struct file *path_openat(struct nameidata *nd,
 	struct file *file;
 	int opened = 0;
 	int error;
-
+	//分配file结构体
 	file = get_empty_filp();
 	if (IS_ERR(file))
 		return file;
 
 	file->f_flags = op->open_flag;
-
+	//处理临时文件
 	if (unlikely(file->f_flags & __O_TMPFILE)) {
 		error = do_tmpfile(nd, flags, op, file, &opened);
 		goto out2;
 	}
-
+	
 	s = path_init(nd, flags);
+	//正常返回后nd 中的 path 就已经设定为起始路径了
 	if (IS_ERR(s)) {
 		put_filp(file);
 		return ERR_CAST(s);
@@ -3353,11 +3379,21 @@ out2:
 struct file *do_filp_open(int dfd, struct filename *pathname,
 		const struct open_flags *op)
 {
+	//临时性的数据结构，用来存储遍历路径的中间结果
 	struct nameidata nd;
 	int flags = op->lookup_flags;
 	struct file *filp;
 
 	set_nameidata(&nd, dfd, pathname);
+	/*
+	rcu-walk（3242）和 ref-walk（3244）。
+	在 rcu-walk 期间将会禁止抢占，也决不能出现进程阻塞，所以其效率很高；
+	ref-walk 会在 rcu-walk 失败、进程需要随眠或者需要取得某结构的引用计数（reference count）的情况下切换进来，
+	很明显它的效率大大低于 rcu-walk。最后 REVAL（3246）其实也是 ref-walk，
+	在以后我们会看到，该模式是在已经完成了路径查找，打开具体文件时，
+	如果该文件已经过期（stale）才启动的，所以 REVAL 是给具体文件系统自己去解释的。
+	其实 REVAL 几乎不会用到，在内核的文件系统中只有 nfs 用到了这个模式。
+	*/
 	filp = path_openat(&nd, op, flags | LOOKUP_RCU);
 	if (unlikely(filp == ERR_PTR(-ECHILD)))
 		filp = path_openat(&nd, op, flags);
