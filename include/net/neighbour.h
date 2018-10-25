@@ -148,8 +148,10 @@ struct neighbour {
 	__u8			type;
 	__u8			dead;
 	seqlock_t		ha_lock;
+	//设备的硬件地址
 	unsigned char		ha[ALIGN(MAX_ADDR_LEN, sizeof(unsigned long))];
 	struct hh_cache		hh;
+	//通过网络适配器传输分组时调用
 	int			(*output)(struct neighbour *, struct sk_buff *);
 	const struct neigh_ops	*ops;
 	struct rcu_head		rcu;

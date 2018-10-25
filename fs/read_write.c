@@ -414,13 +414,14 @@ static ssize_t new_sync_read(struct file *filp, char __user *buf, size_t len, lo
 	struct kiocb kiocb;
 	struct iov_iter iter;
 	ssize_t ret;
-
+	// 设置要读取的长度和开始的偏移量
 	init_sync_kiocb(&kiocb, filp);
 	kiocb.ki_pos = *ppos;
 	iov_iter_init(&iter, READ, &iov, 1, len);
-
+	// 实际开始进行读取操作
 	ret = filp->f_op->read_iter(&kiocb, &iter);
 	BUG_ON(ret == -EIOCBQUEUED);
+	// 读完后更新最后的offset
 	*ppos = kiocb.ki_pos;
 	return ret;
 }

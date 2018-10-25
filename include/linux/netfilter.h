@@ -89,9 +89,12 @@ struct nf_hook_ops {
 
 	/* User fills in from here down. */
 	nf_hookfn		*hook;
+	//指向所属设备
 	struct net_device	*dev;
 	void			*priv;
+	//协议族
 	u_int8_t		pf;
+	//挂钩相关的编号
 	unsigned int		hooknum;
 	/* Hooks are ordered in ascending priority. */
 	int			priority;

@@ -30,8 +30,10 @@ struct mountpoint {
 };
 
 struct mount {
+	//指向父 mount 结构
 	struct hlist_node mnt_hash;
 	struct mount *mnt_parent;
+	//指向挂载点
 	struct dentry *mnt_mountpoint;
 	struct vfsmount mnt;
 	union {

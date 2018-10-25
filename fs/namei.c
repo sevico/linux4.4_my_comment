@@ -1342,10 +1342,13 @@ static int follow_dotdot_rcu(struct nameidata *nd)
 			unsigned seq = read_seqcount_begin(&mountpoint->d_seq);
 			if (unlikely(read_seqretry(&mount_lock, nd->m_seq)))
 				return -ECHILD;
+			//检查当前的文件系统是不是根文件系统
 			if (&mparent->mnt == nd->path.mnt)
 				break;
 			/* we know that mountpoint was pinned */
+			//取得挂载点就可以
 			nd->path.dentry = mountpoint;
+			//更新mount
 			nd->path.mnt = &mparent->mnt;
 			inode = inode2;
 			nd->seq = seq;
@@ -1353,15 +1356,18 @@ static int follow_dotdot_rcu(struct nameidata *nd)
 	}
 	while (unlikely(d_mountpoint(nd->path.dentry))) {
 		struct mount *mounted;
+		//在某个散列表中查找属于这个挂载点的 mount 结构
 		mounted = __lookup_mnt(nd->path.mnt, nd->path.dentry);
 		if (unlikely(read_seqretry(&mount_lock, nd->m_seq)))
 			return -ECHILD;
 		if (!mounted)
 			break;
+		//往下走一层，走到挂载文件系统的根目录上
 		nd->path.mnt = &mounted->mnt;
 		nd->path.dentry = mounted->mnt.mnt_root;
 		inode = nd->path.dentry->d_inode;
 		nd->seq = read_seqcount_begin(&nd->path.dentry->d_seq);
+		//回到 while开始 行再判断、查找、向下走，周而复始直到某个非挂载点。
 	}
 	nd->inode = inode;
 	return 0;
@@ -1563,7 +1569,9 @@ static int lookup_fast(struct nameidata *nd,
 	if (nd->flags & LOOKUP_RCU) {
 		unsigned seq;
 		bool negative;
+	//在内存中的某个散列表里通过字符串比较查找目标 dentry
 		dentry = __d_lookup_rcu(parent, &nd->last, &seq);
+	//如果找到了就返回该 dentry
 		if (!dentry)
 			goto unlazy;
 
@@ -1573,6 +1581,7 @@ static int lookup_fast(struct nameidata *nd,
 		 */
 		*inode = d_backing_inode(dentry);
 		negative = d_is_negative(dentry);
+		//确保在我们做读取操作的期间没有人对这些结构进行改动
 		if (read_seqcount_retry(&dentry->d_seq, seq))
 			return -ECHILD;
 
@@ -1583,6 +1592,7 @@ static int lookup_fast(struct nameidata *nd,
 		 * The memory barrier in read_seqcount_begin of child is
 		 *  enough, we can use __read_seqcount_retry here.
 		 */
+		 //确保在我们做读取操作的期间没有人对这些结构进行改动
 		if (__read_seqcount_retry(&parent->d_seq, nd->seq))
 			return -ECHILD;
 
@@ -1603,6 +1613,7 @@ static int lookup_fast(struct nameidata *nd,
 			return -ENOENT;
 		path->mnt = mnt;
 		path->dentry = dentry;
+		//跨过挂载点这些“伪目标”
 		if (likely(__follow_mount_rcu(nd, path, inode, seqp)))
 			return 0;
 unlazy:
@@ -1611,7 +1622,7 @@ unlazy:
 	} else {
 		dentry = __d_lookup(parent, &nd->last);
 	}
-
+	//内存中还没有读入这个目标,进入上一层中的lookup_slow 
 	if (unlikely(!dentry))
 		goto need_lookup;
 
@@ -1633,6 +1644,7 @@ unlazy:
 	}
 	path->mnt = mnt;
 	path->dentry = dentry;
+	//检查当前 dentry 是否是个挂载点，如果是就跟下去
 	err = follow_managed(path, nd);
 	if (likely(!err))
 		*inode = d_backing_inode(path->dentry);
@@ -1759,6 +1771,7 @@ static int walk_component(struct nameidata *nd, int flags)
 			put_link(nd);
 		return err;
 	}
+	//在内存缓冲区查找相应的目标
 	err = lookup_fast(nd, &path, &inode, &seq);
 	if (unlikely(err)) {
 		if (err < 0)
@@ -1780,6 +1793,7 @@ static int walk_component(struct nameidata *nd, int flags)
 	err = should_follow_link(nd, &path, flags & WALK_GET, inode, seq);
 	if (unlikely(err))
 		return err;
+	//更新 nd 继续下一个子目录项
 	path_to_nameidata(&path, nd);
 	nd->inode = inode;
 	nd->seq = seq;
@@ -1927,7 +1941,7 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 	for(;;) {
 		u64 hash_len;
 		int type;
-
+		//例行安全检查
 		err = may_lookup(nd);
  		if (err)
 			return err;
