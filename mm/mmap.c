@@ -2823,7 +2823,11 @@ static unsigned long do_brk(unsigned long addr, unsigned long len)
 		return addr;
 
 	flags = VM_DATA_DEFAULT_FLAGS | VM_ACCOUNT | mm->def_flags;
-
+	/*
+	如果 (error & ~PAGE_MASK)为非0，说明addr最低12位非0，
+	addr就不是一个有效的地址，就以这个地址作为返回值；
+	否则，addr就是一个有效的地址（最低12位为0）
+	*/
 	error = get_unmapped_area(NULL, addr, len, 0, MAP_FIXED);
 	if (offset_in_page(error))
 		return error;
@@ -2841,6 +2845,7 @@ static unsigned long do_brk(unsigned long addr, unsigned long len)
 	/*
 	 * Clear old maps.  this also does some error checking for us
 	 */
+	 //已有的vma可能会被切分，与[addr, addr len)区域有覆盖关系的部分会被清除，在此以外的部分将被保留
 	while (find_vma_links(mm, addr, addr + len, &prev, &rb_link,
 			      &rb_parent)) {
 		if (do_munmap(mm, addr, len))

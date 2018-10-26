@@ -73,9 +73,13 @@ static inline void init_poll_funcptr(poll_table *pt, poll_queue_proc qproc)
 }
 
 struct poll_table_entry {
+	// 指向特定fd对应的file结构体
 	struct file *filp;
+	// 等待特定fd对应硬件设备的事件掩码，如POLLIN、POLLOUT、POLLERR
 	unsigned long key;
+	// 代表调用select()的应用进程，等待在fd对应设备的特定事件(读或者写)的等待队列头上，的等待队列项;
 	wait_queue_t wait;
+	// 设备驱动程序中特定事件的等待队列头
 	wait_queue_head_t *wait_address;
 };
 
@@ -83,11 +87,17 @@ struct poll_table_entry {
  * Structures and helpers for select/poll syscall
  */
 struct poll_wqueues {
+	//给__pollwait的第三个参数，调用select()的应用进程中poll_wqueues结构体的poll_table项(该进程监测的所有fd调用fop->poll函数都用这一个poll_table结构体)
 	poll_table pt;
+	//如果inline_entries空间不够用会动态申请物理内存页以链表的形式挂载poll_wqueues.table上统一管理
 	struct poll_table_page *table;
+	//保存当前调用select的用户进程struct task_struct结构体
 	struct task_struct *polling_task;
+	// 当前用户进程被唤醒后置成1，以免该进程接着进睡眠
 	int triggered;
+	 // 错误码
 	int error;
+	  // 数组inline_entries的引用下标
 	int inline_index;
 	struct poll_table_entry inline_entries[N_INLINE_POLL_ENTRIES];
 };
