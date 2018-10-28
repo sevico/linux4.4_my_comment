@@ -31,11 +31,11 @@
 #define POLLFREE	0x4000	/* currently only for epoll */
 
 #define POLL_BUSY_LOOP	0x8000
-
+// poll 使用的结构体
 struct pollfd {
-	int fd;
-	short events;
-	short revents;
+	int fd; // 描述符 
+	short events;// 关注的事件掩码  
+	short revents;// 返回的事件掩码  
 };
 
 #endif	/* __ASM_GENERIC_POLL_H */

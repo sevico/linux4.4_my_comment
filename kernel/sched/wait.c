@@ -62,6 +62,7 @@ EXPORT_SYMBOL(remove_wait_queue);
  * started to run but is not in state TASK_RUNNING. try_to_wake_up() returns
  * zero in this (rare) case, and we handle it by continuing to scan the queue.
  */
+ // 遍历并调用func 唤醒, 通常func会唤醒调用poll的线程
 static void __wake_up_common(wait_queue_head_t *q, unsigned int mode,
 			int nr_exclusive, int wake_flags, void *key)
 {
@@ -88,6 +89,8 @@ static void __wake_up_common(wait_queue_head_t *q, unsigned int mode,
  * It may be assumed that this function implies a write memory barrier before
  * changing the task state if and only if any tasks are woken up.
  */
+ // 当文件的状态发生改变时, 文件会调用此函数，此函数通过调用wait_queue_t.func通知poll的调用者  
+// 其中key是文件当前的事件掩码
 void __wake_up(wait_queue_head_t *q, unsigned int mode,
 			int nr_exclusive, void *key)
 {

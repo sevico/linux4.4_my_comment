@@ -16,7 +16,7 @@ int default_wake_function(wait_queue_t *wait, unsigned mode, int flags, void *ke
 /* __wait_queue::flags */
 #define WQ_FLAG_EXCLUSIVE	0x01
 #define WQ_FLAG_WOKEN		0x02
-
+// wait_queue 节点
 struct __wait_queue {
 	unsigned int		flags;
 	void			*private;
@@ -40,6 +40,7 @@ struct __wait_queue_head {
 	spinlock_t		lock;
 	struct list_head	task_list;
 };
+// wait_queue 头节点
 typedef struct __wait_queue_head wait_queue_head_t;
 
 struct task_struct;

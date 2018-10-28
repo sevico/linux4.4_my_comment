@@ -895,6 +895,7 @@ struct file {
 	void			*f_security;
 #endif
 	/* needed for tty driver, and maybe others */
+	// 文件内部实现细节  
 	void			*private_data;
 
 #ifdef CONFIG_EPOLL
@@ -1647,6 +1648,8 @@ struct file_operations {
 	ssize_t (*read_iter) (struct kiocb *, struct iov_iter *);
 	ssize_t (*write_iter) (struct kiocb *, struct iov_iter *);
 	int (*iterate) (struct file *, struct dir_context *);
+	// 文件提供给poll/select/epoll  
+	// 获取文件当前状态, 以及就绪通知接口函数 
 	unsigned int (*poll) (struct file *, struct poll_table_struct *);
 	long (*unlocked_ioctl) (struct file *, unsigned int, unsigned long);
 	long (*compat_ioctl) (struct file *, unsigned int, unsigned long);

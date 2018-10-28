@@ -3475,7 +3475,8 @@ asmlinkage __visible void __sched preempt_schedule_irq(void)
 
 	exception_exit(prev_state);
 }
-
+// 默认的唤醒函数,poll/select 设置的回调函数会调用此函数唤醒  
+// 直接唤醒等待队列上的线程,即将线程移到运行队列(rq)  
 int default_wake_function(wait_queue_t *curr, unsigned mode, int wake_flags,
 			  void *key)
 {

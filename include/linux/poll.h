@@ -35,13 +35,19 @@ typedef void (*poll_queue_proc)(struct file *, wait_queue_head_t *, struct poll_
  * poll_does_not_wait() and poll_requested_events() instead.
  */
 typedef struct poll_table_struct {
+	// 向wait_queue_head 添加回调节点(wait_queue_t)的接口函数
 	poll_queue_proc _qproc;
+	// 关注的事件掩码, 文件的实现利用此掩码将等待队列传递给_qproc  
 	unsigned long _key;
 } poll_table;
+// 通用的poll_wait 函数, 文件的f_ops->poll 通常会调用此函数  
 
 static inline void poll_wait(struct file * filp, wait_queue_head_t * wait_address, poll_table *p)
 {
 	if (p && p->_qproc && wait_address)
+		// 调用_qproc 在wait_address 上添加节点和回调函数  
+		 // 调用 poll_table_struct 上的函数指针向wait_address添加节点, 并设置节点的func  
+		 // (如果是select或poll 则是 __pollwait, 如果是 epoll 则是 ep_ptable_queue_proc),
 		p->_qproc(filp, wait_address, p);
 }
 
@@ -86,6 +92,7 @@ struct poll_table_entry {
 /*
  * Structures and helpers for select/poll syscall
  */
+ // select/poll 对poll_table的具体化实现
 struct poll_wqueues {
 	//给__pollwait的第三个参数，调用select()的应用进程中poll_wqueues结构体的poll_table项(该进程监测的所有fd调用fop->poll函数都用这一个poll_table结构体)
 	poll_table pt;

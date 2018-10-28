@@ -120,9 +120,11 @@ struct poll_table_page {
  */
 static void __pollwait(struct file *filp, wait_queue_head_t *wait_address,
 		       poll_table *p);
-
+// poll_wqueues 的初始化:  
+// 初始化 poll_wqueues , __pollwait会在文件就绪时被调用  
 void poll_initwait(struct poll_wqueues *pwq)
 {
+	// 初始化poll_table, 相当于调用基类的构造函数  
 	init_poll_funcptr(&pwq->pt, __pollwait);
 	pwq->polling_task = current;
 	pwq->triggered = 0;
@@ -134,16 +136,20 @@ EXPORT_SYMBOL(poll_initwait);
 
 static void free_poll_entry(struct poll_table_entry *entry)
 {
+	// 从等待队列中删除, 释放文件引用计数
 	remove_wait_queue(entry->wait_address, &entry->wait);
 	fput(entry->filp);
 }
-
+// 清理poll_wqueues 占用的资源
 void poll_freewait(struct poll_wqueues *pwq)
 {
 	struct poll_table_page * p = pwq->table;
 	int i;
+	 // 遍历所有已分配的inline poll_table_entry
 	for (i = 0; i < pwq->inline_index; i++)
 		free_poll_entry(pwq->inline_entries + i);
+	// 遍历在poll_table_page上分配的inline poll_table_entry 
+	// 并释放poll_table_page
 	while (p) {
 		struct poll_table_entry * entry;
 		struct poll_table_page *old;
@@ -159,7 +165,7 @@ void poll_freewait(struct poll_wqueues *pwq)
 	}
 }
 EXPORT_SYMBOL(poll_freewait);
-
+// 分配或使用已先前申请的 poll_table_entry,
 static struct poll_table_entry *poll_get_entry(struct poll_wqueues *p)
 {
 	struct poll_table_page *table = p->table;
@@ -187,6 +193,7 @@ static struct poll_table_entry *poll_get_entry(struct poll_wqueues *p)
 static int __pollwake(wait_queue_t *wait, unsigned mode, int sync, void *key)
 {
 	struct poll_wqueues *pwq = wait->private;
+	// 将调用进程 pwq->polling_task 关联到 dummy_wait  
 	DECLARE_WAITQUEUE(dummy_wait, pwq->polling_task);
 
 	/*
@@ -197,6 +204,7 @@ static int __pollwake(wait_queue_t *wait, unsigned mode, int sync, void *key)
 	 * and is paired with smp_store_mb() in poll_schedule_timeout.
 	 */
 	smp_wmb();
+	// select()用户进程只要有被唤醒过，就不可能再次进入睡眠，因为这个标志在睡眠的时候有用
 	pwq->triggered = 1;
 
 	/*
@@ -207,9 +215,11 @@ static int __pollwake(wait_queue_t *wait, unsigned mode, int sync, void *key)
 	 * pass in @sync.  @sync is scheduled to be removed and once
 	 * that happens, wake_up_process() can be used directly.
 	 */
+	 // 默认通用的唤醒函数
 	return default_wake_function(&dummy_wait, mode, sync, key);
 }
-
+// 在等待队列(wait_queue_t)上回调函数(func)  
+// 文件就绪后被调用，唤醒调用进程，其中key是文件提供的当前状态掩码
 static int pollwake(wait_queue_t *wait, unsigned mode, int sync, void *key)
 {
 	struct poll_table_entry *entry;
@@ -218,10 +228,14 @@ static int pollwake(wait_queue_t *wait, unsigned mode, int sync, void *key)
 	/*这里的条件判断至关重要，避免应用进程被误唤醒*/
 	if (key && !((unsigned long)key & entry->key))
 		return 0;
+	// 唤醒
 	return __pollwake(wait, mode, sync, key);
 }
 
 /* Add a new entry */
+// wait_queue设置函数  
+// poll/select 向文件wait_queue中添加节点的方法
+
 static void __pollwait(struct file *filp, wait_queue_head_t *wait_address,
 				poll_table *p)
 {
@@ -229,11 +243,14 @@ static void __pollwait(struct file *filp, wait_queue_head_t *wait_address,
 	struct poll_table_entry *entry = poll_get_entry(pwq);
 	if (!entry)
 		return;
-	entry->filp = get_file(filp);
-	entry->wait_address = wait_address;
-	entry->key = p->_key;
+	entry->filp = get_file(filp);   // 保存对应的file结构体
+	entry->wait_address = wait_address;  // 保存来自设备驱动程序的等待队列头
+	entry->key = p->_key;  // 保存对该fd关心的事件掩码
+	  // 初始化等待队列项，pollwake是唤醒该等待队列项时候调用的函数
 	init_waitqueue_func_entry(&entry->wait, pollwake);
+	      // 将poll_wqueues作为该等待队列项的私有数据，后面使用
 	entry->wait.private = pwq;
+		   // 将该等待队列项添加到从驱动程序中传递过来的等待队列头中去
 	add_wait_queue(wait_address, &entry->wait);
 }
 
@@ -243,6 +260,8 @@ int poll_schedule_timeout(struct poll_wqueues *pwq, int state,
 	int rc = -EINTR;
 
 	set_current_state(state);
+	 // 这个triggered在什么时候被置1的呢?只要有一个fd
+	 // 对应的设备将当前应用进程唤醒后将会把它设置成1
 	if (!pwq->triggered)
 		rc = schedule_hrtimeout_range(expires, slack, HRTIMER_MODE_ABS);
 	__set_current_state(TASK_RUNNING);
@@ -424,6 +443,7 @@ int do_select(int n, fd_set_bits *fds, struct timespec *end_time)
 	// 一些重要的初始化:
 	  // poll_wqueues.poll_table.qproc函数指针初始化，该函数是驱动程序中poll函数实
 	    // 现中必须要调用的poll_wait()中使用的函数
+	    // 设置函数指针_qproc    为__pollwait
 	poll_initwait(&table); //初始化用于等待的数据，当文件描述符就绪时回调
 	wait = &table.pt;
 	if (end_time && !end_time->tv_sec && !end_time->tv_nsec) {
@@ -472,6 +492,7 @@ int do_select(int n, fd_set_bits *fds, struct timespec *end_time)
 				if (f.file) {
 					const struct file_operations *f_op;
 					f_op = f.file->f_op;
+				// 没有 f_op 的话就认为一直处于就绪状态
 					mask = DEFAULT_POLLMASK;
 					//调用相应的poll操作
 					if (f_op->poll) {
@@ -484,6 +505,7 @@ int do_select(int n, fd_set_bits *fds, struct timespec *end_time)
 						evdev_poll()为例该函数会调用函数poll_wait(file, &evdev->wait, wait)，继续调用__pollwait()回调来分配一个poll_table_entry结构体，该结构体有一个内嵌的等待队列项，
 						设置好wake时调用的回调函数后将其添加到驱动程序中的等待队列头中。
 						*/
+						 // 获取当前的就绪状态, 并添加到文件的对应等待队列中
 						mask = (*f_op->poll)(f.file, wait);
 					}
 					 // 释放file结构指针，实际就是减小他的一个引用计数字段f_count。
@@ -492,6 +514,8 @@ int do_select(int n, fd_set_bits *fds, struct timespec *end_time)
 					if ((mask & POLLIN_SET) && (in & bit)) {
 						res_in |= bit;	  // fd对应的设备可读
 						retval++;
+					// 如果已有就绪事件就不再向其他文件的
+					 // 等待队列中添加回调函数
 						wait->_qproc = NULL;	   // 后续有用，避免重复执行__pollwait()
 					}
 					if ((mask & POLLOUT_SET) && (out & bit)) {
@@ -619,6 +643,7 @@ int core_sys_select(int n, fd_set __user *inp, fd_set __user *outp,
 	bits = stack_fds;
 	// 除6，因为每个文件描述符需要6个bitmaps
 	if (size > sizeof(stack_fds) / 6) {
+		// 栈上的空间不够, 申请内存, 全部使用堆上的空间
 		/* Not enough space in on-stack array; must use kmalloc */
 		ret = -ENOMEM;
 		if (size > (SIZE_MAX / 6))
@@ -684,7 +709,7 @@ SYSCALL_DEFINE5(select, int, n, fd_set __user *, inp, fd_set __user *, outp,
 		// 从用户空间取数据到内核空间
 		if (copy_from_user(&tv, tvp, sizeof(tv)))
 			return -EFAULT;
-
+		// 计算超时时间
 		to = &end_time;
 		 // 得到timespec格式的未来超时时间
 		if (poll_select_set_timeout(to,
@@ -814,27 +839,34 @@ static inline unsigned int do_pollfd(struct pollfd *pollfd, poll_table *pwait,
 	mask = 0;
 	fd = pollfd->fd;
 	if (fd >= 0) {
+		// 取得fd对应的文件结构体
 		struct fd f = fdget(fd);
 		mask = POLLNVAL;
 		if (f.file) {
+			// 如果没有 f_op 或 f_op->poll 则认为文件始终处于就绪状态. 
 			mask = DEFAULT_POLLMASK;
 			if (f.file->f_op->poll) {
+				// 设置关注的事件掩码
 				pwait->_key = pollfd->events|POLLERR|POLLHUP;
 				pwait->_key |= busy_flag;
+			// 注册回调函数，并返回当前就绪状态，就绪后会调用pollwake  
 				mask = f.file->f_op->poll(f.file, pwait);
 				if (mask & busy_flag)
 					*can_busy_poll = true;
 			}
 			/* Mask out unneeded events. */
+			// 移除不需要的状态掩码
 			mask &= pollfd->events | POLLERR | POLLHUP;
+			// 释放文件
 			fdput(f);
 		}
 	}
+	// 更新事件状态
 	pollfd->revents = mask;
 
 	return mask;
 }
-
+// 释放申请的内存
 static int do_poll(unsigned int nfds,  struct poll_list *list,
 		   struct poll_wqueues *wait, struct timespec *end_time)
 {
@@ -847,13 +879,15 @@ static int do_poll(unsigned int nfds,  struct poll_list *list,
 
 	/* Optimise the no-wait case */
 	if (end_time && !end_time->tv_sec && !end_time->tv_nsec) {
+		// 已经超时,直接遍历所有文件描述符, 然后返回
 		pt->_qproc = NULL;
 		timed_out = 1;
 	}
 
 	if (end_time && !timed_out)
+		// 估计进程等待时间，纳秒
 		slack = select_estimate_accuracy(end_time);
-
+	// 遍历文件，为每个文件的等待队列添加唤醒函数(pollwake)
 	for (;;) {
 		struct poll_list *walk;
 		bool can_busy_loop = false;
@@ -871,8 +905,13 @@ static int do_poll(unsigned int nfds,  struct poll_list *list,
 				 * this. They'll get immediately deregistered
 				 * when we break out and return.
 				 */
+				 // do_pollfd 会向文件对应的wait queue 中添加节点  
+                // 和回调函数(如果 pt 不为空)  
+                // 并检查当前文件状态并设置返回的掩码 
 				if (do_pollfd(pfd, pt, &can_busy_loop,
 					      busy_flag)) {
+					// 该文件已经准备好了.  
+					// 不需要向后面文件的wait queue 中添加唤醒函数了.
 					count++;
 					pt->_qproc = NULL;
 					/* found something, stop busy polling */
@@ -885,12 +924,17 @@ static int do_poll(unsigned int nfds,  struct poll_list *list,
 		 * All waiters have already been registered, so don't provide
 		 * a poll_table->_qproc to them on the next loop iteration.
 		 */
+		 // 下次循环的时候不需要向文件的wait queue 中添加节点,  
+		  // 因为前面的循环已经把该添加的都添加了
 		pt->_qproc = NULL;
+		// 第一次遍历没有发现ready的文件
 		if (!count) {
 			count = wait->error;
+			// 有信号产生
 			if (signal_pending(current))
 				count = -EINTR;
 		}
+		// 有ready的文件或已经超时 
 		if (count || timed_out)
 			break;
 
@@ -910,10 +954,14 @@ static int do_poll(unsigned int nfds,  struct poll_list *list,
 		 * given, then we convert to ktime_t and set the to
 		 * pointer to the expiry value.
 		 */
+		 // 转换为内核时间
 		if (end_time && !to) {
 			expire = timespec_to_ktime(*end_time);
 			to = &expire;
 		}
+		// 等待事件就绪, 如果有事件发生或超时，就再循  
+		// 环一遍，取得事件状态掩码并计数,  
+		// 注意此次循环中, 文件 wait queue 中的节点依然存在  
 
 		if (!poll_schedule_timeout(wait, TASK_INTERRUPTIBLE, to, slack))
 			timed_out = 1;
@@ -932,21 +980,23 @@ int do_sys_poll(struct pollfd __user *ufds, unsigned int nfds,
 	/* Allocate small arguments on the stack to save memory and be
 	   faster - use long to make sure the buffer is aligned properly
 	   on 64 bit archs to avoid unaligned access */
+	   /* 首先使用栈上的空间，节约内存，加速访问 */
 	long stack_pps[POLL_STACK_ALLOC/sizeof(long)];
 	struct poll_list *const head = (struct poll_list *)stack_pps;
  	struct poll_list *walk = head;
  	unsigned long todo = nfds;
 
 	if (nfds > rlimit(RLIMIT_NOFILE))
+		 // 文件描述符数量超过当前进程限制 
 		return -EINVAL;
-
+	// 复制用户空间数据到内核  
 	len = min_t(unsigned int, nfds, N_STACK_PPS);
 	for (;;) {
 		walk->next = NULL;
 		walk->len = len;
 		if (!len)
 			break;
-
+		// 复制到当前的 entries
 		if (copy_from_user(walk->entries, ufds + nfds-todo,
 					sizeof(struct pollfd) * walk->len))
 			goto out_fds;
@@ -954,7 +1004,7 @@ int do_sys_poll(struct pollfd __user *ufds, unsigned int nfds,
 		todo -= walk->len;
 		if (!todo)
 			break;
-
+		// 栈上空间不足，在堆上申请剩余部分
 		len = min(todo, POLLFD_PER_PAGE);
 		size = sizeof(struct poll_list) + sizeof(struct pollfd) * len;
 		walk = walk->next = kmalloc(size, GFP_KERNEL);
@@ -963,11 +1013,13 @@ int do_sys_poll(struct pollfd __user *ufds, unsigned int nfds,
 			goto out_fds;
 		}
 	}
-
+	// 初始化 poll_wqueues 结构, 设置函数指针_qproc  为__pollwait
 	poll_initwait(&table);
+	// poll
 	fdcount = do_poll(nfds, head, &table, end_time);
+	// 从文件wait queue 中移除对应的节点, 释放entry.
 	poll_freewait(&table);
-
+	// 复制结果到用户空间
 	for (walk = head; walk; walk = walk->next) {
 		struct pollfd *fds = walk->entries;
 		int j;
@@ -978,6 +1030,7 @@ int do_sys_poll(struct pollfd __user *ufds, unsigned int nfds,
   	}
 
 	err = fdcount;
+	// 释放申请的内存  
 out_fds:
 	walk = head->next;
 	while (walk) {
@@ -997,14 +1050,16 @@ static long do_restart_poll(struct restart_block *restart_block)
 	int ret;
 
 	if (restart_block->poll.has_timeout) {
+		// 获取先前的超时时间 
 		end_time.tv_sec = restart_block->poll.tv_sec;
 		end_time.tv_nsec = restart_block->poll.tv_nsec;
 		to = &end_time;
 	}
-
+	// 重新调用 do_sys_poll
 	ret = do_sys_poll(ufds, nfds, to);
 
 	if (ret == -EINTR) {
+		// 又被信号中断了, 再次重启
 		restart_block->fn = do_restart_poll;
 		ret = -ERESTART_RESTARTBLOCK;
 	}
@@ -1019,16 +1074,18 @@ SYSCALL_DEFINE3(poll, struct pollfd __user *, ufds, unsigned int, nfds,
 
 	if (timeout_msecs >= 0) {
 		to = &end_time;
+		// 将相对超时时间msec 转化为绝对时间
 		poll_select_set_timeout(to, timeout_msecs / MSEC_PER_SEC,
 			NSEC_PER_MSEC * (timeout_msecs % MSEC_PER_SEC));
 	}
 
 	ret = do_sys_poll(ufds, nfds, to);
-
+	// do_sys_poll 被信号中断, 重新调用, 对使用者来说 poll 是不会被信号中断的.	
 	if (ret == -EINTR) {
 		struct restart_block *restart_block;
 
 		restart_block = &current->restart_block;
+	// 设置重启的函数
 		restart_block->fn = do_restart_poll;
 		restart_block->poll.ufds = ufds;
 		restart_block->poll.nfds = nfds;
@@ -1039,7 +1096,8 @@ SYSCALL_DEFINE3(poll, struct pollfd __user *, ufds, unsigned int, nfds,
 			restart_block->poll.has_timeout = 1;
 		} else
 			restart_block->poll.has_timeout = 0;
-
+        // ERESTART_RESTARTBLOCK 不会返回给用户进程,  
+        // 而是会被系统捕获, 然后调用 do_restart_poll,  
 		ret = -ERESTART_RESTARTBLOCK;
 	}
 	return ret;
