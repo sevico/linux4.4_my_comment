@@ -68,7 +68,7 @@
 #else
 #define EPOLL_PACKED
 #endif
-
+// 用户使用的epoll_event 
 struct epoll_event {
 	__u32 events;
 	__u64 data;
