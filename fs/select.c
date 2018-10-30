@@ -616,7 +616,7 @@ int core_sys_select(int n, fd_set __user *inp, fd_set __user *outp,
 	size_t size, alloc_size;
 	struct fdtable *fdt;
 	/* Allocate small arguments on the stack to save memory and be faster */
-	 // 256/32 = 8, stack中分配的空间
+	 // 256/64 = 4, stack中分配的空间
 	long stack_fds[SELECT_STACK_ALLOC/sizeof(long)];
 
 	ret = -EINVAL;
