@@ -3264,6 +3264,13 @@ static inline void mm_update_next_owner(struct mm_struct *mm)
 {
 }
 #endif /* CONFIG_MEMCG */
+/**
+ * Looks at the current task's resource
+ * limit.
+ *
+ * ps.: notice how it doesn't look at the **hard**
+ *      limit, but the **soft** limit.
+ */
 
 static inline unsigned long task_rlimit(const struct task_struct *tsk,
 		unsigned int limit)

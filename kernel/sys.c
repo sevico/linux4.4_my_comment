@@ -1360,17 +1360,34 @@ static void rlim64_to_rlim(const struct rlimit64 *rlim64, struct rlimit *rlim)
 }
 
 /* make sure you are allowed to change @tsk limits before calling this */
+/**
+ * `do_prlimit` constitutes the underlying functionality
+ * of `prlimit` (which is also partly used by `getrlimit`
+ * and `setrlimit`).
+ */
+
 int do_prlimit(struct task_struct *tsk, unsigned int resource,
 		struct rlimit *new_rlim, struct rlimit *old_rlim)
 {
 	struct rlimit *rlim;
 	int retval = 0;
+	// Checks if the resource is a valid one (given that
+    // we can provide whatever we want from the syscall
+    // interface).
 
 	if (resource >= RLIM_NLIMITS)
 		return -EINVAL;
+	// If we specified a non-NULL `new_rlim`, it means
+    // that we're planning to set some limits on a given
+    // resource.
 	if (new_rlim) {
+		// Check if the values even make sense.
 		if (new_rlim->rlim_cur > new_rlim->rlim_max)
 			return -EINVAL;
+		// Check if it'd be getting above the system-wide limit
+		// already set (sysctl)
+		// If we're increasing the hard limit, make
+		// sure that the user has the proper capabilities.
 		if (resource == RLIMIT_NOFILE &&
 				new_rlim->rlim_max > sysctl_nr_open)
 			return -EPERM;
@@ -1382,15 +1399,24 @@ int do_prlimit(struct task_struct *tsk, unsigned int resource,
 		retval = -ESRCH;
 		goto out;
 	}
+	// Grab the current resource limits for
+	// the desired resource.
+	//
+	// - Maybe we'll be able to see that /proc/pid/limits
+	//   looks at the very same thing (tsk->signal->rlim)?
 
 	rlim = tsk->signal->rlim + resource;
 	task_lock(tsk->group_leader);
+		// If we're going to set new values,
+	// that is, if we're going to change limits, then ...
 	if (new_rlim) {
 		/* Keep the capable check against init_user_ns until
 		   cgroups can contain all limits */
 		if (new_rlim->rlim_max > rlim->rlim_max &&
 				!capable(CAP_SYS_RESOURCE))
 			retval = -EPERM;
+		// Go ahead and perform the update, but first,
+        // apply a security check.
 		if (!retval)
 			retval = security_task_setrlimit(tsk->group_leader,
 					resource, new_rlim);
@@ -1404,6 +1430,10 @@ int do_prlimit(struct task_struct *tsk, unsigned int resource,
 			new_rlim->rlim_cur = 1;
 		}
 	}
+		// If everything went right so far,
+	// update `old_rlim` with the values of
+	// what has been captured as the current
+	// limits as of before updating.
 	if (!retval) {
 		if (old_rlim)
 			*old_rlim = *rlim;
