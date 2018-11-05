@@ -509,6 +509,7 @@ out_reset_timer:
 		icsk->icsk_rto = min(icsk->icsk_rto << 1, TCP_RTO_MAX);
 	}
 	inet_csk_reset_xmit_timer(sk, ICSK_TIME_RETRANS, icsk->icsk_rto, TCP_RTO_MAX);
+	//如果重传尝试的次数超过了sysctl_tcp_retries2变量指定的限制，则放弃重传
 	if (retransmits_timed_out(sk, sysctl_tcp_retries1 + 1, 0, 0))
 		__sk_dst_reset(sk);
 
@@ -540,7 +541,7 @@ void tcp_write_timer_handler(struct sock *sk)
 		break;
 	case ICSK_TIME_RETRANS:
 		icsk->icsk_pending = 0;
-		tcp_retransmit_timer(sk);
+		tcp_retransmit_timer(sk);  //超时重传
 		break;
 	case ICSK_TIME_PROBE0:
 		icsk->icsk_pending = 0;

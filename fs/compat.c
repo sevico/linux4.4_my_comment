@@ -564,6 +564,8 @@ ssize_t compat_rw_copy_check_uvector(int type,
 	ret = -EINVAL;
 	if (nr_segs > UIO_MAXIOV || nr_segs < 0)
 		goto out;
+	/*    为了避免频繁申请内存，内核在栈上申请了UIO_FASTIOV大小的iovec数组以供iov使用。
+	当数据段个数　　超过UIO_FASTIOV时，就需要动态申请内存。*/
 	if (nr_segs > fast_segs) {
 		ret = -ENOMEM;
 		/* 在内核空间申请消息数据长度 */

@@ -198,6 +198,12 @@ int inet_listen(struct socket *sock, int backlog)
 	int err;
 
 	lock_sock(sk);
+	// Ensure that we have a fresh socket that has
+	// not been put into `LISTEN` state before, and
+	// is not connected.
+	//
+	// Also, ensure that it's of the TCP type (otherwise
+	// the idea of a connection wouldn't make sense).
 
 	err = -EINVAL;
 	 /* 如果套接字状态不是未连接或不是基于流的套接字，则返回错误 */
@@ -224,6 +230,7 @@ int inet_listen(struct socket *sock, int backlog)
 		 * socket was in TCP_LISTEN state previously but was
 		 * shutdown() (rather than close()).
 		 */
+		 // ... do some TCP fast open stuff ...
 		if ((sysctl_tcp_fastopen & TFO_SERVER_ENABLE) != 0 &&
 		    !inet_csk(sk)->icsk_accept_queue.fastopenq.max_qlen) {
 			if ((sysctl_tcp_fastopen & TFO_SERVER_WO_SOCKOPT1) != 0)
@@ -239,6 +246,10 @@ int inet_listen(struct socket *sock, int backlog)
 		if (err)
 			goto out;
 	}
+	// Annotate the protocol-specific socket structure
+	// with the backlog configured by `sys_listen` (the
+	// value from userspace after being capped by the
+	// kernel).
 	 /* 更新backlog的值 */
 	sk->sk_max_ack_backlog = backlog;
 	err = 0;
@@ -327,6 +338,7 @@ lookup_protocol:
 	WARN_ON(!answer_prot->slab);
 
 	err = -ENOBUFS;
+	//分配sock实例
 	sk = sk_alloc(net, PF_INET, GFP_KERNEL, answer_prot, kern);
 	if (!sk)
 		goto out;
@@ -377,6 +389,7 @@ lookup_protocol:
 		 */
 		inet->inet_sport = htons(inet->inet_num);
 		/* Add to protocol hash chains. */
+		//插入内核哈希表
 		sk->sk_prot->hash(sk);
 	}
 
@@ -425,11 +438,20 @@ int inet_release(struct socket *sock)
 	return 0;
 }
 EXPORT_SYMBOL(inet_release);
+// `AF_INET` specific implementation of the
+// `bind` operation (called by `sys_bind` after
+// retrieving the underlying `struct socket`
+// associated with the file descriptor supplied
+// by the user from `userspace`).
 
 int inet_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 {
 	struct sockaddr_in *addr = (struct sockaddr_in *)uaddr;
+	// Retrieves the `struct sock` associated with the non-family
+    // specific representation of a socket (`struct socket`).
 	struct sock *sk = sock->sk;
+	// Cast the socket to the `inet-specific` definition 
+    // of a socket.
 	struct inet_sock *inet = inet_sk(sk);
 	struct net *net = sock_net(sk);
 	unsigned short snum;
@@ -446,9 +468,12 @@ IPPROTO_IP实现了自己的bind函数，IPPROTO_TCP和IPPROTO_UDP都使用AF_IN
 	}
 	err = -EINVAL;
 	/* 检查地址长度 */
+	// Make sure that the address supplied is
+	// indeed of the size of a `sockaddr_in`
 	if (addr_len < sizeof(struct sockaddr_in))
 		goto out;
-
+	// Make sure that the address contains the right family
+	// specified in its struct.
 	if (addr->sin_family != AF_INET) {
 		/* Compatibility games : accept AF_UNSPEC (mapped to AF_INET)
 		 * only if s_addr is INADDR_ANY.
@@ -481,10 +506,14 @@ IPPROTO_IP实现了自己的bind函数，IPPROTO_TCP和IPPROTO_UDP都使用AF_IN
 	    chk_addr_ret != RTN_MULTICAST &&
 	    chk_addr_ret != RTN_BROADCAST)
 		goto out;
-
+	// Grab the service port as set in the address 
+	// struct supplied from userspace.
 	snum = ntohs(addr->sin_port);
 	err = -EACCES;
 	/* 如果源端口小于PROT_SOCK(1024)，则需要检查用户是否有权限创建知名端口*/
+	// Here is where we perform the check to make sure 
+        // that the user has the necessary privileges to
+	// bind to a privileged port.
 	if (snum && snum < PROT_SOCK &&
 	    !ns_capable(net->user_ns, CAP_NET_BIND_SERVICE))
 		goto out;
@@ -501,9 +530,13 @@ IPPROTO_IP实现了自己的bind函数，IPPROTO_TCP和IPPROTO_UDP都使用AF_IN
 	/* Check these errors (active socket, double bind). */
 	err = -EINVAL;
 	 /* 确保套接字不会被bind两次 */
+	// Can't bind after the socket is already active,
+	// of if it's already bound.
 	if (sk->sk_state != TCP_CLOSE || inet->inet_num)
 		goto out_release_sock;
 	/* 使用参数设置套接字的接收和发送地址 */
+	// Set the source address of the socket to the
+	// one that we've supplied.
 	inet->inet_rcv_saddr = inet->inet_saddr = addr->sin_addr.s_addr;
 	 /* 如果参数地址是多播或广播类型，则重置发送源地址为0，表示在发送时，使用的是设备地址 */
 	if (chk_addr_ret == RTN_MULTICAST || chk_addr_ret == RTN_BROADCAST)
@@ -514,6 +547,10 @@ IPPROTO_IP实现了自己的bind函数，IPPROTO_TCP和IPPROTO_UDP都使用AF_IN
 虽然这里是一个查询的动作，但是却会有修改的动作。当该端口可以使用时，会让inet_sk(sk)->inet_num = snum;
 这样做，是因为查询动作已经获得了锁。在确定可以使用该端口时，直接修改inet_num，这样既可以保证设置端口的原子性，同时还可以提高性能
 */
+	/* Make sure we are allowed to bind here. */
+	// CC: this is where you can retrieve a "random" port
+	//     if you don't specify one.
+
 	if ((snum || !inet->bind_address_no_port) &&
 	    sk->sk_prot->get_port(sk, snum)) {
 		inet->inet_saddr = inet->inet_rcv_saddr = 0;
@@ -526,6 +563,8 @@ IPPROTO_IP实现了自己的bind函数，IPPROTO_TCP和IPPROTO_UDP都使用AF_IN
 	/* 如果设置了源端口，则设置相应的标志 */
 	if (snum)
 		sk->sk_userlocks |= SOCK_BINDPORT_LOCK;
+	// Set the source port to the one that we've
+    // specified in the address supplied.
 	/* 设置inet_sport，其为网络序 */
 	inet->inet_sport = htons(inet->inet_num);
 	/* 重置目的地址和端口 */

@@ -1639,6 +1639,11 @@ struct block_device_operations;
 
 
 struct iov_iter;
+/**
+ * file_operations describe an interface that
+ * filesystems must implement in order to handle
+ * calls from syscalls that interact with filesystems.
+ */
 
 struct file_operations {
 	struct module *owner;
@@ -1647,6 +1652,8 @@ struct file_operations {
 	ssize_t (*write) (struct file *, const char __user *, size_t, loff_t *);
 	ssize_t (*read_iter) (struct kiocb *, struct iov_iter *);
 	ssize_t (*write_iter) (struct kiocb *, struct iov_iter *);
+	// The method for iterating over the directory
+    // entries under a given directory.
 	int (*iterate) (struct file *, struct dir_context *);
 	// 文件提供给poll/select/epoll  
 	// 获取文件当前状态, 以及就绪通知接口函数 

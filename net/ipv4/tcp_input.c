@@ -5395,7 +5395,7 @@ void tcp_rcv_established(struct sock *sk, struct sk_buff *skb,
 no_ack:
 			if (eaten)
 				kfree_skb_partial(skb, fragstolen);
-			sk->sk_data_ready(sk);
+			sk->sk_data_ready(sk);//通知用户进程有新数据可用
 			return;
 		}
 	}

@@ -2220,7 +2220,7 @@ void tcp_close(struct sock *sk, long timeout)
 		 * probably need API support or TCP_CORK SYN-ACK until
 		 * data is written and socket is closed.)
 		 */
-		tcp_send_fin(sk);
+		tcp_send_fin(sk);  //向另一方发送一个FIN分组
 	}
 
 	sk_stream_wait_close(sk, timeout);

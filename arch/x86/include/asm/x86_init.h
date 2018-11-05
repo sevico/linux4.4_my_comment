@@ -89,6 +89,7 @@ struct x86_init_paging {
 struct x86_init_timers {
 // set up the per cpu clock event device for the boot cpu;
 	void (*setup_percpu_clockev)(void);
+//platform function called before TSC init;
 	void (*tsc_pre_init)(void);
 	void (*timer_init)(void);
 	void (*wallclock_init)(void);

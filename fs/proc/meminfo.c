@@ -39,7 +39,10 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
  * display in kilobytes.
  */
 #define K(x) ((x) << (PAGE_SHIFT - 10))
+	// Populate the sysinfo struct with memory-related
+	// stuff
 	si_meminfo(&i);
+	// Add swap information
 	si_swapinfo(&i);
 	committed = percpu_counter_read_positive(&vm_committed_as);
 

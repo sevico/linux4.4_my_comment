@@ -213,15 +213,24 @@ static struct dentry *proc_root_lookup(struct inode * dir, struct dentry * dentr
 	
 	return proc_lookup(dir, dentry, flags);
 }
+/**
+ * Starts the process of listing the entries from
+ * `/proc`.
+ */
 
 static int proc_root_readdir(struct file *file, struct dir_context *ctx)
 {
+	// Check if we're still in the context of
+	// listing non-PID entries.
 	if (ctx->pos < FIRST_PROCESS_ENTRY) {
 		int error = proc_readdir(file, ctx);
 		if (unlikely(error <= 0))
 			return error;
 		ctx->pos = FIRST_PROCESS_ENTRY;
 	}
+	// Having already read the non-pid directory
+	// entries (like `/proc/meminfo`), now go 
+	// list the PIDs.
 
 	return proc_pid_readdir(file, ctx);
 }
@@ -233,6 +242,7 @@ static int proc_root_readdir(struct file *file, struct dir_context *ctx)
  */
 static const struct file_operations proc_root_operations = {
 	.read		 = generic_read_dir,
+	// Sets the method for iterating over directory entries.
 	.iterate	 = proc_root_readdir,
 	.llseek		= default_llseek,
 };

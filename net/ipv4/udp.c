@@ -1403,6 +1403,7 @@ try_again:
 	/* 复制错误检查 */
 	if (unlikely(err)) {
 		trace_kfree_skb(skb, udp_recvmsg);
+		 /* 如果不是peek动作，则增加相应的统计计数 */
 		if (!peeked) {
 			atomic_inc(&sk->sk_drops);
 			UDP_INC_STATS_USER(sock_net(sk),

@@ -246,6 +246,8 @@ static struct inode *sock_alloc_inode(struct super_block *sb)
 {
 	struct socket_alloc *ei;
 	struct socket_wq *wq;
+	// Create an entry in the kernel cache 
+	// taking the necessary memory for it.
 
 	ei = kmem_cache_alloc(sock_inode_cachep, GFP_KERNEL);
 	if (!ei)
@@ -259,7 +261,8 @@ static struct inode *sock_alloc_inode(struct super_block *sb)
 	wq->fasync_list = NULL;
 	wq->flags = 0;
 	RCU_INIT_POINTER(ei->socket.wq, wq);
-
+	// Performs the most basic initialization
+	// possible
 	ei->socket.state = SS_UNCONNECTED;
 	ei->socket.flags = 0;
 	ei->socket.ops = NULL;
@@ -393,6 +396,9 @@ EXPORT_SYMBOL(sock_alloc_file);
 static int sock_map_fd(struct socket *sock, int flags)
 {
 	struct file *newfile;
+	// Do you recall this one? This is the method
+    // the kernel ends up performing a check against
+    // resource limits and making sure that we don't
 	int fd = get_unused_fd_flags(flags);
 	if (unlikely(fd < 0))
 		return fd;
@@ -536,25 +542,32 @@ static const struct inode_operations sockfs_inode_ops = {
  *	and initialised. The socket is then returned. If we are out of inodes
  *	NULL is returned.
  */
-
+//分配inode和socket，二者紧邻
 static struct socket *sock_alloc(void)
 {
 	struct inode *inode;
 	struct socket *sock;
-
+	// Given that the filesystem is in-memory,
+	// perform the allocation using the kernel
+	// memory.
 	inode = new_inode_pseudo(sock_mnt->mnt_sb);
 	if (!inode)
 		return NULL;
+	// Retrieves the `socket` struct from
+	// the `inode` that lives in `sockfs`
 
 	sock = SOCKET_I(inode);
 
 	kmemcheck_annotate_bitfield(sock, type);
+	// Sets some filesystem aspects so that
 	inode->i_ino = get_next_ino();
 	inode->i_mode = S_IFSOCK | S_IRWXUGO;
 	inode->i_uid = current_fsuid();
 	inode->i_gid = current_fsgid();
 	inode->i_op = &sockfs_inode_ops;
-
+	// Update the per-cpu counter (which can then be
+	// used by `sockstat` to and other systems
+	// to quickly know the socket count).
 	this_cpu_add(sockets_in_use, 1);
 	return sock;
 }
@@ -1088,6 +1101,18 @@ call_kill:
 	return 0;
 }
 EXPORT_SYMBOL(sock_wake_async);
+/**
+ * Initializes `struct socket`, allocating the
+ * necessary memory for it, as well as filling
+ * the necessary information associated with
+ * the socket.
+ * 
+ * It:
+ * - Performs some argument checking;
+ * - Runs a security check hook for `socket_create`
+ * - Initializes the actual allocation of the `struct socket`
+ *   (letting the `family` do it according to its own rules)
+ */
 
 int __sock_create(struct net *net, int family, int type, int protocol,
 			 struct socket **res, int kern)
@@ -1118,7 +1143,7 @@ int __sock_create(struct net *net, int family, int type, int protocol,
 		}
 		family = PF_PACKET;
 	}
-
+	// Triggers custom security hooks for socket_create.
 	err = security_socket_create(family, type, protocol, kern);
 	if (err)
 		return err;
@@ -1128,6 +1153,8 @@ int __sock_create(struct net *net, int family, int type, int protocol,
 	 *	the protocol is 0, the family is instructed to select an appropriate
 	 *	default.
 	 */
+	 // Allocates a `struct socket` object and ties it to
+     // a file under the `sockfs` filesystem.
 	sock = sock_alloc();
 	if (!sock) {
 		net_warn_ratelimited("socket: no more sockets\n");
@@ -1149,6 +1176,8 @@ int __sock_create(struct net *net, int family, int type, int protocol,
 #endif
 
 	rcu_read_lock();
+	// Tries to retrieve the protocol family methods
+	// for performing the family-specific socket creation.
 	pf = rcu_dereference(net_families[family]);
 	err = -EAFNOSUPPORT;
 	if (!pf)
@@ -1163,6 +1192,18 @@ int __sock_create(struct net *net, int family, int type, int protocol,
 
 	/* Now protected by module ref count */
 	rcu_read_unlock();
+	// Executes the protocol family specific 
+	// socket creation method.
+	//
+	// For instance, if our family is AF_INET (ipv4)
+	// and we're creating a TCP socket (SOCK_STREAM),
+	// a specific method for handling such type of socket
+	// is called.
+	//
+	// If we were specifying a local socket (UNIX),
+	// then another method would be called (given that
+	// such method would implement the `proto_ops` interface
+	// and have been loaded).
 
 	err = pf->create(net, sock, protocol, kern);
 	if (err < 0)
@@ -1213,10 +1254,23 @@ int sock_create_kern(struct net *net, int family, int type, int protocol, struct
 	return __sock_create(net, family, type, protocol, res, 1);
 }
 EXPORT_SYMBOL(sock_create_kern);
+/**
+ * Defined `socket` as a syscall with the
+ * following arguments:
+ * - int family;        - the communication domain
+ * - int type; and      - the communication semantics
+ * - int protocol.      - a specific protocol within a
+ *                        certain domain and semantics.
+ *                       
+ */
 
 SYSCALL_DEFINE3(socket, int, family, int, type, int, protocol)
 {
 	int retval;
+	// A pointer that is meant to be pointed to
+        // a `struct sock` that contains the whole
+        // socket definition after it gets properly
+        // allocated by the socket family.
 	struct socket *sock;
 	int flags;
 
@@ -1233,11 +1287,14 @@ SYSCALL_DEFINE3(socket, int, family, int, type, int, protocol)
 
 	if (SOCK_NONBLOCK != O_NONBLOCK && (flags & SOCK_NONBLOCK))
 		flags = (flags & ~SOCK_NONBLOCK) | O_NONBLOCK;
-
+	// Create the underlying socket structures.
+	//创建一个新的套接字数据结构
 	retval = sock_create(family, type, protocol, &sock);
 	if (retval < 0)
 		goto out;
-
+	// Allocate the file descriptor for the process so
+	// that it can consume the underlying socket from
+	// userspace.
 	retval = sock_map_fd(sock, flags & (O_CLOEXEC | O_NONBLOCK));
 	if (retval < 0)
 		goto out_release;
@@ -1369,16 +1426,24 @@ SYSCALL_DEFINE3(bind, int, fd, struct sockaddr __user *, umyaddr, int, addrlen)
 	struct socket *sock;
 	struct sockaddr_storage address;
 	int err, fput_needed;
-	/* umyaddr是用户空间地址，这里将其复制到内核空间address变量中 */
+	// Reference to the underlying `struct socket`
+	// associated with the file descriptor `fd` passed
+	// from userspace.
+	// Retrieve the underlying socket from the
+	// file descriptor.
 	sock = sockfd_lookup_light(fd, &err, &fput_needed);
 	if (sock) {
 		 /* umyaddr是用户空间地址，这里将其复制到内核空间address变量中 */
 		err = move_addr_to_kernel(umyaddr, addrlen, &address);
 		if (err >= 0) {
+			// Call any security hooks registered for
+			// the `bind` operation
 			err = security_socket_bind(sock,
 						   (struct sockaddr *)&address,
 						   addrlen);
 			if (!err)
+				// Perform the underlying family's
+				// bind operation.
 				err = sock->ops->bind(sock,
 						      (struct sockaddr *)
 						      &address, addrlen); //待跟踪 AF_INET -> inet_bind
@@ -1399,19 +1464,32 @@ SYSCALL_DEFINE2(listen, int, fd, int, backlog)
 	struct socket *sock;
 	int err, fput_needed;
 	int somaxconn;
+	// Retrieve the underlying socket from
+	// the userspace file descriptor associated
+	// with the process.
 	/* 从文件描述符得到socket结构 */
 	sock = sockfd_lookup_light(fd, &err, &fput_needed);
 	if (sock) {
 		/* 得到系统设置的最大未处理连接队列长度 */
+		// Gather the `somaxconn` paremeter globally set
+		// (/proc/sys/net/ipv4/somaxconn) and make use of it
+		// so limit the size of the backlog that can be
+		// specified.
+		//
+		// See https://www.kernel.org/doc/Documentation/networking/ip-sysctl.txt
 		somaxconn = sock_net(sock->sk)->core.sysctl_somaxconn;
 		 /*如果用户指定的参数backlog大于系统最大值,则使用系统最大值       */
 		if ((unsigned int)backlog > somaxconn)
 			backlog = somaxconn;
 		/* 进行安全性检查 */
+		// Run the security hook associated with `listen`.
 		err = security_socket_listen(sock, backlog);
 		/* 通过检查后，就调用指定协议族的listen实现函数 */
 		if (!err)
-			err = sock->ops->listen(sock, backlog);
+			// Call the ipv4 implementation of 
+			// `listen` that has been registered
+			// before at `socket(2)` time.
+			err = sock->ops->listen(sock, backlog);  //->inet_listen
 
 		fput_light(sock->file, fput_needed);
 	}
@@ -1723,6 +1801,7 @@ SYSCALL_DEFINE6(recvfrom, int, fd, void __user *, ubuf, size_t, size,
 	if (!sock)
 		goto out;
 	 /* 设置消息的存储地址信息 */
+	/* 控制信息清零 */
 	msg.msg_control = NULL;
 	msg.msg_controllen = 0;
 	/* 设置消息的数据段信息 */

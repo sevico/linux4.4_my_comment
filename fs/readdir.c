@@ -35,12 +35,19 @@ int iterate_dir(struct file *file, struct dir_context *ctx)
 	res = mutex_lock_killable(&inode->i_mutex);
 	if (res)
 		goto out;
+	// is the directory really there?
+	// if so, hand the file to the underlying
+	// filesystem implementation and let it 
+	// iterate over the directory entries.
 
 	res = -ENOENT;
 	if (!IS_DEADDIR(inode)) {
 		ctx->pos = file->f_pos;
 		res = file->f_op->iterate(file, ctx);
+	    // update the reading offset
+        // ("file pointer")
 		file->f_pos = ctx->pos;
+		// notify that we accessed the file
 		fsnotify_access(file);
 		file_accessed(file);
 	}

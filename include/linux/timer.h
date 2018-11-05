@@ -14,9 +14,13 @@ struct timer_list {
 	 * All fields that change during normal runtime grouped to the
 	 * same cacheline
 	 */
+	 /* 定时器链表的入口 */
 	struct hlist_node	entry;
+	  /* 以jiffies为单位的定时器 */
 	unsigned long		expires;
+	   /* 定时器处理函数 */
 	void			(*function)(unsigned long);
+	     /* 传给处理函数的长整形参数 */
 	unsigned long		data;
 	u32			flags;
 	int			slack;

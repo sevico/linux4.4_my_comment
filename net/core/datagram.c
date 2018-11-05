@@ -227,6 +227,7 @@ struct sk_buff *__skb_recv_datagram(struct sock *sk, unsigned int flags,
 
 		last = (struct sk_buff *)queue;
 		spin_lock_irqsave(&queue->lock, cpu_flags);
+		//遍历接收队列上的所有数据包
 		skb_queue_walk(queue, skb) {
 			last = skb;
 			*peeked = skb->peeked;

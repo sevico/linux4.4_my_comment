@@ -3209,6 +3209,7 @@ finish_open:
 	if ((open_flag & O_CREAT) && d_is_dir(nd->path.dentry))
 		goto out;
 	error = -ENOTDIR;
+	//flag set if  `O_DIRECTORY` is passed to open(2)
 	if ((nd->flags & LOOKUP_DIRECTORY) && !d_can_lookup(nd->path.dentry))
 		goto out;
 	if (!d_is_reg(nd->path.dentry))

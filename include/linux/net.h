@@ -107,19 +107,43 @@ struct socket_wq {
  *  @sk: internal networking protocol agnostic socket representation
  *  @wq: wait queue for several uses
  */
+ /**
+ * Higher-level interface for any type of sockets
+ * that we end up creating through `sockfs`.
+ */
 struct socket {
+	// The state of the socket (not to confuse with
+	// the transport state).
+	// 
+	// Note.: this is an enumeration of five possible
+	// states: 
+	// - SS_FREE = 0		not allocated
+	// - SS_UNCONNECTED,	unconnected to any socket
+	// - SS_CONNECTING, in process of connecting
+	// - SS_CONNECTED,	connected to socket
+	// - SS_DISCONNECTING	in process of disconnecting
+	//
+	// Given that we have already called `socket(2)`, at
+	// this point, we're clearly not in the `SS_FREE` state.
+	//表示套接字的连接状态
 	socket_state		state;
 
 	kmemcheck_bitfield_begin(type);
+	//所用协议类型的数字标识符
 	short			type;
 	kmemcheck_bitfield_end(type);
 
 	unsigned long		flags;
 
 	struct socket_wq __rcu	*wq;
-
+	// File description (kernelspace) associated with 
+	// the file descriptor (userspace).
+	//指向一个伪文件的file实例，用于与套接字通信
 	struct file		*file;
+	// Family-specific implementation of a
+    // network socket.
 	struct sock		*sk;
+	//其中包含用于处理套接字的特定于协议的函数
 	const struct proto_ops	*ops;
 };
 

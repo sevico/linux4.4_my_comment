@@ -3928,6 +3928,12 @@ static inline void show_node(struct zone *zone)
 		printk("Node %d ", zone_to_nid(zone));
 }
 
+/**
+ * Fills the `sysinfo` struct passed as a pointer
+ * with values collected from the system (globally
+ * set).
+ */
+
 void si_meminfo(struct sysinfo *val)
 {
 	val->totalram = totalram_pages;

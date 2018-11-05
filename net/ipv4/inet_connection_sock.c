@@ -88,7 +88,8 @@ int inet_csk_bind_conflict(const struct sock *sk,
 EXPORT_SYMBOL_GPL(inet_csk_bind_conflict);
 
 /* Obtain a reference to a local port for the given sock,
- * if snum is zero it means select any available local port.
+ * if snum is zero it means select any available local port. 
+ * We try to allocate an odd port (and leave even ports for connect())
  */
 int inet_csk_get_port(struct sock *sk, unsigned short snum)
 {
@@ -749,7 +750,11 @@ int inet_csk_listen_start(struct sock *sk, int backlog)
 	/* 为连接请求队列申请空间 */
 	reqsk_queue_alloc(&icsk->icsk_accept_queue);
 	 /* 初始化工作 */
+	// Sets the maximum ACK backlog to the one that
+        // was capped by the kernel.
 	sk->sk_max_ack_backlog = backlog;
+	// Sets the current size of the backlog to 0 (given
+    // that it's not started yet.
 	sk->sk_ack_backlog = 0;
 	inet_csk_delack_init(sk);
 
@@ -763,8 +768,11 @@ int inet_csk_listen_start(struct sock *sk, int backlog)
 	 但实际上只有在get_port成功以后，
 该套接字才被加入到哈希表中—从系统的角度看，套接字加入到哈希表中后，才会真正处于监听状态，
 可以接受连接请求了。因此实际上并没有竞争发生*/
+	// Marks the socket as in the TCP_LISTEN state.
 	sk_state_store(sk, TCP_LISTEN);
 	/* 使用get_port进行端口绑定 */
+	// Tries to either reserve the port already
+    // bound to the socket or pick a "random" one.
 	if (!sk->sk_prot->get_port(sk, inet->inet_num)) {
 		/* 设置源端口 */
 		inet->inet_sport = htons(inet->inet_num);
@@ -776,6 +784,9 @@ int inet_csk_listen_start(struct sock *sk, int backlog)
 		return 0;
 	}
 	/* 绑定端口失败，则设置连接未关闭状态 */
+	// If things went south, then return the error
+    // but first set the state of the socket to
+    // TCP_CLOSE.
 	sk->sk_state = TCP_CLOSE;
 	return -EADDRINUSE;
 }

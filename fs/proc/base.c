@@ -462,6 +462,12 @@ static void unlock_trace(struct task_struct *task)
 #ifdef CONFIG_STACKTRACE
 
 #define MAX_STACK_TRACE_DEPTH	64
+/**
+ * Iterates through the kernel stack frames of
+ * the current task, displaying the kernel 
+ * addresses of each function, as well as
+ * their symbol name and offset.
+ */
 
 static int proc_pid_stack(struct seq_file *m, struct pid_namespace *ns,
 			  struct pid *pid, struct task_struct *task)
@@ -470,20 +476,48 @@ static int proc_pid_stack(struct seq_file *m, struct pid_namespace *ns,
 	unsigned long *entries;
 	int err;
 	int i;
+        // Allocate some memory so that we can have
+        // in our execution the whole stack of the
+        // process (up to a given depth).
+        //
+	// The first argument to the kmalloc
+	// is the size of the block to be allocated.
+        //
+	// The second argument is allocation flag.
+        //
+	// GFP_KERNEL means that allocation is performed on
+	// behalf of a process running in the kernel space.
+	//
+	// This means that the calling function is executing
+	// a system call on behalf of a process.
+	//
+	// Using GFP_KERNEL means that kmalloc can put the
+	// current process to sleep waiting for a page when
+	// called in low-memory situations.
+        // 
+	// See https://elixir.bootlin.com/linux/v4.15/source/include/linux/gfp.h#L219
 
 	entries = kmalloc(MAX_STACK_TRACE_DEPTH * sizeof(*entries), GFP_KERNEL);
 	if (!entries)
 		return -ENOMEM;
+	// With the space properly allocated, we can now
+	// prepare the `stack_trace` struct and pass
+	// it down to the function that will get that
+	// for us.
 
 	trace.nr_entries	= 0;
 	trace.max_entries	= MAX_STACK_TRACE_DEPTH;
 	trace.entries		= entries;
 	trace.skip		= 0;
+	// Make sure that we have mutual exclusion in
+	// place.
 
 	err = lock_trace(task);
 	if (!err) {
+		// Capture the stack trace!
+		// https://elixir.bootlin.com/linux/v4.15/source/arch/x86/kernel/stackt
 		save_stack_trace_tsk(task, &trace);
-
+		// Iterate over each frame captured.
 		for (i = 0; i < trace.nr_entries; i++) {
 			seq_printf(m, "[<%pK>] %pS\n",
 				   (void *)entries[i], (void *)entries[i]);
@@ -623,10 +657,17 @@ static int proc_pid_limits(struct seq_file *m, struct pid_namespace *ns,
 	unsigned long flags;
 
 	struct rlimit rlim[RLIM_NLIMITS];
+	// Make sure we have exclusive access
+	// to the task struct while reading
+	// it.
 
 	if (!lock_task_sighand(task, &flags))
 		return 0;
+	  // Copy to our current execution all of
+      // the limits that are set for the task
+      // provided as argument.
 	memcpy(rlim, task->signal->rlim, sizeof(struct rlimit) * RLIM_NLIMITS);
+	// Release the exclusive access
 	unlock_task_sighand(task, &flags);
 
 	/*
@@ -634,7 +675,7 @@ static int proc_pid_limits(struct seq_file *m, struct pid_namespace *ns,
 	 */
        seq_printf(m, "%-25s %-20s %-20s %-10s\n",
 		  "Limit", "Soft Limit", "Hard Limit", "Units");
-
+	// Iterate over each limit and then display it.
 	for (i = 0; i < RLIM_NLIMITS; i++) {
 		if (rlim[i].rlim_cur == RLIM_INFINITY)
 			seq_printf(m, "%-25s %-20s ",
@@ -3067,6 +3108,8 @@ retry:
 int proc_pid_readdir(struct file *file, struct dir_context *ctx)
 {
 	struct tgid_iter iter;
+	 // Takes the namespace as seen by the file
+     // provided.
 	struct pid_namespace *ns = file_inode(file)->i_sb->s_fs_info;
 	loff_t pos = ctx->pos;
 
@@ -3087,6 +3130,9 @@ int proc_pid_readdir(struct file *file, struct dir_context *ctx)
 	}
 	iter.tgid = pos - TGID_OFFSET;
 	iter.task = NULL;
+	// Iterates through the next available tasks
+        // (processes) as seen by the namespace that
+        // we are within.
 	for (iter = next_tgid(ns, iter);
 	     iter.task;
 	     iter.tgid += 1, iter = next_tgid(ns, iter)) {
@@ -3096,6 +3142,8 @@ int proc_pid_readdir(struct file *file, struct dir_context *ctx)
 		cond_resched();
 		if (!has_pid_permissions(ns, iter.task, 2))
 			continue;
+		// convert the tgid to a string that we can
+		// return in the dir entries
 
 		len = snprintf(name, sizeof(name), "%d", iter.tgid);
 		ctx->pos = iter.tgid + TGID_OFFSET;
