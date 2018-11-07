@@ -6,12 +6,19 @@
 
 
 struct timerqueue_node {
+	// 红黑树的节点
 	struct rb_node node;
+	// 该节点代表队hrtimer的到期时间，与hrtimer结构中的_softexpires稍有不同
+	// 该字段和hrtimer中的_softexpires字段一起，设定了hrtimer的到期时间的一个范围，
+	// hrtimer可以在hrtimer._softexpires至timerqueue_node.expires之间的任何时刻到期，
+	// 我们也称timerqueue_node.expires为硬过期时间(hard)
 	ktime_t expires;
 };
 
 struct timerqueue_head {
+	// 红黑树的根节点
 	struct rb_root head;
+	// 该红黑树中最早到期的节点，也就是最左下的节点
 	struct timerqueue_node *next;
 };
 

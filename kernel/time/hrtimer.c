@@ -991,11 +991,13 @@ void hrtimer_start_range_ns(struct hrtimer *timer, ktime_t tim,
 	struct hrtimer_clock_base *base, *new_base;
 	unsigned long flags;
 	int leftmost;
-
+	 /* 取得hrtimer_clock_base指针 */
 	base = lock_hrtimer_base(timer, &flags);
 
 	/* Remove an active timer from the queue: */
+	/* 如果已经在红黑树中，先移除它: */
 	remove_hrtimer(timer, base, true);
+	/* 如果是相对时间，则需要加上当前时间，因为内部是使用绝对时间 */
 
 	if (mode & HRTIMER_MODE_REL)
 		tim = ktime_add_safe(tim, base->get_time());
@@ -1008,7 +1010,8 @@ void hrtimer_start_range_ns(struct hrtimer *timer, ktime_t tim,
 	new_base = switch_hrtimer_base(timer, base, mode & HRTIMER_MODE_PINNED);
 
 	timer_stats_hrtimer_set_start_info(timer);
-
+	/* 把hrtime按到期时间排序，加入到对应时间基准系统的红黑树中 */
+     /* 如果该定时器的是最早到期的，将会返回true */
 	leftmost = enqueue_hrtimer(timer, new_base);
 	if (!leftmost)
 		goto unlock;

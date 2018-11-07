@@ -79,14 +79,20 @@ struct tvec_root {
 
 struct tvec_base {
 	spinlock_t lock;
+	///表示由本地cpu正在处理的定时器链表 
 	struct timer_list *running_timer;
+	///这个表示当前的定时器级联表中最快要超时的定时器的jiffer  
 	unsigned long timer_jiffies;
 	unsigned long next_timer;
+	//accounting of non-deferrable timers
 	unsigned long active_timers;
+	// total number of timers or active_timers + deferrable timers
 	unsigned long all_timers;
+	//represents number of a processor which owns timers
 	int cpu;
 	bool migration_enabled;
 	bool nohz_active;
+	///下面表示了5级的定时器级联表.  
 	struct tvec_root tv1;
 	struct tvec tv2;
 	struct tvec tv3;
@@ -373,10 +379,12 @@ EXPORT_SYMBOL_GPL(set_timer_slack);
 static void
 __internal_add_timer(struct tvec_base *base, struct timer_list *timer)
 {
+	///取出超时jiffies
 	unsigned long expires = timer->expires;
+	///得到定时器还有多长时间到期(这里是相比于最短的那个定时器)  
 	unsigned long idx = expires - base->timer_jiffies;
 	struct hlist_head *vec;
-
+	///开始判断该把定时器加入到那个队列.依次为tv1到tv5	
 	if (idx < TVR_SIZE) {
 		int i = expires & TVR_MASK;
 		vec = base->tv1.vec + i;
@@ -408,7 +416,7 @@ __internal_add_timer(struct tvec_base *base, struct timer_list *timer)
 		i = (expires >> (TVR_BITS + 3 * TVN_BITS)) & TVN_MASK;
 		vec = base->tv5.vec + i;
 	}
-
+	///最终加入链表 
 	hlist_add_head(&timer->entry, vec);
 }
 
@@ -1142,7 +1150,7 @@ static int cascade(struct tvec_base *base, struct tvec *tv, int index)
 	struct timer_list *timer;
 	struct hlist_node *tmp;
 	struct hlist_head tv_list;
-
+	//这里实例化tv_list为我们将要处理的链表.并将老的list重新初始化为空.  
 	hlist_move_list(tv->vec + index, &tv_list);
 
 	/*
@@ -1151,9 +1159,10 @@ static int cascade(struct tvec_base *base, struct tvec *tv, int index)
 	 */
 	hlist_for_each_entry_safe(timer, tmp, &tv_list, entry) {
 		/* No accounting, while moving them */
+	//重新加入定时器,也就是加入到自己对应的位置  
 		__internal_add_timer(base, timer);
 	}
-
+	///然后返回index,这里可以看到如果index为空则说明这个级别的定时器也已经都处理过了,因此我们需要再处理下一个级别.  
 	return index;
 }
 
@@ -1199,7 +1208,8 @@ static void call_timer_fn(struct timer_list *timer, void (*fn)(unsigned long),
 		preempt_count_set(count);
 	}
 }
-
+//得到在N级(也就是tv2,tv3...)的定时器表中的slot.
+//这里可以对照我们前面的internal_add_timer加入定时器的情况.  
 #define INDEX(N) ((base->timer_jiffies >> (TVR_BITS + (N) * TVN_BITS)) & TVN_MASK)
 
 /**
@@ -1212,10 +1222,11 @@ static void call_timer_fn(struct timer_list *timer, void (*fn)(unsigned long),
 static inline void __run_timers(struct tvec_base *base)
 {
 	struct timer_list *timer;
-
+	///关闭中断并且开启自旋锁
 	spin_lock_irq(&base->lock);
-
+	//然后遍历定时器级联表
 	while (time_after_eq(jiffies, base->timer_jiffies)) {
+		//这里的head和work_list其实表示的就是已经超时的定时器,也就是我们将要处理的定时器. 
 		struct hlist_head work_list;
 		struct hlist_head *head = &work_list;
 		int index;
@@ -1224,24 +1235,30 @@ static inline void __run_timers(struct tvec_base *base)
 			base->timer_jiffies = jiffies;
 			break;
 		}
-
+		//从timer_jiffies得到所在index,其实也就是在tv1中的index  
 		index = base->timer_jiffies & TVR_MASK;
 
 		/*
 		 * Cascade timers:
 		 */
+		 //开始处理层叠定时器,这里的这个cascade是一个关键的函数,
+		 //我们下面会分析,这里只需要知道这个函数其实也就是用来一层层的得到这个定时器处于哪个级别中.  
+		 //在tv1中的index回零，需要挪动后面的链表
 		if (!index &&
 			(!cascade(base, &base->tv2, INDEX(0))) &&
 				(!cascade(base, &base->tv3, INDEX(1))) &&
 					!cascade(base, &base->tv4, INDEX(2)))
 			cascade(base, &base->tv5, INDEX(3));
+		//更新timer_jiffies
 		++base->timer_jiffies;
-		hlist_move_list(base->tv1.vec + index, head);
+		//用work_list替换掉base->tv1.vec + index.这里因为上面的处理中,就算定时器不在base->tv1中,可是通过cascade的调节,会将base->tv2加入到base->tv1中,或者说base->tv3,以此类推. 
+		hlist_move_list(base->tv1.vec + index, head);		
+		///如果这个值不为空说明有已经超时的定时器.这里head也就是work_list,也就是base->tv1  
 		while (!hlist_empty(head)) {
 			void (*fn)(unsigned long);
 			unsigned long data;
 			bool irqsafe;
-
+			///取出定时器.
 			timer = hlist_entry(head->first, struct timer_list, entry);
 			fn = timer->function;
 			data = timer->data;
@@ -1250,6 +1267,7 @@ static inline void __run_timers(struct tvec_base *base)
 			timer_stats_account_timer(timer);
 
 			base->running_timer = timer;
+			///删除这个定时器.
 			detach_expired_timer(timer, base);
 
 			if (irqsafe) {
@@ -1672,6 +1690,7 @@ void __init init_timers(void)
 {
 	init_timer_cpus();
 	init_timer_stats();
+	///注册到cpu的notify chain
 	timer_register_cpu_notifier();
 	open_softirq(TIMER_SOFTIRQ, run_timer_softirq);
 }

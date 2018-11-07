@@ -70,8 +70,8 @@ enum hrtimer_restart {
  *
  * All state transitions are protected by cpu_base->lock.
  */
-#define HRTIMER_STATE_INACTIVE	0x00
-#define HRTIMER_STATE_ENQUEUED	0x01
+#define HRTIMER_STATE_INACTIVE	0x00 // 定时器未激活
+#define HRTIMER_STATE_ENQUEUED	0x01 // 定时器已经被排入红黑树中
 
 /**
  * struct hrtimer - the basic hrtimer structure
@@ -140,20 +140,23 @@ struct hrtimer_sleeper {
  * @offset:		offset of this clock to the monotonic base
  */
 struct hrtimer_clock_base {
+// 指向所属cpu的hrtimer_cpu_base结构
 	struct hrtimer_cpu_base	*cpu_base;
 	int			index;
 	clockid_t		clockid;
+	// 红黑树，包含了所有使用该时间基准系统的hrtimer
 	struct timerqueue_head	active;
+	// 获取该基准系统的时间函数
 	ktime_t			(*get_time)(void);
 	ktime_t			offset;
 } __attribute__((__aligned__(HRTIMER_CLOCK_BASE_ALIGN)));
 
 enum  hrtimer_base_type {
-	HRTIMER_BASE_MONOTONIC,
-	HRTIMER_BASE_REALTIME,
-	HRTIMER_BASE_BOOTTIME,
+	HRTIMER_BASE_MONOTONIC, // 单调递增的monotonic时间，不包含休眠时间
+	HRTIMER_BASE_REALTIME,// 平常使用的墙上真实时间
+	HRTIMER_BASE_BOOTTIME, // 单调递增的boottime，包含休眠时间
 	HRTIMER_BASE_TAI,
-	HRTIMER_MAX_CLOCK_BASES,
+	HRTIMER_MAX_CLOCK_BASES, // 用于后续数组的定义
 };
 
 /*
@@ -196,6 +199,7 @@ struct hrtimer_cpu_base {
 	unsigned int			in_hrtirq	: 1,
 					hres_active	: 1,
 					hang_detected	: 1;
+//3中时间基准的最先到期时间可能不同，所以，它们之中最先到期的时间被记录在hrtimer_cpu_base的expires_next字段中
 	ktime_t				expires_next;
 	struct hrtimer			*next_timer;
 	unsigned int			nr_events;

@@ -42,10 +42,13 @@ enum tick_nohz_mode {
 struct tick_sched {
 //sched_timer表示用于实现时钟的定时器。
 	struct hrtimer			sched_timer;
+//用于notify系统通知hrtimer系统需要检查是否切换到高精度模式
 	unsigned long			check_clocks;
 	enum tick_nohz_mode		nohz_mode;
+	//禁用周期时钟之前，上一个时钟信号的到期时间
 	ktime_t				last_tick;
 	int				inidle;
+	//如果周期时钟已经停用，则tick_stopped为1
 	int				tick_stopped;
 	//idle_jiffies存储了周期时钟禁用时的jiffies值
 	unsigned long			idle_jiffies;
@@ -63,7 +66,9 @@ struct tick_sched {
 	//周期时钟将禁用的时间长度，即从时钟禁用起，到预定将发生的下一个时钟信号为止，这一段时间的长度。
 	ktime_t				sleep_length;
 	unsigned long			last_jiffies;
+	//下一个定时器到期时间的jiffy值
 	u64				next_timer;
+	//下一个将到期的经典定时器的到期时间
 	ktime_t				idle_expires;
 	int				do_timer_last;
 };

@@ -680,7 +680,7 @@ EXPORT_SYMBOL_GPL(tasklet_hrtimer_init);
 void __init softirq_init(void)
 {
 	int cpu;
-
+	///每个cpu初始化两个tasklet链表  
 	for_each_possible_cpu(cpu) {
 		per_cpu(tasklet_vec, cpu).tail =
 			&per_cpu(tasklet_vec, cpu).head;

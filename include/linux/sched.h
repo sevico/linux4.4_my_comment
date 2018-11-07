@@ -707,8 +707,10 @@ struct signal_struct {
 	struct list_head	posix_timers;
 
 	/* ITIMER_REAL timer for the process */
+	/* 进程的ITIMER_REAL定时器 */
 	struct hrtimer real_timer;
 	struct pid *leader_pid;
+	//定时器的时间间隔
 	ktime_t it_real_incr;
 
 	/*

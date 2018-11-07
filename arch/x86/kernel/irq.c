@@ -236,7 +236,7 @@ __visible unsigned int __irq_entry do_IRQ(struct pt_regs *regs)
 
 	/* entering_irq() tells RCU that we're not quiescent.  Check it. */
 	RCU_LOCKDEP_WARN(!rcu_is_watching(), "IRQ failed to wake up RCU");
-	* 根据中断向量号获取中断描述符 */
+	/* 根据中断向量号获取中断描述符 */
 
 	desc = __this_cpu_read(vector_irq[vector]);
 	/* 主要函数是handle_irq，进行中断服务例程的处理 */

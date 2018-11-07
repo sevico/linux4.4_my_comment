@@ -97,12 +97,19 @@ enum clock_event_state {
  * @owner:		module reference
  */
 struct clock_event_device {
+//该字段是一个回调函数指针，通常由通用框架层设置，在时间中断到来时，
+//machine底层的的中断服务程序会调用该回调，框架层利用该回调实现对时钟事件的处理。
 	void			(*event_handler)(struct clock_event_device *);
+//设置下一次时间触发的时间，使用类似于clocksource的cycle计数值（离现在的cycle差值）作为参数。
 	int			(*set_next_event)(unsigned long evt, struct clock_event_device *);
+//设置下一次时间触发的时间，直接使用ktime时间作为参数
 	int			(*set_next_ktime)(ktime_t expires, struct clock_event_device *);
 	ktime_t			next_event;
+	//可设置的最大时间差，单位是纳秒
 	u64			max_delta_ns;
+	//可设置的最小时间差，单位是纳秒
 	u64			min_delta_ns;
+	//用于把纳秒转换为cycle
 	u32			mult;
 	u32			shift;
 	enum clock_event_state	state_use_accessors;
@@ -126,6 +133,7 @@ struct clock_event_device {
 	int			irq;
 	int			bound_on;
 	const struct cpumask	*cpumask;
+	//系统中注册的时钟事件设备用该字段挂在全局链表变量clockevent_devices上
 	struct list_head	list;
 	struct module		*owner;
 } ____cacheline_aligned;
