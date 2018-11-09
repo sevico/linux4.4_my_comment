@@ -527,6 +527,8 @@ int __init_memblock memblock_add_range(struct memblock_type *type,
 {
 	bool insert = false;
 	phys_addr_t obase = base;
+	 /*  获取内存区域的结束位置,
+      *  memblock_cap_size函数会设置size大小确保base + size不会溢出  */
 	phys_addr_t end = base + memblock_cap_size(base, &size);
 	int i, nr_new;
 
@@ -592,7 +594,7 @@ repeat:
 	 * If this was the first round, resize array and repeat for actual
 	 * insertions; otherwise, merge and return.
 	 */
-	if (!insert) {
+	if (!insert) { /*  第一次执行的的时候insert == false  */
 		while (type->cnt + nr_new > type->max)
 			if (memblock_double_array(type, obase, size) < 0)
 				return -ENOMEM;

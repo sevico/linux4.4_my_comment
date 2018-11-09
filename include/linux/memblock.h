@@ -44,8 +44,11 @@ struct memblock_type {
 };
 
 struct memblock {
+	 //如果true, 则允许由下而上地分配内存
 	bool bottom_up;  /* is bottom up direction? */
+	 /*指出了内存块的大小限制*/  
 	phys_addr_t current_limit;
+	 /*  接下来的三个域描述了内存块的类型，即预留型，内存型和物理内存*/
 	struct memblock_type memory;
 	struct memblock_type reserved;
 #ifdef CONFIG_HAVE_MEMBLOCK_PHYS_MAP

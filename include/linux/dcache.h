@@ -109,27 +109,41 @@ struct dentry {
 	/* RCU lookup touched fields */
 	unsigned int d_flags;		/* protected by d_lock */
 	seqcount_t d_seq;		/* per dentry seqlock */
+	/*
+* 接下来的3个字段由__d_lookup处理
+* 将它们放置在这里，使之能够装填到一个缓存行中
+*/
 	struct hlist_bl_node d_hash;	/* lookup hash list */
+	//当前结点父目录的dentry实例,根节点指向自身
 	struct dentry *d_parent;	/* parent directory */
+	//文件的名称
 	struct qstr d_name;
+	//指向相关的inode实例的指针
 	struct inode *d_inode;		/* Where the name belongs to - NULL is
 					 * negative */
+	//文件名只由少量字符组成，则保存在d_iname中
 	unsigned char d_iname[DNAME_INLINE_LEN];	/* small names */
 
 	/* Ref lookup also touches following */
 	struct lockref d_lockref;	/* per-dentry lock and refcount */
 	const struct dentry_operations *d_op;
+	/* dentry树的根，超级块 */
 	struct super_block *d_sb;	/* The root of the dentry tree */
 	unsigned long d_time;		/* used by d_revalidate */
 	void *d_fsdata;			/* fs-specific data */
 
 	struct list_head d_lru;		/* LRU list */
 	struct list_head d_child;	/* child of parent list */
+	//给定目录下的所有文件和子目录相关联的dentry实例，都归入到d_subdirs链表
+	//子结点的d_child成员充当链表元素
 	struct list_head d_subdirs;	/* our children */
 	/*
 	 * d_alias and d_rcu can share memory
 	 */
 	union {
+	/* 链表元素，用于将dentry连接到inode的i_dentry链表中 */
+	//连接表示相同文件的各个dentry对象
+	//对应于文件的inode的i_dentry成员用作该链表的表头。各个dentry对象通过d_alias连接到该链表中
 		struct hlist_node d_alias;	/* inode alias list */
 	 	struct rcu_head d_rcu;
 	} d_u;
@@ -148,14 +162,20 @@ enum dentry_d_lock_class
 };
 
 struct dentry_operations {
+	 /*判断目录对象是否有效。VFS准备从dcache中使用一个dentry时会调用该函数。*/
 	int (*d_revalidate)(struct dentry *, unsigned int);
 	int (*d_weak_revalidate)(struct dentry *, unsigned int);
+	/*为dentry生成hash值。当dentry需要加入到hash table时，VFS调用该函数*/
 	int (*d_hash)(const struct dentry *, struct qstr *);
+	/*比较两个文件名。注意，使用该函数时需加dcache_lock*/
 	int (*d_compare)(const struct dentry *, const struct dentry *,
 			unsigned int, const char *, const struct qstr *);
+	/*当dentry对象的d_count计数为0时，VFS调用该函数。注意，使用该函数时加dcache_lock和dentry的d_lock*/
 	int (*d_delete)(const struct dentry *);
+	/*dentry对象将要被释放时VFS调用。默认情况下什么也不做*/
 	void (*d_release)(struct dentry *);
 	void (*d_prune)(struct dentry *);
+	 /*当一个dentry对象丢失了相关的inode（也就是说磁盘inode被删除），VFS调用。*/
 	void (*d_iput)(struct dentry *, struct inode *);
 	char *(*d_dname)(struct dentry *, char *, int);
 	struct vfsmount *(*d_automount)(struct path *);

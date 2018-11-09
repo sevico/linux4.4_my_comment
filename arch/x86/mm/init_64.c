@@ -658,6 +658,13 @@ void __init initmem_init(void)
 
 void __init paging_init(void)
 {
+	 /* 为所有node所拥有的物理page建立mem_sections 
+			 * 将放入early_node_map中所有节点的memory region的page放入另外一个mem_section的数组中。
+			 * 使用mem_section目的可能是内存分配更加高效。
+			 * kernel中一个mem_section包含了物理地址相连的固定数目个page。
+			 * 给定一个物理地址，我们可以得到它所在的page，也能得到它所在的mem_section的下标。
+			 * 而sparse_memory_present_with_active_regions的作用就是为给定node所拥有的物理page建立mem_sections.
+			 */
 	sparse_memory_present_with_active_regions(MAX_NUMNODES);
 	sparse_init();
 

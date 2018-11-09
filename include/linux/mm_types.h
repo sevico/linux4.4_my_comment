@@ -204,7 +204,8 @@ struct page {
 
 	/* Remainder is not double word aligned */
 	union {
-	 /* 可用于正在使用页的内核成分(例如: 在缓冲页的情况下它是一个缓冲器头指针，如果页是空闲的，则该字段由伙伴系统使用，在给伙伴系统使用时，表明的是块的2的次方数，只有块的第一个页框会使用) */
+	 /* 可用于正在使用页的内核成分(例如: 在缓冲页的情况下它是一个缓冲器头指针，如果页是空闲的，*/
+	 //则该字段由伙伴系统使用，在给伙伴系统使用时，表明的是块的2的次方数，只有块的第一个页框会使用) */
 		unsigned long private;		/* Mapping-private opaque data:
 					 	 * usually used for buffer_heads
 						 * if PagePrivate set; used for

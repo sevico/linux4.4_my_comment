@@ -332,19 +332,19 @@ struct ubuf_info {
 struct skb_shared_info {
 	unsigned char	nr_frags;
 	__u8		tx_flags;
-	unsigned short	gso_size;
+	unsigned short	gso_size; //尺寸
 	/* Warning: this field is not always filled in (UFO)! */
-	unsigned short	gso_segs;
+	unsigned short	gso_segs; //顺序
 	unsigned short  gso_type;
-	struct sk_buff	*frag_list;
-	struct skb_shared_hwtstamps hwtstamps;
+	struct sk_buff	*frag_list; //分片的sk_buff列表
+	struct skb_shared_hwtstamps hwtstamps; //硬件时间戳
 	u32		tskey;
 	__be32          ip6_frag_id;
 
 	/*
 	 * Warning : all fields before dataref are cleared in __alloc_skb()
 	 */
-	atomic_t	dataref;
+	atomic_t	dataref; //使用计数
 
 	/* Intermediate layers must ensure that destructor_arg
 	 * remains valid until skb destructor */

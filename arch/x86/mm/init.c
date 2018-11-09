@@ -129,11 +129,11 @@ void  __init early_alloc_pgt_buf(void)
 	unsigned long tables = INIT_PGT_BUF_SIZE;
 	phys_addr_t base;
 
-	base = __pa(extend_brk(tables, PAGE_SIZE));
+	base = __pa(extend_brk(tables, PAGE_SIZE)); //扩展brk,但是不能超过brk_limit
 
-	pgt_buf_start = base >> PAGE_SHIFT;
-	pgt_buf_end = pgt_buf_start;
-	pgt_buf_top = pgt_buf_start + (tables >> PAGE_SHIFT);
+	pgt_buf_start = base >> PAGE_SHIFT; //pgt开始的页框数
+	pgt_buf_end = pgt_buf_start;  //已分配pgt结束位置的页框数
+	pgt_buf_top = pgt_buf_start + (tables >> PAGE_SHIFT); //分配的pgt空间结尾页框数
 }
 
 int after_bootmem;

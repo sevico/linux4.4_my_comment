@@ -23,6 +23,7 @@
 #define NR_OPEN_DEFAULT BITS_PER_LONG
 
 struct fdtable {
+//当前可以处理的文件对象和文件描述符的最大数目
 	unsigned int max_fds;
 	struct file __rcu **fd;      /* current fd array */
 	unsigned long *close_on_exec;

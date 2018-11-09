@@ -5,13 +5,18 @@
 #include <linux/fs_pin.h>
 
 struct mnt_namespace {
+	/*使用计数*/
 	atomic_t		count;
 	struct ns_common	ns;
+	/*根目录的挂载点对象*/
 	struct mount *	root;
+	/*挂载点链表*/
 	struct list_head	list;
 	struct user_namespace	*user_ns;
 	u64			seq;	/* Sequence number to prevent loops */
+	/*轮询的等待队列*/
 	wait_queue_head_t poll;
+	/*事件计数*/
 	u64 event;
 	unsigned int		mounts; /* # of mounts in the namespace */
 	unsigned int		pending_mounts;
@@ -32,8 +37,10 @@ struct mountpoint {
 struct mount {
 	//指向父 mount 结构
 	struct hlist_node mnt_hash;
+	/* 装载点所在的父文件系统 */
 	struct mount *mnt_parent;
 	//指向挂载点
+	/* 装载点在父文件系统中的dentry */
 	struct dentry *mnt_mountpoint;
 	struct vfsmount mnt;
 	union {
@@ -43,19 +50,29 @@ struct mount {
 #ifdef CONFIG_SMP
 	struct mnt_pcp __percpu *mnt_pcp;
 #else
+	//每当一个vfsmount实例不再需要时，都必须用mntput将计数器减1
 	int mnt_count;
 	int mnt_writers;
 #endif
+	/* 子文件系统链表 */
 	struct list_head mnt_mounts;	/* list of children, anchored here */
+	/* 链表元素，用于父文件系统中的mnt_mounts链表 */
 	struct list_head mnt_child;	/* and going through their mnt_child */
 	struct list_head mnt_instance;	/* mount instance on sb->s_mounts */
+	/* 64位体系结构上，是一个4字节的空洞 */
 	const char *mnt_devname;	/* Name of device e.g. /dev/dsk/hda1 */
 	struct list_head mnt_list;
+	/* 链表元素，用于特定于文件系统的到期链表中 */
 	struct list_head mnt_expire;	/* link in fs-specific expiry list */
+	/* 链表元素，用于共享装载的循环链表 */
 	struct list_head mnt_share;	/* circular list of shared mounts */
+	/* 从属装载的链表 */
 	struct list_head mnt_slave_list;/* list of slave mounts */
+	/* 链表元素，用于从属装载的链表 */
 	struct list_head mnt_slave;	/* slave list entry */
+	/* 指向主装载，从属装载位于master->mnt_slave_list*/
 	struct mount *mnt_master;	/* slave is on master->mnt_slave_list */
+	/* 所属的命名空间 */
 	struct mnt_namespace *mnt_ns;	/* containing namespace */
 	struct mountpoint *mnt_mp;	/* where is it mounted */
 	struct hlist_node mnt_mp_list;	/* list mounts with the same mountpoint */
@@ -66,6 +83,11 @@ struct mount {
 #endif
 	int mnt_id;			/* mount identifier */
 	int mnt_group_id;		/* peer group identifier */
+	/*
+* 我们把mnt_count和mnt_expiry_mark放置在struct vfsmount的末尾，
+* 以便让这些频繁修改的字段与结构的主体处于两个不同的缓存行中
+* （这样在SMP机器上读取mnt_flags不会造成高速缓存的颠簸）
+*/
 	int mnt_expiry_mark;		/* true if marked for expiry */
 	struct hlist_head mnt_pins;
 	struct fs_pin mnt_umount;

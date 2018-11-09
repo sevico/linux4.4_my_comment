@@ -6,11 +6,16 @@
 #include <linux/seqlock.h>
 
 struct fs_struct {
+	/*用户数目*/
 	int users;
+	/*保护该结构体的锁*/
 	spinlock_t lock;
 	seqcount_t seq;
+	//标准的掩码，用于设置新文件的权限
 	int umask;
+	 /*当前正在执行的文件*/
 	int in_exec;
+	 /*根目录的路径和当前工作目录的路径*/
 	struct path root, pwd;
 };
 
