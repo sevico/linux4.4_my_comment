@@ -1442,7 +1442,7 @@ xfs_fs_fill_super(
 	struct inode		*root;
 	struct xfs_mount	*mp = NULL;
 	int			flags = 0, error = -ENOMEM;
-
+	// 虽然不想详细说明xfs_mount结构，但是看到下面sb->s_fs_info = mp，s_fs_info是super_block结构中代表具体文件系统实现的超级块信息的指针，所以这个xfs_mount存储着xfs的超级块信息，这个信息是xfs特有的。
 	mp = kzalloc(sizeof(struct xfs_mount), GFP_KERNEL);
 	if (!mp)
 		goto out;
@@ -1456,31 +1456,35 @@ xfs_fs_fill_super(
 
 	mp->m_super = sb;
 	sb->s_fs_info = mp;
-
+	// 解析xfs特有的挂载选项，存储在xfs_mount里
 	error = xfs_parseargs(mp, (char *)data);
 	if (error)
 		goto out_free_fsname;
-
+	// 设置sb的最小blocksize
 	sb_min_blocksize(sb, BBSIZE);
+	// 设置sb的扩展属性的处理函数
 	sb->s_xattr = xfs_xattr_handlers;
+	// 设置export操作的处理函数
 	sb->s_export_op = &xfs_export_operations;
+	 // 设置quota的处理函数
 #ifdef CONFIG_XFS_QUOTA
 	sb->s_qcop = &xfs_quotactl_operations;
 	sb->s_quota_types = QTYPE_MASK_USR | QTYPE_MASK_GRP | QTYPE_MASK_PRJ;
 #endif
+	// 设置super block的操作函数
 	sb->s_op = &xfs_super_operations;
 
 	if (silent)
 		flags |= XFS_MFSI_QUIET;
-
+	// 这里是在处理指定了xfs的log或realtime volumes的情况，data volume之前已经处理了
 	error = xfs_open_devices(mp);
 	if (error)
 		goto out_free_fsname;
-
+	// 创建很多工作队列，如log, data的工作队列
 	error = xfs_init_mount_workqueues(mp);
 	if (error)
 		goto out_close_devices;
-
+	// 初始化per_cpu的incore super block counters
 	error = xfs_init_percpu_counters(mp);
 	if (error)
 		goto out_destroy_workqueues;
@@ -1491,19 +1495,22 @@ xfs_fs_fill_super(
 		error = -ENOMEM;
 		goto out_destroy_counters;
 	}
+	// 读super block的信息，主要存储在mp->m_sb里
 
 	error = xfs_readsb(mp, flags);
 	if (error)
 		goto out_free_stats;
-
+	// 根据上面读出的super block的信息，继续赋值mp里和mount参数相关的内容
 	error = xfs_finish_flags(mp);
 	if (error)
 		goto out_free_sb;
-
+	
+	// 根据上面读出的super block的信息，设置xfs的buffer target结构
+	// 首先是data device的，然后判断是否有log或realtime volumes，如果有也初始化它们的buffer target
 	error = xfs_setup_devices(mp);
 	if (error)
 		goto out_free_sb;
-
+	// 创建MRU cache为这个mount结构，为文件流操作使用
 	error = xfs_filestream_mount(mp);
 	if (error)
 		goto out_free_sb;
@@ -1512,6 +1519,7 @@ xfs_fs_fill_super(
 	 * we must configure the block size in the superblock before we run the
 	 * full mount process as the mount process can lookup and cache inodes.
 	 */
+	 // 根据上面读出的super block的内容继续进行设置
 	sb->s_magic = XFS_SB_MAGIC;
 	sb->s_blocksize = mp->m_sb.sb_blocksize;
 	sb->s_blocksize_bits = ffs(sb->s_blocksize) - 1;
@@ -1541,7 +1549,7 @@ xfs_fs_fill_super(
 	if (xfs_sb_version_hassparseinodes(&mp->m_sb))
 		xfs_alert(mp,
 	"EXPERIMENTAL sparse inode feature enabled. Use at your own risk!");
-
+	// 内存中的根inode在这里通过xfs_iget得到
 	error = xfs_mountfs(mp);
 	if (error)
 		goto out_filestream_unmount;
@@ -1551,12 +1559,13 @@ xfs_fs_fill_super(
 		error = -ENOENT;
 		goto out_unmount;
 	}
+	 // 根dentry在这里创建
 	sb->s_root = d_make_root(root);
 	if (!sb->s_root) {
 		error = -ENOMEM;
 		goto out_unmount;
 	}
-
+	// 至此struct mount初始化完毕
 	return 0;
 
  out_filestream_unmount:

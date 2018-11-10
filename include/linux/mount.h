@@ -65,8 +65,11 @@ struct mnt_namespace;
 
 struct vfsmount {
 //文件系统本身的相对根目录
+//指向这个文件系统的根dentry
 	struct dentry *mnt_root;	/* root of the mounted tree */
+	/* 指向这个文件系统的超级块对象 */
 	struct super_block *mnt_sb;	/* pointer to superblock */
+	/* 此文件系统的挂载标志 */
 	int mnt_flags;
 };
 

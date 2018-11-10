@@ -75,11 +75,14 @@ int register_filesystem(struct file_system_type * fs)
 	if (fs->next)
 		return -EBUSY;
 	write_lock(&file_systems_lock);
+	// 遍历全局file_systems链表，尝试查找本次要注册文件系统名。
 	p = find_filesystem(fs->name, strlen(fs->name));
+	// 如果不为NULL，则说明找到了重名的文件系统。注册失败。
 	if (*p)
 		res = -EBUSY;
 	else
-		*p = fs;
+		// 如果返回NULL，说明已经到链表结尾，可以注册此文件系统。
+		*p = fs; // 将此文件系统链接到链表结尾
 	write_unlock(&file_systems_lock);
 	return res;
 }

@@ -965,6 +965,12 @@ static int test_bdev_super(struct super_block *s, void *data)
 {
 	return (void *)s->s_bdev == data;
 }
+/*mount_bdev函数的主要逻辑就是这样的
+blkdev_get_by_path根据设备名得到block_device结构
+sget得到已经存在或者新分配的super_block结构
+如果是已经存在的sb，就释放第一步得到的bdev结构
+如果是新的sb，就调用文件系统个别实现的fill_super函数继续处理新的sb，并创建根inode, dentry
+返回得到的s_root*/
 
 struct dentry *mount_bdev(struct file_system_type *fs_type,
 	int flags, const char *dev_name, void *data,
@@ -977,6 +983,10 @@ struct dentry *mount_bdev(struct file_system_type *fs_type,
 
 	if (!(flags & MS_RDONLY))
 		mode |= FMODE_WRITE;
+	// 通过dev_name设备名（如/dev/sda1）得到对应的block_device结构
+	// 首先是一个路径查找的过程，调用kern_path()得到struct path
+	// 然后以path.dentry->d_inode为参数调用bd_acquire得到block_device结构
+	// 对于路径查找和块设备的问题以后再叙述
 
 	bdev = blkdev_get_by_path(dev_name, mode, fs_type);
 	if (IS_ERR(bdev))
@@ -993,13 +1003,19 @@ struct dentry *mount_bdev(struct file_system_type *fs_type,
 		error = -EBUSY;
 		goto error_bdev;
 	}
+// sget现在现存fs_type->fs_supers链表中查找已经存在的对应的超级块实例（因为一个设备可能已经被挂载过了），fs_supers是file_system_type的成员，它指向一个特定文件系统下的所有超级块实例的链表表头。比较的过程就是遍历fs_supers链表，用每一个super_block->s_bdev和sget的bdev参数做比较，比较他们是不是同一个设备，test_bdev_super就是为了比较bdev而传入的函数参数。
+// 如果没能找到已经存在的超级块实例，那就只能创建一个新的了。此时set_bdev_super函数就是用来把bdev参数设置到新创建的super_block的s_bdev域中。然后设置一下s_type和s_id(s_id这里先初始化为文件系统名，之后如果发现是磁盘设备再改为磁盘设备名)，并把这个新的sb加入到全局super_blocks链表，以及此file_system_type的fs_supers链表中。
+// 到此就得到了一个已知的或新的super_block实例，后面的工作都是为了填充这个super_block的内容，并把它加入到各种链表中。
+
 	s = sget(fs_type, test_bdev_super, set_bdev_super, flags | MS_NOSEC,
 		 bdev);
 	mutex_unlock(&bdev->bd_fsfreeze_mutex);
 	if (IS_ERR(s))
 		goto error_s;
-
+	// 这个if是判断得到的sb是一个已经存在的还是一个新的sb，已经存在的sb的s_root已经被初始化了，新的sb的s_root还是空
 	if (s->s_root) {
+		// 处理已经存在的sb
+        // 判断此次的挂载flag是否和之前的挂载有读/写冲突，如果有冲突则返回错误
 		if ((flags ^ s->s_flags) & MS_RDONLY) {
 			deactivate_locked_super(s);
 			error = -EBUSY;
@@ -1014,14 +1030,17 @@ struct dentry *mount_bdev(struct file_system_type *fs_type,
 		 * holding an active reference.
 		 */
 		up_write(&s->s_umount);
+		// 因为已经有了之前存在的sb，也就是block_dev之前也分配过了，所以这个新的bdev就可以释放了。这里对应前面的blkdev_get_by_path
 		blkdev_put(bdev, mode);
 		down_write(&s->s_umount);
 	} else {
+		// 处理新的sb
 		char b[BDEVNAME_SIZE];
 
 		s->s_mode = mode;
 		strlcpy(s->s_id, bdevname(bdev, b), sizeof(s->s_id));
 		sb_set_blocksize(s, block_size(bdev));
+		// 设置了sb的mode, id, blocksize后，就到了fill_super的时候了。fill_super是一个函数参数，它由具体文件系统自己实现，如xfs就实现了xfs_fs_fill_super。
 		error = fill_super(s, data, flags & MS_SILENT ? 1 : 0);
 		if (error) {
 			deactivate_locked_super(s);
@@ -1124,7 +1143,7 @@ mount_fs(struct file_system_type *type, int flags, const char *name, void *data)
 		if (error)
 			goto out_free_secdata;
 	}
-
+	// 这里就是调用file_system_type的mount回调函数的地方，每个文件系统都有自己实现的mount回调函数
 	root = type->mount(type, flags, name, data);
 	if (IS_ERR(root)) {
 		error = PTR_ERR(root);

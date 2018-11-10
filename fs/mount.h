@@ -35,44 +35,59 @@ struct mountpoint {
 };
 
 struct mount {
-	//指向父 mount 结构
+	/* 用于链接到全局已挂载文件系统的链表 */
+//mount_hashtable
 	struct hlist_node mnt_hash;
 	/* 装载点所在的父文件系统 */
 	struct mount *mnt_parent;
 	//指向挂载点
 	/* 装载点在父文件系统中的dentry */
+	//了父文件系统的一个dentry，这个dentry也就是子文件系统的真正挂载点
 	struct dentry *mnt_mountpoint;
+	/* 指向此文件系统的vfsmount实例 */
 	struct vfsmount mnt;
 	union {
+		/* 用于rcu锁 */
 		struct rcu_head mnt_rcu;
 		struct llist_node mnt_llist;
 	};
 #ifdef CONFIG_SMP
+	/* 用于多核 */
 	struct mnt_pcp __percpu *mnt_pcp;
 #else
 	//每当一个vfsmount实例不再需要时，都必须用mntput将计数器减1
+	/* 使用计数 */
 	int mnt_count;
 	int mnt_writers;
 #endif
 	/* 子文件系统链表 */
+	/* 挂载在此文件系统下的所有子文件系统的链表的表头，下面的节点都是mnt_child */
 	struct list_head mnt_mounts;	/* list of children, anchored here */
 	/* 链表元素，用于父文件系统中的mnt_mounts链表 */
 	struct list_head mnt_child;	/* and going through their mnt_child */
+	/* 链接到sb->s_mounts上的一个mount实例 */
 	struct list_head mnt_instance;	/* mount instance on sb->s_mounts */
 	/* 64位体系结构上，是一个4字节的空洞 */
+	/* 设备名，如 /dev/dsk/hda1 */
 	const char *mnt_devname;	/* Name of device e.g. /dev/dsk/hda1 */
+	/* 链接到进程namespace中已挂载文件系统中，表头为mnt_namespace的list域 */
 	struct list_head mnt_list;
 	/* 链表元素，用于特定于文件系统的到期链表中 */
 	struct list_head mnt_expire;	/* link in fs-specific expiry list */
 	/* 链表元素，用于共享装载的循环链表 */
+	/* 链接到共享挂载的循环链表中 */
 	struct list_head mnt_share;	/* circular list of shared mounts */
 	/* 从属装载的链表 */
+	/* 此文件系统的slave mount链表的表头 */
 	struct list_head mnt_slave_list;/* list of slave mounts */
 	/* 链表元素，用于从属装载的链表 */
+	/* 连接到master文件系统的mnt_slave_list */
 	struct list_head mnt_slave;	/* slave list entry */
 	/* 指向主装载，从属装载位于master->mnt_slave_list*/
+	/* 指向此文件系统的master文件系统，slave is on master->mnt_slave_list */
 	struct mount *mnt_master;	/* slave is on master->mnt_slave_list */
 	/* 所属的命名空间 */
+	/* 指向包含这个文件系统的进程的name space */
 	struct mnt_namespace *mnt_ns;	/* containing namespace */
 	struct mountpoint *mnt_mp;	/* where is it mounted */
 	struct hlist_node mnt_mp_list;	/* list mounts with the same mountpoint */

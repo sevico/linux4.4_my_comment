@@ -75,12 +75,12 @@ struct inodes_stat_t {
 #define MS_DIRSYNC	128	/* Directory modifications are synchronous */
 #define MS_NOATIME	1024	/* Do not update access times. */
 #define MS_NODIRATIME	2048	/* Do not update directory access times */
-#define MS_BIND		4096
-#define MS_MOVE		8192
-#define MS_REC		16384
+#define MS_BIND		4096/* 对应-B/--bind选项，告诉mount这是一次bind操作 */
+#define MS_MOVE		8192 /* 对应-M/--move，告诉mount这是一次move操作 */
+#define MS_REC		16384/* rec是recursive的意思，这个flag一般不单独出现，都是伴随这其它flag，表示递归的进行操作 */
 #define MS_VERBOSE	32768	/* War is peace. Verbosity is silence.
 				   MS_VERBOSE is deprecated. */
-#define MS_SILENT	32768
+#define MS_SILENT	32768/* 对应-o silent/loud */
 #define MS_POSIXACL	(1<<16)	/* VFS does not apply the umask */
 #define MS_UNBINDABLE	(1<<17)	/* change to unbindable */
 #define MS_PRIVATE	(1<<18)	/* change to private */
@@ -93,22 +93,23 @@ struct inodes_stat_t {
 #define MS_LAZYTIME	(1<<25) /* Update the on-disk [acm]times lazily */
 
 /* These sb flags are internal to the kernel */
-#define MS_NOSEC	(1<<28)
-#define MS_BORN		(1<<29)
-#define MS_ACTIVE	(1<<30)
-#define MS_NOUSER	(1<<31)
+#define MS_NOSEC	(1<<28) /* 有些文件系统不支持suid，security xattr等安全标记 */
+#define MS_BORN		(1<<29)/* 表示内存superblock已经创建完成 */
+#define MS_ACTIVE	(1<<30)/* 表示内存superblock正处于活动状态 */
+#define MS_NOUSER	(1<<31) /* 表示文件系统不能被应用层挂载使用，只能被内核使用，如rootfs */
 
 /*
  * Superblock flags that can be altered by MS_REMOUNT
  */
+ // 可以在remount是改变的flags
 #define MS_RMT_MASK	(MS_RDONLY|MS_SYNCHRONOUS|MS_MANDLOCK|MS_I_VERSION|\
 			 MS_LAZYTIME)
 
 /*
  * Old magic mount flag and mask
  */
-#define MS_MGC_VAL 0xC0ED0000
-#define MS_MGC_MSK 0xffff0000
+#define MS_MGC_VAL 0xC0ED0000  /* 过去使用的magic，现在基本被忽略了 */
+#define MS_MGC_MSK 0xffff0000 /* 过去使用的flag的的mask */
 
 /* the read-only stuff doesn't really belong here, but any other place is
    probably as bad and I don't want to create yet another include file. */

@@ -1347,10 +1347,16 @@ struct super_block {
 	//链表元素file->fu_list
 	//该链表包含该超级块表示的文件系统的所有打开文件
 	struct list_head	s_list;		/* Keep this first */
+	/* 搜索索引，不是kdev_t */
 	dev_t			s_dev;		/* search index; _not_ kdev_t */
+	/*
+	s_blocksize的单位是字节，而s_blocksize_bits则是对前一个值取以2为底的对数
+	*/
 	unsigned char		s_blocksize_bits;
 	unsigned long		s_blocksize;
+	/* 最大的文件长度 */
 	loff_t			s_maxbytes;	/* Max file size */
+	//保存了与文件系统有关的一般类型的信息。
 	struct file_system_type	*s_type;
 	const struct super_operations	*s_op;
 	const struct dquot_operations	*dq_op;
@@ -1359,6 +1365,7 @@ struct super_block {
 	unsigned long		s_flags;
 	unsigned long		s_iflags;	/* internal SB_I_* flags */
 	unsigned long		s_magic; // 验证磁盘信息
+	//将超级块与全局根目录的dentry项关联起来
 	struct dentry		*s_root; // root dentry
 	struct rw_semaphore	s_umount; // 读写期间防止umount
 	int			s_count;
@@ -1366,6 +1373,7 @@ struct super_block {
 #ifdef CONFIG_SECURITY
 	void                    *s_security;
 #endif
+//该结构包含了一些用于处理扩展属性的函数指针
 	const struct xattr_handler **s_xattr;
 	// 远程网络文件系统的匿名目录项链表
 
@@ -1374,6 +1382,7 @@ struct super_block {
 	// mount->mnt_instances
 	// mount_lock
 	struct list_head	s_mounts;	/* list of mounts; _not_ for fs use */
+	//更详细地定义设备操作和功能
 	struct block_device	*s_bdev;
 	struct backing_dev_info *s_bdi;
 	struct mtd_info		*s_mtd;
@@ -1386,6 +1395,7 @@ struct super_block {
 
 	struct sb_writers	s_writers;
 	// 设备名
+	/* 有意义的名字 */
 	char s_id[32];				/* Informational name */
 	u8 s_uuid[16];				/* UUID */
 	// 指向具体文件系统的信息
@@ -1464,6 +1474,7 @@ struct super_block {
 	/* s_inode_list_lock protects s_inodes */
 	spinlock_t		s_inode_list_lock ____cacheline_aligned_in_smp;
 	//i_sb_list用作链表元素
+	/* 所有inode的链表 */
 	struct list_head	s_inodes;	/* all inodes */
 };
 

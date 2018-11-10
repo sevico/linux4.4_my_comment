@@ -632,8 +632,10 @@ bool legitimize_mnt(struct vfsmount *bastard, unsigned seq)
  */
 struct mount *__lookup_mnt(struct vfsmount *mnt, struct dentry *dentry)
 {
+	// 以父mnt和挂载点的dentry为依据计算哈希值，在mount_hashtable中找到其子挂载实例的头指针
 	struct hlist_head *head = m_hash(mnt, dentry);
 	struct mount *p;
+	// 遍历子挂载点列表，找到子挂载实例中满足“挂载在mnt的dentry上“这一条件的挂载实例，并返回
 
 	hlist_for_each_entry_rcu(p, head, mnt_hash)
 		if (&p->mnt_parent->mnt == mnt && p->mnt_mountpoint == dentry)
@@ -970,21 +972,23 @@ vfs_kern_mount(struct file_system_type *type, int flags, const char *name, void 
 
 	if (!type)
 		return ERR_PTR(-ENODEV);
-
+	// alloc一个新的struct mount结构，并初始化里面一部分（如链表指针、mnt_devname等成员内容）
 	mnt = alloc_vfsmnt(name);
 	if (!mnt)
 		return ERR_PTR(-ENOMEM);
 
 	if (flags & MS_KERNMOUNT)
 		mnt->mnt.mnt_flags = MNT_INTERNAL;
-
+	//调用特定于文件系统的mount函数读取相关的超级块，并返回struct
+	//dentry的实例。
+	// 调用具体文件系统的mount回调函数type->mount，继续挂载操作
 	root = mount_fs(type, flags, name, data);
 	if (IS_ERR(root)) {
 		mnt_free_id(mnt);
 		free_vfsmnt(mnt);
 		return ERR_CAST(root);
 	}
-
+	// 完成mnt结构的最后赋值，并返回vfsmount结构
 	mnt->mnt.mnt_root = root;
 	mnt->mnt.mnt_sb = root->d_sb;
 	mnt->mnt_mountpoint = mnt->mnt.mnt_root;
@@ -2039,7 +2043,10 @@ retry:
 		return ERR_PTR(-ENOENT);
 	}
 	namespace_lock();
+	// 以mount /dev/sdc1 /mnt为例，在此这个path实际上代表"/"根文件系统下的/mnt这个dentry
+	 // lookup_mnt(path)就是检查这个dentry上是否挂载着文件系统，如果挂载着则返回这个挂载在/mnt上的子文件系统
 	mnt = lookup_mnt(path);
+	// 如果lookup_mnt返回NULL了，就代表path里保存的是一个没有被挂载过的dentry
 	if (likely(!mnt)) {
 		struct mountpoint *mp = get_mountpoint(dentry);
 		if (IS_ERR(mp)) {
@@ -2052,8 +2059,12 @@ retry:
 	namespace_unlock();
 	mutex_unlock(&path->dentry->d_inode->i_mutex);
 	path_put(path);
+    // 如果lookup_mnt没有返回NULL，则说明它找到了挂载在/mnt上的子文件系统，下面的逻辑是：
+    // 把子文件系统的mount结构赋值给path->mnt
 	path->mnt = mnt;
+	// 把子文件系统的根dentry赋值给path->dentry (顺带赋值给dentry临时变量)
 	dentry = path->dentry = dget(mnt->mnt_root);
+	// 返回到lookup_mnt函数，用新的path变量继续查找是否还有后续的子文件系统
 	goto retry;
 }
 
@@ -2077,7 +2088,7 @@ static int graft_tree(struct mount *mnt, struct mount *p, struct mountpoint *mp)
 	if (d_is_dir(mp->m_dentry) !=
 	      d_is_dir(mnt->mnt.mnt_root))
 		return -ENOTDIR;
-
+	//添加到父文件系统的命名空间
 	return attach_recursive_mnt(mnt, p, mp, NULL);
 }
 
@@ -2408,6 +2419,10 @@ static struct vfsmount *fs_set_subtype(struct vfsmount *mnt, const char *fstype)
 /*
  * add a mount into a namespace's mount tree
  */
+ /*
+ 1、 lock_mount确定本次挂载要挂载到哪个父挂载实例parent的哪个挂载点mp上。
+2、把newmnt挂载到parent的mp下，完成newmnt到全局的安装。安装后的样子就像我们前文讲述的那样。
+ */
 static int do_add_mount(struct mount *newmnt, struct path *path, int mnt_flags)
 {
 	struct mountpoint *mp;
@@ -2415,12 +2430,16 @@ static int do_add_mount(struct mount *newmnt, struct path *path, int mnt_flags)
 	int err;
 
 	mnt_flags &= ~MNT_INTERNAL_FLAGS;
+	// 这里不是简单的加锁，如果path上挂载了很多文件系统，那么这里就是要找出最新一次挂载到其上的文件系统的根路径，这才是我们这个文件系统要挂载到的mountpoint
+	// 这段代码的逻辑在以前是这样的while(do_mountpoint(path->dentry) && follow_down(path)); 注意结尾有一个分号，也就是说这里要不断循环的做follow_down操作，直到找到最后挂载上去的文件系统。
+	// 现在这些逻辑，加上锁操作都放到了下面这个不是很起眼的lock_mount函数里了。	
 
 	mp = lock_mount(path);
 	if (IS_ERR(mp))
 		return PTR_ERR(mp);
-
+	// real_mount上面见一次了，通过vfsmount找到mount
 	parent = real_mount(path->mnt);
+	 // 从这里开始有很多检查，如检查装载实例应该属于本进程的装载名字空间
 	err = -EINVAL;
 	if (unlikely(!check_mnt(parent))) {
 		/* that's acceptable only for automounts done in private ns */
@@ -2432,16 +2451,19 @@ static int do_add_mount(struct mount *newmnt, struct path *path, int mnt_flags)
 	}
 
 	/* Refuse the same filesystem on the same mount point */
-	err = -EBUSY;
+	err = -EBUSY;	
+	// 不允许同一文件系统挂载到同一个挂载点，因为这样做实在没有什么用
 	if (path->mnt->mnt_sb == newmnt->mnt.mnt_sb &&
 	    path->mnt->mnt_root == path->dentry)
 		goto unlock;
 
 	err = -EINVAL;
+	 // 新文件系统的挂载实例的根inode不应该是一个符号链接
 	if (d_is_symlink(newmnt->mnt.mnt_root))
 		goto unlock;
 
 	newmnt->mnt.mnt_flags = mnt_flags;
+	// 最后graft_tree就是把newmnt加入到全局文件系统树中
 	err = graft_tree(newmnt, parent, mp);
 
 unlock:
@@ -2465,7 +2487,7 @@ static int do_new_mount(struct path *path, const char *fstype, int flags,
 
 	if (!fstype)
 		return -EINVAL;
-
+	//找到匹配的file_system_type实例
 	type = get_fs_type(fstype);
 	if (!type)
 		return -ENODEV;
@@ -2489,16 +2511,18 @@ static int do_new_mount(struct path *path, const char *fstype, int flags,
 			}
 		}
 	}
-
+	// 调用此函数准备进入每个文件系统的个别处理函数，构建一个vfsmnt结构
+	// 注意这里以文件系统类型、挂载标记、设备名和挂载选项信息为参数，并没有mountpoint参数。这里只是想用type中的mount回调函数读取设备的superblock信息，填充mnt结构，然后把flag和data解析后填充到mnt结构中。
 	mnt = vfs_kern_mount(type, flags, name, data);
 	if (!IS_ERR(mnt) && (type->fs_flags & FS_HAS_SUBTYPE) &&
 	    !mnt->mnt_sb->s_subtype)
 		mnt = fs_set_subtype(mnt, fstype);
-
+	// 就此file_system_type用完了（其mount回调函数完成了构建struct mount的任务）
 	put_filesystem(type);
 	if (IS_ERR(mnt))
 		return PTR_ERR(mnt);
-
+	// 准备将得到的mnt结构加入全局文件系统树
+	// 注意path变量，也就是mountpoint在这里
 	err = do_add_mount(real_mount(mnt), path, mnt_flags);
 	if (err)
 		mntput(mnt);
@@ -2753,6 +2777,7 @@ long do_mount(const char *dev_name, const char __user *dir_name,
 		((char *)data_page)[PAGE_SIZE - 1] = 0;
 
 	/* ... and get the mountpoint */
+	// 把mountpoint解释成path内核结构，这里是路径名解析的过程
 	retval = user_path(dir_name, &path);
 	if (retval)
 		return retval;
@@ -2763,7 +2788,8 @@ long do_mount(const char *dev_name, const char __user *dir_name,
 		retval = -EPERM;
 	if (retval)
 		goto dput_out;
-
+	// 从这里开始就是一系列的对flags的解析，把通用option提出来
+	// 并且找出我们要mount做哪种操作，如bind, remount, newmount等
 	/* Default to relatime unless overriden */
 	if (!(flags & MS_NOATIME))
 		mnt_flags |= MNT_RELATIME;
@@ -2795,17 +2821,20 @@ long do_mount(const char *dev_name, const char __user *dir_name,
 	flags &= ~(MS_NOSUID | MS_NOEXEC | MS_NODEV | MS_ACTIVE | MS_BORN |
 		   MS_NOATIME | MS_NODIRATIME | MS_RELATIME| MS_KERNMOUNT |
 		   MS_STRICTATIME);
-
+	// 根据flags的指示，决定做哪种mount操作
 	if (flags & MS_REMOUNT)
 		retval = do_remount(&path, flags & ~MS_REMOUNT, mnt_flags,
 				    data_page);
 	else if (flags & MS_BIND)
+		//通过环回接口（loopback interface）装载一个文件系统
 		retval = do_loopback(&path, dev_name, flags & MS_REC);
 	else if (flags & (MS_SHARED | MS_PRIVATE | MS_SLAVE | MS_UNBINDABLE))
 		retval = do_change_type(&path, flags);
 	else if (flags & MS_MOVE)
+		//移动一个已经装载的文件系统
 		retval = do_move_mount(&path, dev_name);
 	else
+		//普通装载操作。这是默认情况，因此不需要特殊标志
 		retval = do_new_mount(&path, type_page, flags, mnt_flags,
 				      dev_name, data_page);
 dput_out:
@@ -2985,21 +3014,22 @@ SYSCALL_DEFINE5(mount, char __user *, dev_name, char __user *, dir_name,
 	char *kernel_type;
 	char *kernel_dev;
 	unsigned long data_page;
-
+	/* 拷贝得到文件系统类型名 */
 	kernel_type = copy_mount_string(type);
 	ret = PTR_ERR(kernel_type);
 	if (IS_ERR(kernel_type))
 		goto out_type;
-
+	/* 得到文件系统挂载点名 */
 	kernel_dev = copy_mount_string(dev_name);
 	ret = PTR_ERR(kernel_dev);
 	if (IS_ERR(kernel_dev))
 		goto out_dev;
-
+	/* 拷贝得到文件系统定制的mount data */
 	ret = copy_mount_options(data, &data_page);
 	if (ret < 0)
 		goto out_data;
-
+	 /* 到此mount所需要的fstype, dev_name, mountpoint, flags和data这几个参数都拷贝到内核空间了 */
+	/* 调用do_mount函数继续下面的操作 */
 	ret = do_mount(kernel_dev, dir_name, kernel_type, flags,
 		(void *) data_page);
 
