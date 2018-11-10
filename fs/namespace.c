@@ -1505,7 +1505,9 @@ static int do_umount(struct mount *mnt, int flags)
 	 *  (1) the mark is already set (the mark is cleared by mntput())
 	 *  (2) the usage count == 1 [parent vfsmount] + 1 [sys_umount]
 	 */
+	 /*命名空间检查*/
 	if (flags & MNT_EXPIRE) {
+		/*当前进程的根节点不能umount*/
 		if (&mnt->mnt == current->fs->root.mnt ||
 		    flags & (MNT_FORCE | MNT_DETACH))
 			return -EINVAL;
@@ -1515,12 +1517,13 @@ static int do_umount(struct mount *mnt, int flags)
 		 * all race cases, but it's a slowpath.
 		 */
 		lock_mount_hash();
+		/*如果有其他进程使用，不能umount*/
 		if (mnt_get_count(mnt) != 2) {
 			unlock_mount_hash();
 			return -EBUSY;
 		}
 		unlock_mount_hash();
-
+		/*expiry位标识是否超时*/
 		if (!xchg(&mnt->mnt_expiry_mark, 1))
 			return -EAGAIN;
 	}
@@ -1534,6 +1537,7 @@ static int do_umount(struct mount *mnt, int flags)
 	 * must return, and the like. Thats for the mount program to worry
 	 * about for the moment.
 	 */
+	/*调用超级块的函数umount_begin做对应的初始工作，以ext2文件系统为例，ext2没有umount_begin函数，所以这个函数视不同的文件系统而不同*/
 
 	if (flags & MNT_FORCE && sb->s_op->umount_begin) {
 		sb->s_op->umount_begin(sb);
@@ -1548,6 +1552,7 @@ static int do_umount(struct mount *mnt, int flags)
 	 * /reboot - static binary that would close all descriptors and
 	 * call reboot(9). Then init(8) could umount root and exec /reboot.
 	 */
+	 /*如果卸载的是当前进程的根文件系统根节点，并且不是卸载，是remount，修改某些flag*/
 	if (&mnt->mnt == current->fs->root.mnt && !(flags & MNT_DETACH)) {
 		/*
 		 * Special case for "unmounting" root ...
@@ -1555,6 +1560,7 @@ static int do_umount(struct mount *mnt, int flags)
 		 */
 		if (!capable(CAP_SYS_ADMIN))
 			return -EPERM;
+		/*调用do_remount_sb更改flags*/
 		down_write(&sb->s_umount);
 		if (!(sb->s_flags & MS_RDONLY))
 			retval = do_remount_sb(sb, MS_RDONLY, NULL, 0);
@@ -1568,6 +1574,7 @@ static int do_umount(struct mount *mnt, int flags)
 
 	if (flags & MNT_DETACH) {
 		if (!list_empty(&mnt->mnt_list))
+			/*把vfsmount结构体从链表上去除*/
 			umount_tree(mnt, UMOUNT_PROPAGATE);
 		retval = 0;
 	} else {
@@ -1653,12 +1660,15 @@ SYSCALL_DEFINE2(umount, char __user *, name, int, flags)
 		lookup_flags |= LOOKUP_FOLLOW;
 
 	retval = user_path_mountpoint_at(AT_FDCWD, name, lookup_flags, &path);
+	/*如果失败了就返回错误代码*/
 	if (retval)
 		goto out;
+	/*如果传入的umount点不是对应的挂载文件系统的根节点，也返回*/
 	mnt = real_mount(path.mnt);
 	retval = -EINVAL;
 	if (path.dentry != path.mnt->mnt_root)
 		goto dput_and_out;
+	/*命名空间检查*/
 	if (!check_mnt(mnt))
 		goto dput_and_out;
 	if (mnt->mnt.mnt_flags & MNT_LOCKED)
