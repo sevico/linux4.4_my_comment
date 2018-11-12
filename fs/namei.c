@@ -503,6 +503,7 @@ struct nameidata {
 	//保存当前搜索到的路径
 	struct path	path;
 	//保存当前子路径名及其散列值
+	//the "next" component in the pathname
 	struct qstr	last;
 	//保存根目录的信息
 	struct path	root;
@@ -1019,6 +1020,7 @@ const char *get_link(struct nameidata *nd)
 		return ERR_PTR(error);
 
 	nd->last_type = LAST_BIND;
+	//跟随符号链接
 	res = inode->i_link;
 	if (!res) {
 		if (nd->flags & LOOKUP_RCU) {
@@ -1031,6 +1033,7 @@ const char *get_link(struct nameidata *nd)
 			return res;
 		}
 	}
+	//如果路径以“/”开头就设置一下预设根目录和当前路径
 	if (*res == '/') {
 		if (nd->flags & LOOKUP_RCU) {
 			struct dentry *d;
@@ -1150,6 +1153,7 @@ static int follow_automount(struct path *path, struct nameidata *nd,
 		mntget(path->mnt);
 		*need_mntput = true;
 	}
+	//safely install the new mount point into the mount table
 	err = finish_automount(mnt, path);
 
 	switch (err) {
@@ -1538,11 +1542,11 @@ static struct dentry *__lookup_hash(struct qstr *name,
 {
 	bool need_lookup;
 	struct dentry *dentry;
-
+	//在获取锁的睡眠期间可能dentry已经读入
 	dentry = lookup_dcache(name, base, flags, &need_lookup);
 	if (!need_lookup)
 		return dentry;
-
+	//调用了具体文件系统自己的 lookup 函数去完成工作
 	return lookup_real(base->d_inode, dentry, flags);
 }
 
@@ -1617,6 +1621,7 @@ static int lookup_fast(struct nameidata *nd,
 		if (likely(__follow_mount_rcu(nd, path, inode, seqp)))
 			return 0;
 unlazy:
+//就地将查找模式切换到 ref-walk，如果还不行就只好返回到 do_filp_open 从头来过
 		if (unlazy_walk(nd, dentry, seq))
 			return -ECHILD;
 	} else {
@@ -1945,7 +1950,7 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 		err = may_lookup(nd);
  		if (err)
 			return err;
-
+		//hash_len:hash+len , 64位长，高32位是len，低32位是hash
 		hash_len = hash_name(name);
 
 		type = LAST_NORM;
@@ -2041,6 +2046,7 @@ static const char *path_init(struct nameidata *nd, unsigned flags)
 		flags &= ~LOOKUP_RCU;
 	//LAST_ROOT，意思就是在路径名中只有“/”
 	nd->last_type = LAST_ROOT; /* if there are only slashes... */
+	//查找目标文件的父目录
 	nd->flags = flags | LOOKUP_JUMPED | LOOKUP_PARENT;
 	nd->depth = 0;
 	if (flags & LOOKUP_ROOT) {
@@ -3195,6 +3201,7 @@ finish_lookup:
 	nd->seq = seq;
 	/* Why this, you ask?  _Now_ we might have grown LOOKUP_JUMPED... */
 finish_open:
+	//彻底告别 rcu-walk
 	error = complete_walk(nd);
 	if (error) {
 		path_put(&save_parent);
@@ -3222,11 +3229,13 @@ finish_open:
 		got_write = true;
 	}
 finish_open_created:
+//检查打开权限
 	error = may_open(&nd->path, acc_mode, open_flag);
 	if (error)
 		goto out;
 
 	BUG_ON(*opened & FILE_OPENED); /* once it's opened, it's opened */
+	//打开文件
 	error = vfs_open(&nd->path, file, current_cred());
 	if (!error) {
 		*opened |= FILE_OPENED;
@@ -3357,7 +3366,7 @@ static struct file *path_openat(struct nameidata *nd,
 		error = do_tmpfile(nd, flags, op, file, &opened);
 		goto out2;
 	}
-	
+	//真正遍历路径环境的初始化，主要就是设置变量 nd
 	s = path_init(nd, flags);
 	//正常返回后nd 中的 path 就已经设定为起始路径了
 	if (IS_ERR(s)) {
