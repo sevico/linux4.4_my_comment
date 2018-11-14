@@ -486,7 +486,7 @@ static int copy_strings(int argc, struct user_arg_ptr argv,
 	char *kaddr = NULL;
 	unsigned long kpos = 0;
 	int ret;
-
+	//参数的个数
 	while (argc-- > 0) {
 		const char __user *str;
 		int len;
@@ -508,6 +508,7 @@ static int copy_strings(int argc, struct user_arg_ptr argv,
 		/* We're going to work our way backwords. */
 		pos = bprm->p;
 		str += len;
+		//堆栈的指针再减去参数的长度
 		bprm->p -= len;
 
 		while (len > 0) {
@@ -518,7 +519,7 @@ static int copy_strings(int argc, struct user_arg_ptr argv,
 				goto out;
 			}
 			cond_resched();
-
+			//offset为在本页中的偏移
 			offset = pos % PAGE_SIZE;
 			if (offset == 0)
 				offset = PAGE_SIZE;
@@ -547,10 +548,12 @@ static int copy_strings(int argc, struct user_arg_ptr argv,
 					put_arg_page(kmapped_page);
 				}
 				kmapped_page = page;
+				//得到页面低端地址
 				kaddr = kmap(kmapped_page);
 				kpos = pos & PAGE_MASK;
 				flush_arg_page(bprm, kpos, kmapped_page);
 			}
+			//从kaddr + offset到(kaddr + offset + len)赋值为str
 			if (copy_from_user(kaddr+offset, str, bytes_to_copy)) {
 				ret = -EFAULT;
 				goto out;
@@ -1109,7 +1112,7 @@ int flush_old_exec(struct linux_binprm * bprm)
 	 * Make sure we have a private signal table and that
 	 * we are unassociated from the previous thread group.
 	 */
-	retval = de_thread(current);
+	retval = de_thread(current); //从线程组中脱离出来
 	if (retval)
 		goto out;
 
@@ -1461,12 +1464,13 @@ int search_binary_handler(struct linux_binprm *bprm)
 	retval = -ENOENT;
  retry:
 	read_lock(&binfmt_lock);
-	list_for_each_entry(fmt, &formats, lh) {
+	// 查找合适的处理程序
+	list_for_each_entry(fmt, &formats, lh) {//遍历formats列表
 		if (!try_module_get(fmt->module))
 			continue;
 		read_unlock(&binfmt_lock);
 		bprm->recursion_depth++;
-		retval = fmt->load_binary(bprm);
+		retval = fmt->load_binary(bprm); //返回-ENOEXEC表示对不上号
 		read_lock(&binfmt_lock);
 		put_binfmt(fmt);
 		bprm->recursion_depth--;
@@ -1476,7 +1480,7 @@ int search_binary_handler(struct linux_binprm *bprm)
 			force_sigsegv(SIGSEGV, current);
 			return retval;
 		}
-		if (retval != -ENOEXEC || !bprm->file) {
+		if (retval != -ENOEXEC || !bprm->file) { //只要不是对不上号，就退出循环
 			read_unlock(&binfmt_lock);
 			return retval;
 		}
@@ -1488,6 +1492,7 @@ int search_binary_handler(struct linux_binprm *bprm)
 		if (printable(bprm->buf[0]) && printable(bprm->buf[1]) &&
 		    printable(bprm->buf[2]) && printable(bprm->buf[3]))
 			return retval;
+		//试着将相应的模块装入，一共进行两次循环，正是为了在安装了模块以后再来试一次
 		if (request_module("binfmt-%04x", *(ushort *)(bprm->buf + 2)) < 0)
 			return retval;
 		need_retry = false;
@@ -1529,6 +1534,7 @@ static int do_execveat_common(int fd, struct filename *filename,
 			      int flags)
 {
 	char *pathbuf = NULL;
+	 //bprm用于维护程序执行的相关参数
 	struct linux_binprm *bprm;
 	struct file *file;
 	struct files_struct *displaced;
@@ -1552,30 +1558,34 @@ static int do_execveat_common(int fd, struct filename *filename,
 	/* We're below the limit (still or again), so we don't want to make
 	 * further execve() calls fail. */
 	current->flags &= ~PF_NPROC_EXCEEDED;
-
+	//	1.	调用unshare_files()为进程复制一份文件表；
 	retval = unshare_files(&displaced);
 	if (retval)
 		goto out_ret;
 
 	retval = -ENOMEM;
+	 //  2、调用kzalloc()在堆上分配一份structlinux_binprm结构体；
 	bprm = kzalloc(sizeof(*bprm), GFP_KERNEL);
 	if (!bprm)
 		goto out_files;
-
+	//分配creds结构体，处理锁信息
 	retval = prepare_bprm_creds(bprm);
 	if (retval)
 		goto out_free;
 
 	check_unsafe_exec(bprm);
+	//表明当前进程正在执行新程序，这个在进程调度中有意义
 	current->in_execve = 1;
 	/*读取可执行文件*/
+	 //  3、调用do_open_execat()查找并打开二进制文件；
 	file = do_open_execat(fd, filename, flags);
 	retval = PTR_ERR(file);
 	if (IS_ERR(file))
 		goto out_unmark;
 	/*选择负载最小的CPU来执行新程序*/
+	//  4、调用sched_exec()找到最小负载的CPU，用来执行该二进制文件；
 	sched_exec();
-
+	//  5、根据获取的信息，填充structlinux_binprm结构体中的file、filename、interp成员；
 	bprm->file = file;
 	if (fd == AT_FDCWD || filename->name[0] == '/') {
 		bprm->filename = filename->name;
@@ -1599,11 +1609,12 @@ static int do_execveat_common(int fd, struct filename *filename,
 		bprm->filename = pathbuf;
 	}
 	bprm->interp = bprm->filename;
-
+	//初始化内存映射
+    //  6、调用bprm_mm_init()创建进程的内存地址空间，并调用init_new_context()检查当前进程是否使用自定义的局部描述符表；如果是，那么分配和准备一个新的LDT；
 	retval = bprm_mm_init(bprm);
 	if (retval)
 		goto out_unmark;
-
+	//	7、填充structlinux_binprm结构体中的命令行参数argv,环境变量envp
 	bprm->argc = count(argv, MAX_ARG_STRINGS);
 	if ((retval = bprm->argc) < 0)
 		goto out;
@@ -1615,25 +1626,34 @@ static int do_execveat_common(int fd, struct filename *filename,
 	/*在prepare_binprm函数中读取可执行文件的头128个字节，
 	存放在linux_binprm结构体的buf[BINPRM_BUF_SIZE]中。
 	*/
+	//  8、调用prepare_binprm()检查该二进制文件的可执行权限；最后，kernel_read()读取二进制文件的头128字节（这些字节用于识别二进制文件的格式及其他信息，后续会使用到）；
 	retval = prepare_binprm(bprm);
 	if (retval < 0)
 		goto out;
 	/*接下来的3个copy用来拷贝文件名、命令行参数和环境变量*/
+	//  9、调用copy_strings_kernel()从内核空间获取二进制文件的路径名称；
 	retval = copy_strings_kernel(1, &bprm->filename, bprm);
 	if (retval < 0)
 		goto out;
 
 	bprm->exec = bprm->p;
+	//  10.1、调用copy_string()从用户空间拷贝环境变量
 	retval = copy_strings(bprm->envc, envp, bprm);
 	if (retval < 0)
 		goto out;
+	//	10.2、调用copy_string()从用户空间拷贝命令行参数；
 
 	retval = copy_strings(bprm->argc, argv, bprm);
 	if (retval < 0)
 		goto out;
 
 	would_dump(bprm, bprm->file);
+	 //装载程序
+	 /*
+        至此，二进制文件已经被打开，struct linux_binprm结构体中也记录了重要信息；
 
+        下面需要识别该二进制文件的格式并最终运行该文件
+    */
 	retval = exec_binprm(bprm);
 	if (retval < 0)
 		goto out;

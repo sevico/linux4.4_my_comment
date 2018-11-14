@@ -677,7 +677,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 	unsigned long start_code, end_code, start_data, end_data;
 	unsigned long reloc_func_desc __maybe_unused = 0;
 	int executable_stack = EXSTACK_DEFAULT;
-	struct pt_regs *regs = current_pt_regs();
+	struct pt_regs *regs = current_pt_regs();  // 获取当前进程的寄存器存储位置
 	struct {
 		struct elfhdr elf_ex;
 		struct elfhdr interp_elf_ex;
@@ -691,20 +691,23 @@ static int load_elf_binary(struct linux_binprm *bprm)
 	}
 	
 	/* Get the exec-header */
+	// 获取elf前128个字节，作为魔数
 	loc->elf_ex = *((struct elfhdr *)bprm->buf);
 
 	retval = -ENOEXEC;
 	/* First of all, some simple consistency checks */
+	// 检查魔数是否匹配
 	if (memcmp(loc->elf_ex.e_ident, ELFMAG, SELFMAG) != 0)
 		goto out;
-
+	 // 如果既不是可执行文件也不是动态链接程序，就错误退出
 	if (loc->elf_ex.e_type != ET_EXEC && loc->elf_ex.e_type != ET_DYN)
 		goto out;
 	if (!elf_check_arch(&loc->elf_ex))
 		goto out;
 	if (!bprm->file->f_op->mmap)
 		goto out;
-
+	// 读取所有的头部信息
+	// 读入程序的头部分
 	elf_phdata = load_elf_phdrs(&loc->elf_ex, bprm->file);
 	if (!elf_phdata)
 		goto out;
@@ -717,8 +720,9 @@ static int load_elf_binary(struct linux_binprm *bprm)
 	end_code = 0;
 	start_data = 0;
 	end_data = 0;
-
+	// 遍历elf的程序头
 	for (i = 0; i < loc->elf_ex.e_phnum; i++) {
+		// 如果存在解释器头部
 		if (elf_ppnt->p_type == PT_INTERP) {
 			/* This is the program interpreter used for
 			 * shared libraries - for now assume that this
@@ -734,7 +738,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 						  GFP_KERNEL);
 			if (!elf_interpreter)
 				goto out_free_ph;
-
+			// 读入解释器名
 			retval = kernel_read(bprm->file, elf_ppnt->p_offset,
 					     elf_interpreter,
 					     elf_ppnt->p_filesz);
@@ -747,7 +751,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 			retval = -ENOEXEC;
 			if (elf_interpreter[elf_ppnt->p_filesz - 1] != '\0')
 				goto out_free_interp;
-
+			// 打开解释器文件
 			interpreter = open_exec(elf_interpreter);
 			retval = PTR_ERR(interpreter);
 			if (IS_ERR(interpreter))
@@ -761,6 +765,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 			would_dump(bprm, interpreter);
 
 			/* Get the exec headers */
+			// 读入解释器文件的头部
 			retval = kernel_read(interpreter, 0,
 					     (void *)&loc->interp_elf_ex,
 					     sizeof(loc->interp_elf_ex));
@@ -834,6 +839,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 		goto out_free_dentry;
 
 	/* Flush all traces of the currently running executable */
+	// 释放空间、删除信号、关闭带有CLOSE_ON_EXEC标志的文件
 	retval = flush_old_exec(bprm);
 	if (retval)
 		goto out_free_dentry;
@@ -851,6 +857,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 
 	/* Do this so that we can load the interpreter, if need be.  We will
 	   change some of these later */
+	   // 为进程分配用户态堆栈，并塞入参数和环境变量
 	retval = setup_arg_pages(bprm, randomize_stack_top(STACK_TOP),
 				 executable_stack);
 	if (retval < 0)
@@ -860,6 +867,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 
 	/* Now we do a little grungy work by mmapping the ELF image into
 	   the correct location in memory. */
+	    // 将elf文件映射进内存
 	for(i = 0, elf_ppnt = elf_phdata;
 	    i < loc->elf_ex.e_phnum; i++, elf_ppnt++) {
 		int elf_prot = 0, elf_flags;
@@ -875,6 +883,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 			/* There was a PT_LOAD segment with p_memsz > p_filesz
 			   before this one. Map anonymous pages, if needed,
 			   and clear the area.  */
+			   // 生成BSS
 			retval = set_brk(elf_bss + load_bias,
 					 elf_brk + load_bias);
 			if (retval)
@@ -909,9 +918,10 @@ static int load_elf_binary(struct linux_binprm *bprm)
 		 * If we are loading ET_EXEC or we have already performed
 		 * the ET_DYN load_addr calculations, proceed normally.
 		 */
+		 // 可执行程序
 		if (loc->elf_ex.e_type == ET_EXEC || load_addr_set) {
 			elf_flags |= MAP_FIXED;
-		} else if (loc->elf_ex.e_type == ET_DYN) {
+		} else if (loc->elf_ex.e_type == ET_DYN) { // 动态链接库
 			/*
 			 * This logic is run once for the first LOAD Program
 			 * Header for ET_DYN binaries to calculate the
@@ -966,7 +976,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 				goto out_free_dentry;
 			}
 		}
-
+		// 创建一个新线性区对可执行文件的数据段进行映射
 		error = elf_map(bprm->file, load_bias + vaddr, elf_ppnt,
 				elf_prot, elf_flags, total_size);
 		if (BAD_ADDR(error)) {
@@ -1016,7 +1026,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 		if (k > elf_brk)
 			elf_brk = k;
 	}
-
+	// 加上偏移量
 	loc->elf_ex.e_entry += load_bias;
 	elf_bss += load_bias;
 	elf_brk += load_bias;
@@ -1030,6 +1040,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 	 * mapping in the interpreter, to make sure it doesn't wind
 	 * up getting placed where the bss needs to go.
 	 */
+	 // 创建一个新的匿名线性区，来映射程序的bss段
 	retval = set_brk(elf_bss, elf_brk);
 	if (retval)
 		goto out_free_dentry;
@@ -1037,10 +1048,10 @@ static int load_elf_binary(struct linux_binprm *bprm)
 		retval = -EFAULT; /* Nobody gets to see this, but.. */
 		goto out_free_dentry;
 	}
-
+	// 如果是动态链接
 	if (elf_interpreter) {
 		unsigned long interp_map_addr = 0;
-
+		// 调用一个装入动态链接程序的函数 此时elf_entry指向一个动态链接程序的入口
 		elf_entry = load_elf_interp(&loc->interp_elf_ex,
 					    interpreter,
 					    &interp_map_addr,
@@ -1051,6 +1062,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 			 * adjustment
 			 */
 			interp_load_addr = elf_entry;
+			// elf_entry是可执行程序的入口
 			elf_entry += loc->interp_elf_ex.e_entry;
 		}
 		if (BAD_ADDR(elf_entry)) {
@@ -1124,7 +1136,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 	 */
 	ELF_PLAT_INIT(regs, reloc_func_desc);
 #endif
-
+	// 修改保存在内核堆栈，但属于用户态的eip和esp
 	start_thread(regs, elf_entry, bprm->p);
 	retval = 0;
 out:

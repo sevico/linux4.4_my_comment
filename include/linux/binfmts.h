@@ -12,6 +12,7 @@
  * This structure is used to hold the arguments that are used when loading binaries.
  */
 struct linux_binprm {
+	// 保存可执行文件的头128字节
 	char buf[BINPRM_BUF_SIZE];
 #ifdef CONFIG_MMU
 	struct vm_area_struct *vma;
@@ -21,6 +22,7 @@ struct linux_binprm {
 	struct page *page[MAX_ARG_PAGES];
 #endif
 	struct mm_struct *mm;
+	/* current top of mem , 当前内存页最高地址*/
 	unsigned long p; /* current top of mem */
 	unsigned int
 		cred_prepared:1,/* true if creds already prepared (multiple
@@ -32,11 +34,11 @@ struct linux_binprm {
 	unsigned int taso:1;
 #endif
 	unsigned int recursion_depth; /* only for search_binary_handler() */
-	struct file * file;
+	struct file * file;/*  要执行的文件  */
 	struct cred *cred;	/* new credentials */
 	int unsafe;		/* how unsafe this exec is (mask of LSM_UNSAFE_*) */
 	unsigned int per_clear;	/* bits to clear in current->personality */
-	int argc, envc;
+	int argc, envc; /*  命令行参数和环境变量数目  */
 	const char * filename;	/* Name of binary as seen by procps */
 	const char * interp;	/* Name of the binary really executed. Most
 				   of the time same as filename, but could be

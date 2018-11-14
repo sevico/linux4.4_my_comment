@@ -197,14 +197,14 @@ int copy_thread_tls(unsigned long clone_flags, unsigned long sp,
 void
 start_thread(struct pt_regs *regs, unsigned long new_ip, unsigned long new_sp)
 {
-	set_user_gs(regs, 0);
+	set_user_gs(regs, 0);// 将用户态的寄存器清空
 	regs->fs		= 0;
 	regs->ds		= __USER_DS;
 	regs->es		= __USER_DS;
 	regs->ss		= __USER_DS;
 	regs->cs		= __USER_CS;
-	regs->ip		= new_ip;
-	regs->sp		= new_sp;
+	regs->ip		= new_ip; // 新进程的运行位置- 动态链接程序的入口处
+	regs->sp		= new_sp;// 用户态的栈顶
 	regs->flags		= X86_EFLAGS_IF;
 	force_iret();
 }
