@@ -15,6 +15,7 @@ struct linux_binprm {
 	// 保存可执行文件的头128字节
 	char buf[BINPRM_BUF_SIZE];
 #ifdef CONFIG_MMU
+//represents single memory area over a contiguous interval in a given address space where our application will be loaded
 	struct vm_area_struct *vma;
 	unsigned long vma_pages;
 #else

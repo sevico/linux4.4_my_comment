@@ -801,6 +801,7 @@ static int complete_walk(struct nameidata *nd)
 	if (nd->flags & LOOKUP_RCU) {
 		if (!(nd->flags & LOOKUP_ROOT))
 			nd->root.mnt = NULL;
+		//彻底告别 rcu-walk
 		if (unlikely(unlazy_walk(nd, NULL, 0)))
 			return -ECHILD;
 	}
@@ -1006,11 +1007,13 @@ const char *get_link(struct nameidata *nd)
 	const char *res;
 
 	if (!(nd->flags & LOOKUP_RCU)) {
+		//更新当前这个符号链接的访问时间
 		touch_atime(&last->link);
 		cond_resched();
 	} else if (atime_needs_update(&last->link, inode)) {
 		if (unlikely(unlazy_walk(nd, NULL, 0)))
 			return ERR_PTR(-ECHILD);
+		//更新当前这个符号链接的访问时间
 		touch_atime(&last->link);
 	}
 

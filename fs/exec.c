@@ -1635,7 +1635,8 @@ static int do_execveat_common(int fd, struct filename *filename,
 	retval = copy_strings_kernel(1, &bprm->filename, bprm);
 	if (retval < 0)
 		goto out;
-
+	//bprm->p set in bprm_mm_init
+	//堆栈的顶端包含程序的文件名，将此值存储至 exec 中
 	bprm->exec = bprm->p;
 	//  10.1、调用copy_string()从用户空间拷贝环境变量
 	retval = copy_strings(bprm->envc, envp, bprm);

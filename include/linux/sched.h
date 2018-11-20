@@ -1617,6 +1617,7 @@ struct task_struct {
 					 * credentials (COW) */
 	const struct cred __rcu *cred;	/* effective (overridable) subjective task
 					 * credentials (COW) */
+	//进程名，长度上限为16字符
 	char comm[TASK_COMM_LEN]; /* executable name excluding path
 				     - access with [gs]et_task_comm (which lock
 				       it with task_lock())
@@ -1633,7 +1634,7 @@ struct task_struct {
 	unsigned long last_switch_count;
 #endif
 /* filesystem information */
-	/* 当前目录 */
+	//文件系统信息
 	struct fs_struct *fs;
 /* open file information */
 	/* 指向文件描述符，该进程所有打开的文件会在这里面的一个指针数组里 */

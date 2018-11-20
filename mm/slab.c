@@ -3214,6 +3214,7 @@ __do_cache_alloc(struct kmem_cache *cache, gfp_t flags)
 		if (objp)
 			goto out;
 	}
+	//从本地CPU缓存（array_cache）获取内存
 	objp = ____cache_alloc(cache, flags);
 
 	/*
@@ -3252,16 +3253,21 @@ slab_alloc(struct kmem_cache *cachep, gfp_t flags, unsigned long caller)
 	cachep = memcg_kmem_get_cache(cachep, flags);
 
 	cache_alloc_debugcheck_before(cachep, flags);
+	//关中断
 	local_irq_save(save_flags);
+	//进行分配
 	objp = __do_cache_alloc(cachep, flags);
+	//开中断
 	local_irq_restore(save_flags);
 	objp = cache_alloc_debugcheck_after(cachep, flags, objp, caller);
 	kmemleak_alloc_recursive(objp, cachep->object_size, 1, cachep->flags,
 				 flags);
+	//预加载缓存
 	prefetchw(objp);
 
 	if (likely(objp)) {
 		kmemcheck_slab_alloc(cachep, flags, objp, cachep->object_size);
+		//处理__GFP_ZERO标志，清零内存
 		if (unlikely(flags & __GFP_ZERO))
 			memset(objp, 0, cachep->object_size);
 	}

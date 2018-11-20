@@ -2360,10 +2360,15 @@ static inline int break_layout(struct inode *inode, bool wait)
 /* fs/open.c */
 struct audit_names;
 struct filename {
+	//pointer to a file path in kernel space;
 	const char		*name;	/* pointer to actual string */
+	//original pointer from userland;
 	const __user char	*uptr;	/* original userland pointer */
+	//filename from audit context
 	struct audit_names	*aname;
+	//reference counter
 	int			refcnt;
+	// a filename in a case when it will be less than PATH_MAX
 	const char		iname[];
 };
 

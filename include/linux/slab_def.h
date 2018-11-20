@@ -17,7 +17,7 @@ struct kmem_cache {
 	/* 要转移进本地高速缓存或从本地高速缓存中转移出去的对象的数量 */
 	unsigned int batchcount;
 	/* 本地高速缓存中空闲对象的最大数目 */
-
+	//指定了在每CPU列表为空的情况下，从缓存的slab中获取对象的数目。它还表示在缓存增长时分配的对象数目
 	unsigned int limit;
 	/* 是否存在CPU共享高速缓存，CPU共享高速缓存指针保存在kmem_cache_node结构中 */
 	unsigned int shared;
