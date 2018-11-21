@@ -68,6 +68,7 @@ struct clocksource {
 	 * Hotpath data, fits in a single cache line when the
 	 * clocksource itself is cacheline aligned.
 	 */
+	 // 指向读取时钟的函数
 	cycle_t (*read)(struct clocksource *cs);
 	cycle_t mask;
 	u32 mult;

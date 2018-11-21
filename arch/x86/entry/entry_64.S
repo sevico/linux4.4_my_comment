@@ -137,6 +137,7 @@ ENTRY(entry_SYSCALL_64)
 	 * it is too small to ever cause noticeable irq latency.
 	 */
 	SWAPGS_UNSAFE_STACK
+	// KAISER 进内核态需要切到内核页表
 	SWITCH_KERNEL_CR3_NO_STACK
 	/*
 	 * A hypervisor implementation might want to use a label
@@ -144,8 +145,9 @@ ENTRY(entry_SYSCALL_64)
 	 * for the guest and jump here on syscall.
 	 */
 GLOBAL(entry_SYSCALL_64_after_swapgs)
-
+	 // 将用户栈偏移保存到 per-cpu 变量 rsp_scratch 中
 	movq	%rsp, PER_CPU_VAR(rsp_scratch)
+	// 加载内核栈偏移
 	movq	PER_CPU_VAR(cpu_current_top_of_stack), %rsp
 
 	/* Construct struct pt_regs on stack */
@@ -172,12 +174,14 @@ GLOBAL(entry_SYSCALL_64_after_swapgs)
 	pushq	%r9				/* pt_regs->r9 */
 	pushq	%r10				/* pt_regs->r10 */
 	pushq	%r11				/* pt_regs->r11 */
+	 // 为r12-r15, rbp, rbx保留位置
 	sub	$(6*8), %rsp			/* pt_regs->bp, bx, r12-15 not saved */
 
 	testl	$_TIF_WORK_SYSCALL_ENTRY, ASM_THREAD_INFO(TI_flags, %rsp, SIZEOF_PTREGS)
 	jnz	tracesys
 entry_SYSCALL_64_fastpath:
 #if __SYSCALL_MASK == ~0
+	// 确保系统调用号没超过最大值，超过了则跳转到后面的符号 1 处进行返回
 	cmpq	$NR_syscalls, %rax
 #else
 	andl	$__SYSCALL_MASK, %eax
@@ -186,11 +190,13 @@ entry_SYSCALL_64_fastpath:
 	jae	1f				/* return -ENOSYS (already in pt_regs->ax) */
 	sbb	%rcx, %rcx			/* array_index_mask_nospec() */
 	and	%rcx, %rax
+	 // 除系统调用外的其他调用都通过 rcx 来传第四个参数，因此将 r10 的内容设置到 rcx
 	movq	%r10, %rcx
 #ifdef CONFIG_RETPOLINE
 	movq	sys_call_table(, %rax, 8), %rax
 	call	__x86_indirect_thunk_rax
 #else
+	 // 调用系统调用表中对应的函数
 	call	*sys_call_table(, %rax, 8)
 #endif
 
@@ -228,7 +234,9 @@ entry_SYSCALL_64_fastpath:
 	 * switch CR3 in NMIs.  Normal interrupts are OK because
 	 * they are off here.
 	 */
+	 // KAISER 返回用户态需要切回用户页表
 	SWITCH_USER_CR3
+	 /* 根据压栈的内容，恢复 rsp 为用户态的栈顶 */
 	movq	RSP(%rsp), %rsp
 	/*
 	 * 64-bit SYSRET restores rip from rcx,
@@ -380,7 +388,9 @@ syscall_return_via_sysret:
 	 * switch CR3 in NMIs.  Normal interrupts are OK because
 	 * they are off here.
 	 */
+	// KAISER 返回用户态需要切回用户页表
 	SWITCH_USER_CR3
+	/* 根据压栈的内容，恢复 rsp 为用户态的栈顶 */
 	movq	RSP(%rsp), %rsp
 	USERGS_SYSRET64
 
