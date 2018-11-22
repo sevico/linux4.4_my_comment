@@ -783,10 +783,14 @@ static int hpet_clocksource_register(void)
 	cycle_t t1;
 
 	/* Start the counter */
+	// 通过 MMIO 来操作 HPET 的寄存器
+    // 首先将其停止，清空其计数，然后再次启动它
 	hpet_restart_counter();
 
 	/* Verify whether hpet counter works */
+	// 读取当前 counter
 	t1 = hpet_readl(HPET_COUNTER);
+	// 读取当前 TSC
 	start = rdtsc();
 
 	/*
@@ -799,13 +803,13 @@ static int hpet_clocksource_register(void)
 		rep_nop();
 		now = rdtsc();
 	} while ((now - start) < 200000UL);
-
+	// 等待 TSC 过去 200000 个计数，再读 HPET 当前的 counter，如果和之前没区别，说明 HPET 不工作，无法使用
 	if (t1 == hpet_readl(HPET_COUNTER)) {
 		printk(KERN_WARNING
 		       "HPET counter not counting. HPET disabled\n");
 		return -ENODEV;
 	}
-
+	 // 如果 HPET 正常工作，则注册它为时钟源
 	clocksource_register_hz(&clocksource_hpet, (u32)hpet_freq);
 	return 0;
 }

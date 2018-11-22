@@ -67,9 +67,12 @@ struct x86_init_ops x86_init __initdata = {
 	},
 
 	.timers = {
+	// 为当前 CPU(boot CPU)初始化 APIC timer
 		.setup_percpu_clockev	= setup_boot_APIC_clock,
 		.tsc_pre_init		= x86_init_noop,
+		// 初始化 hpet
 		.timer_init		= hpet_time_init,
+		 // 在 x86 架构下没实现，但在 intel-mid 设备上实现了，指向 intel_mid_rtc_init
 		.wallclock_init		= x86_init_noop,
 	},
 

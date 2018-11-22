@@ -912,7 +912,7 @@ static void __remove_hrtimer(struct hrtimer *timer,
 	timer->state = newstate;
 	if (!(state & HRTIMER_STATE_ENQUEUED))
 		return;
-
+	// 从红黑树上移除，返回最早超时 hrtimer 指针，如果返回 NULL，表示树上没有 hrtimer 了，需要更新该 base 状态为非 active
 	if (!timerqueue_del(&base->active, &timer->node))
 		cpu_base->active_bases &= ~(1 << base->index);
 
@@ -925,6 +925,7 @@ static void __remove_hrtimer(struct hrtimer *timer,
 	 * an superflous call to hrtimer_force_reprogram() on the
 	 * remote cpu later on if the same timer gets enqueued again.
 	 */
+	  // 如果开启了高精度模式且 reprogram 为 1，则重新设置 clock_event_device 的触发时间
 	if (reprogram && timer == cpu_base->next_timer)
 		hrtimer_force_reprogram(cpu_base, 1);
 #endif
@@ -998,15 +999,15 @@ void hrtimer_start_range_ns(struct hrtimer *timer, ktime_t tim,
 	/* 如果已经在红黑树中，先移除它: */
 	remove_hrtimer(timer, base, true);
 	/* 如果是相对时间，则需要加上当前时间，因为内部是使用绝对时间 */
-
 	if (mode & HRTIMER_MODE_REL)
 		tim = ktime_add_safe(tim, base->get_time());
-
+	 // 如果开启了 CONFIG_TIME_LOW_RES，则需要进入低精度模式，将 hrtimer 粒度设置为 hrtimer_resolution
 	tim = hrtimer_update_lowres(timer, tim, mode);
-
+	// 设置软超时时间和硬超时时间
 	hrtimer_set_expires_range_ns(timer, tim, delta_ns);
 
 	/* Switch the timer base, if necessary: */
+	 // 如果 hrtimer 的 base 和当前 CPU 不一致，需要迁移到当前 CPU 的 base
 	new_base = switch_hrtimer_base(timer, base, mode & HRTIMER_MODE_PINNED);
 
 	timer_stats_hrtimer_set_start_info(timer);
@@ -1015,7 +1016,7 @@ void hrtimer_start_range_ns(struct hrtimer *timer, ktime_t tim,
 	leftmost = enqueue_hrtimer(timer, new_base);
 	if (!leftmost)
 		goto unlock;
-
+	// 如果该 hrtimer 是最早超时的
 	if (!hrtimer_is_hres_active(timer)) {
 		/*
 		 * Kick to reschedule the next tick to handle the new timer
@@ -1024,6 +1025,7 @@ void hrtimer_start_range_ns(struct hrtimer *timer, ktime_t tim,
 		if (new_base->cpu_base->nohz_active)
 			wake_up_nohz_cpu(new_base->cpu_base->cpu);
 	} else {
+	// 处于高精度模式，调用 tick_program_event 重新编程
 		hrtimer_reprogram(timer, new_base);
 	}
 unlock:
@@ -1149,9 +1151,11 @@ static void __hrtimer_init(struct hrtimer *timer, clockid_t clock_id,
 	 */
 	if (clock_id == CLOCK_REALTIME && mode & HRTIMER_MODE_REL)
 		clock_id = CLOCK_MONOTONIC;
-
+	//根据 clock_id 找到 base
 	base = hrtimer_clockid_to_base(clock_id);
+	//填充到当前 CPU 的 clock_base 数组中
 	timer->base = &cpu_base->clock_base[base];
+	//初始化自己的红黑树节点
 	timerqueue_init(&timer->node);
 
 #ifdef CONFIG_TIMER_STATS
@@ -1346,6 +1350,7 @@ void hrtimer_interrupt(struct clock_event_device *dev)
 	dev->next_event.tv64 = KTIME_MAX;
 
 	raw_spin_lock(&cpu_base->lock);
+	 // 记录进入循环时的时间
 	entry_time = now = hrtimer_update_base(cpu_base);
 retry:
 	cpu_base->in_hrtirq = 1;
@@ -1357,10 +1362,12 @@ retry:
 	 * this CPU.
 	 */
 	cpu_base->expires_next.tv64 = KTIME_MAX;
-
+	// 遍历 hrtimer_cpu_base 中的各个 base，不断取出它们最早超时的节点(hrtimer), 如果它们相对现在已经超时，调用 __run_hrtimer
+	 // __run_hrtimer 会将其从红黑树上移除，并调用回调函数
 	__hrtimer_run_queues(cpu_base, now);
 
 	/* Reevaluate the clock bases for the next expiry */
+	 // 遍历 hrtimer_cpu_base 中的各个 base，得到下次最早的超时时间
 	expires_next = __hrtimer_get_next_event(cpu_base);
 	/*
 	 * Store the new expiry value so the migration code can verify
@@ -1371,11 +1378,12 @@ retry:
 	raw_spin_unlock(&cpu_base->lock);
 
 	/* Reprogramming necessary ? */
+	 // 将新的超时时间设置到 clock_event_device
 	if (!tick_program_event(expires_next, 0)) {
 		cpu_base->hang_detected = 0;
 		return;
 	}
-
+	 // 如果 tick_program_event 返回非 0，表示 expires_next 已经过期，可能原因如下：
 	/*
 	 * The next timer was already expired due to:
 	 * - tracing
@@ -1389,6 +1397,7 @@ retry:
 	 * Acquire base lock for updating the offsets and retrieving
 	 * the current time.
 	 */
+	 // 为了解决这个问题，我们提供 3 次机会，重新执行前面的循环，处理到期的 hrtimer
 	raw_spin_lock(&cpu_base->lock);
 	now = hrtimer_update_base(cpu_base);
 	cpu_base->nr_retries++;
@@ -1404,6 +1413,7 @@ retry:
 	cpu_base->hang_detected = 1;
 	raw_spin_unlock(&cpu_base->lock);
 	delta = ktime_sub(now, entry_time);
+	 // 如果 3 次尝试后依然失败，则计算 3 次循环的总时间，直接将下次超时的时间推后，最多 100 ms，然后重新通过 tick_program_event 设置
 	if ((unsigned int)delta.tv64 > cpu_base->max_hang_time)
 		cpu_base->max_hang_time = (unsigned int) delta.tv64;
 	/*
@@ -1448,7 +1458,7 @@ void hrtimer_run_queues(void)
 {
 	struct hrtimer_cpu_base *cpu_base = this_cpu_ptr(&hrtimer_bases);
 	ktime_t now;
-
+	 // 当前处于高精度模式，直接返回
 	if (__hrtimer_hres_active(cpu_base))
 		return;
 
@@ -1459,6 +1469,7 @@ void hrtimer_run_queues(void)
 	 * there only sets the check bit in the tick_oneshot code,
 	 * otherwise we might deadlock vs. xtime_lock.
 	 */
+	 // 如果支持高精度，则切换到高精度模式，否则尝试切换到 nohz 模式
 	if (tick_check_oneshot_change(!hrtimer_is_hres_enabled())) {
 		hrtimer_switch_to_hres();
 		return;
@@ -1466,6 +1477,8 @@ void hrtimer_run_queues(void)
 
 	raw_spin_lock(&cpu_base->lock);
 	now = hrtimer_update_base(cpu_base);
+	// 遍历 hrtimer_cpu_base 中的各个 base，不断取出它们最早超时的节点(hrtimer), 如果它们相对现在已经超时，调用 __run_hrtimer
+	// __run_hrtimer 会将其从红黑树上移除，并调用回调函数
 	__hrtimer_run_queues(cpu_base, now);
 	raw_spin_unlock(&cpu_base->lock);
 }
@@ -1617,9 +1630,10 @@ SYSCALL_DEFINE2(nanosleep, struct timespec __user *, rqtp,
  */
 static void init_hrtimers_cpu(int cpu)
 {
+	// 取出 CPU 对应的 hrtimer_cpu_base
 	struct hrtimer_cpu_base *cpu_base = &per_cpu(hrtimer_bases, cpu);
 	int i;
-
+	 // 初始化各种 hrtimer_clock_base
 	for (i = 0; i < HRTIMER_MAX_CLOCK_BASES; i++) {
 		cpu_base->clock_base[i].cpu_base = cpu_base;
 		timerqueue_init_head(&cpu_base->clock_base[i].active);
@@ -1627,6 +1641,7 @@ static void init_hrtimers_cpu(int cpu)
 
 	cpu_base->active_bases = 0;
 	cpu_base->cpu = cpu;
+	// 初始化超时时间为 KTIME_MAX，active hrtimer_cpu_base 数为 0
 	hrtimer_init_hres(cpu_base);
 }
 

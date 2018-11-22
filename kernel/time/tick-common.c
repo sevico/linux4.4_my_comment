@@ -187,6 +187,13 @@ void tick_setup_periodic(struct clock_event_device *dev, int broadcast)
 /*
  * Setup the tick device
  */
+ /*
+ 在系统的启动阶段，tick_device 工作在周期触发模式的，直到在合适的时机，
+ 才会开启单触发模式，以便支持 NO_HZ 和 hrtimer 。于是 tick_setup_device 
+ 会检查 tick_device.evtdev 是否为空，如果是，
+ 表示当前 CPU 是第一次注册 tick_device，则需要将其设置为 TICKDEV_MODE_PERIODIC 模式（因为许多时间系统依赖于周期性的定时器中断，比如 jiffies），
+ 调用 tick_setup_periodic 初始化。如果不是，则根据 tick_device 能力进行设置，支持 oneshot 则设置为 TICKDEV_MODE_ONESHOT 模型，调用 tick_setup_oneshot 初始化。
+ */
 static void tick_setup_device(struct tick_device *td,
 			      struct clock_event_device *newdev, int cpu,
 			      const struct cpumask *cpumask)
@@ -318,14 +325,18 @@ void tick_check_new_device(struct clock_event_device *newdev)
 	int cpu;
 
 	cpu = smp_processor_id();
+	//获取当前 CPU 的 tick_device，通过其 evtdev 拿到对应的 clock_event_device
 	td = &per_cpu(tick_cpu_device, cpu);
 	curdev = td->evtdev;
 
 	/* cpu local device ? */
+	//如果当前 CPU 不在新设备的 bitmask 中 / 不能设置 irq affinity （非本地设备），不换
 	if (!tick_check_percpu(curdev, newdev, cpu))
 		goto out_bc;
 
 	/* Preference decision */
+	//如果新设备不支持 ONESHOT，而当前设备支持 / 已处于 ONESHOT 模式，不换
+	//否则，检查新设备 rating 是否大于当前设备，如果是，换
 	if (!tick_check_preferred(curdev, newdev))
 		goto out_bc;
 
@@ -337,13 +348,17 @@ void tick_check_new_device(struct clock_event_device *newdev)
 	 * device. If the current device is the broadcast device, do
 	 * not give it back to the clockevents layer !
 	 */
+	//如果当前设备是广播设备，需要关掉，包括更新其状态为 CLOCK_EVT_STATE_SHUTDOWN 和将下次触发时间设为 KTIME_MAX
 	if (tick_is_broadcast_device(curdev)) {
 		clockevents_shutdown(curdev);
 		curdev = NULL;
 	}
+	//将当前设备从 clockevent_devices 转移到 clockevents_released 中，更新状态为 CLOCK_EVT_STATE_DETACHED
 	clockevents_exchange_device(curdev, newdev);
+	//初始化 tick_device，设置当前 CPU 的 tick_device.evtdev 为新设备
 	tick_setup_device(td, newdev, cpu, cpumask_of(cpu));
 	if (newdev->features & CLOCK_EVT_FEAT_ONESHOT)
+		//通知其他 CPU 时间源变了
 		tick_oneshot_notify();
 	return;
 
@@ -351,6 +366,7 @@ out_bc:
 	/*
 	 * Can the new device be used as a broadcast device ?
 	 */
+	 //如果不换 clock_event_device ，尝试将新设备设置为广播设备
 	tick_install_broadcast_device(newdev);
 }
 

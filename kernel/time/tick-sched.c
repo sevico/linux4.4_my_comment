@@ -112,6 +112,8 @@ static ktime_t tick_init_jiffy_update(void)
 static void tick_sched_do_timer(ktime_t now)
 {
 	int cpu = smp_processor_id();
+	// 只有一个 CPU 能更新 jiffie
+	// 如果支持 NO_HZ 特性，可能负责这个的 CPU 睡觉去了，则需要当前 CPU 承担该责任
 
 #ifdef CONFIG_NO_HZ_COMMON
 	/*
@@ -127,6 +129,7 @@ static void tick_sched_do_timer(ktime_t now)
 #endif
 
 	/* Check, if the jiffies need an update */
+	// 如果是当前 CPU 负责更新 jiffie，则更新之
 	if (tick_do_timer_cpu == cpu)
 		tick_do_update_jiffies64(now);
 }
@@ -330,10 +333,11 @@ void __init tick_nohz_init(void)
 	int cpu;
 
 	if (!tick_nohz_full_running) {
+		// 分配 tick_nohz_full_mask，用于标识开启 full NO_HZ 的 CPU。这里设置为全 1，并设置 tick_nohz_full_running = true
 		if (tick_nohz_init_all() < 0)
 			return;
 	}
-
+	// 分配 housekeeping_mask ，用于标识不开启 NO_HZ 的 CPU(至少要有一个)
 	if (!alloc_cpumask_var(&housekeeping_mask, GFP_KERNEL)) {
 		WARN(1, "NO_HZ: Can't allocate not-full dynticks cpumask\n");
 		cpumask_clear(tick_nohz_full_mask);
@@ -346,6 +350,7 @@ void __init tick_nohz_init(void)
 	 * locking contexts. But then we need irq work to raise its own
 	 * interrupts to avoid circular dependency on the tick
 	 */
+	  // 查是否支持发送跨处理器中断，因为需要跨处理器唤醒
 	if (!arch_irq_work_has_interrupt()) {
 		pr_warning("NO_HZ: Can't run full dynticks because arch doesn't "
 			   "support irq work self-IPIs\n");
@@ -354,17 +359,17 @@ void __init tick_nohz_init(void)
 		tick_nohz_full_running = false;
 		return;
 	}
-
+	// 获取当前 CPU 的 id，负责 housekeeping，即唤醒其他 CPU
 	cpu = smp_processor_id();
-
+	// 如果当前 CPU 在 tick_nohz_full_mask 中，去掉，因为它需要负责 housekeeping
 	if (cpumask_test_cpu(cpu, tick_nohz_full_mask)) {
 		pr_warning("NO_HZ: Clearing %d from nohz_full range for timekeeping\n", cpu);
 		cpumask_clear_cpu(cpu, tick_nohz_full_mask);
 	}
-
+	// 将所有不属于 tick_nohz_full_mask 的 CPU 设置到 housekeeping_mask 中
 	cpumask_andnot(housekeeping_mask,
 		       cpu_possible_mask, tick_nohz_full_mask);
-
+	// 为 tick_nohz_full_mask 中的 CPU 设置 context_tracking.active(per-cpu 变量)为 true，让 tracking subsystem 忽略之
 	for_each_cpu(cpu, tick_nohz_full_mask)
 		context_tracking_cpu_set(cpu);
 
@@ -376,6 +381,7 @@ void __init tick_nohz_init(void)
 	 * We need at least one CPU to handle housekeeping work such
 	 * as timekeeping, unbound timers, workqueues, ...
 	 */
+	  // 如果 housekeeping_mask 为空，则没有 CPU 能够来负责 housekeeping，报警告
 	WARN_ON_ONCE(cpumask_empty(housekeeping_mask));
 }
 #endif
@@ -1074,22 +1080,23 @@ static enum hrtimer_restart tick_sched_timer(struct hrtimer *timer)
 		container_of(timer, struct tick_sched, sched_timer);
 	struct pt_regs *regs = get_irq_regs();
 	ktime_t now = ktime_get();
-
+	// 更新 jiffies
 	tick_sched_do_timer(now);
 
 	/*
 	 * Do not call, when we are not in irq context and have
 	 * no valid regs pointer
 	 */
+	 // 处理超时 timer
 	if (regs)
 		tick_sched_handle(ts, regs);
 
 	/* No need to reprogram if we are in idle or full dynticks mode */
 	if (unlikely(ts->tick_stopped))
 		return HRTIMER_NORESTART;
-
+	// 推进一个 tick
 	hrtimer_forward(timer, now, tick_period);
-
+	 // 重启本 hrtimer
 	return HRTIMER_RESTART;
 }
 

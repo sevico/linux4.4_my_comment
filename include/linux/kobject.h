@@ -51,18 +51,18 @@ extern u64 uevent_seqnum;
  * specific variables added to the event environment.
  */
 enum kobject_action {
-	KOBJ_ADD,
-	KOBJ_REMOVE,
-	KOBJ_CHANGE,
-	KOBJ_MOVE,
-	KOBJ_ONLINE,
-	KOBJ_OFFLINE,
+	KOBJ_ADD,// 添加
+	KOBJ_REMOVE,// 移除
+	KOBJ_CHANGE,// 状态变化
+	KOBJ_MOVE,// 更改名称或者更改 Parent
+	KOBJ_ONLINE,// 上线
+	KOBJ_OFFLINE,// 下线
 	KOBJ_MAX
 };
 
 struct kobject {
-	const char		*name;
 	/*name，该Kobject的名称，同时也是sysfs中的目录名称。由于Kobject添加到Kernel时，需要根据名字注册到sysfs中，之后就不能再直接修改该字段。如果需要修改Kobject的名字，需要调用kobject_rename接口，该接口会主动处理sysfs的相关事宜。*/
+	const char		*name;
 	struct list_head	entry; //用于将Kobject加入到Kset中的list_head。
 	struct kobject		*parent; //指向parent kobject，以此形成层次结构（在sysfs就表现为目录结构）。
 	struct kset		*kset;
@@ -123,15 +123,20 @@ struct kobj_type {
 	void (*release)(struct kobject *kobj);  //通过该回调函数，可以将包含该种类型kobject的数据结构的内存空间释放掉。
 	const struct sysfs_ops *sysfs_ops;  //该种类型的Kobject的sysfs文件系统接口。
 	struct attribute **default_attrs;  //该种类型的Kobject的atrribute列表（所谓attribute，就是sysfs文件系统中的一个文件）。将会在Kobject添加到内核时，一并注册到sysfs中。
+	// namespace 操作函数
 	const struct kobj_ns_type_operations *(*child_ns_type)(struct kobject *kobj);
 	const void *(*namespace)(struct kobject *kobj);
 };
 
 struct kobj_uevent_env {
 	char *argv[3];
+	// 用于保存环境变量地址的指针数组，最多 32 个
 	char *envp[UEVENT_NUM_ENVP];
+	// 访问环境变量指针数组的索引
 	int envp_idx;
+	// 保存环境变量的 buffer，最大为 2048
 	char buf[UEVENT_BUFFER_SIZE];
+	// 当前 buf 长度
 	int buflen;
 };
 
@@ -172,10 +177,15 @@ struct sock;
  * can add new environment variables, or filter out the uevents if so
  * desired.
  */
+ //kobj_type 的关联，kobject 会利用成员 kset 找到自已所属的 kset，设置自身的 ktype 为 kset.kobj.ktype 。当没有指定 kset 成员时，才会用 ktype 来建立关系
 struct kset {
+	// kobject 链表头
 	struct list_head list;
+	// 自旋锁，保障操作安全
 	spinlock_t list_lock;
+	// 自身的 kobject
 	struct kobject kobj;
+	// uevent 操作函数集。kobject 发送 uevent 时会调用所属 kset 的 uevent_ops
 	const struct kset_uevent_ops *uevent_ops;
 };
 

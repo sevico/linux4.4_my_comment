@@ -65,7 +65,8 @@ static struct file_system_type sysfs_fs_type = {
 int __init sysfs_init(void)
 {
 	int err;
-
+	//sysfs 实际上基于 kernfs 实现。kernfs 是 kernel 3.14 引入的内存文件系统。
+	//相比先前的 sysfs，和 VFS 分离，并解决了死锁的老大难问题。
 	sysfs_root = kernfs_create_root(NULL, KERNFS_ROOT_EXTRA_OPEN_PERM_CHECK,
 					NULL);
 	if (IS_ERR(sysfs_root))

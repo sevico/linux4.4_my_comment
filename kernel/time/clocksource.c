@@ -706,13 +706,18 @@ void __clocksource_update_freq_scale(struct clocksource *cs, u32 scale, u32 freq
 		 * clocksource with mask >= 40-bit and f >= 4GHz. That maps to
 		 * ~ 0.06ppm granularity for NTP.
 		 */
+		  // 将 mask 除以 freq，得到能够表示的秒数上限
 		sec = cs->mask;
 		do_div(sec, freq);
+		// 如果频率不是 hz，需要再除以倍数，即 mask / (scale * freq)
 		do_div(sec, scale);
 		if (!sec)
 			sec = 1;
 		else if (sec > 600 && cs->mask > UINT_MAX)
 			sec = 600;
+		// 根据上限计算不会溢出的 mult 和 shift
+		// NSEC_PER_SEC=1GHz，计算将 freq 以 GHz 为单位时的 mult 和 shift
+		// 由于上限又乘回 scale 将单位转换为原单位，因此目标频率要除以 scale，这样可以减少换算量?
 
 		clocks_calc_mult_shift(&cs->mult, &cs->shift, freq,
 				       NSEC_PER_SEC / scale, sec * scale);
@@ -721,6 +726,7 @@ void __clocksource_update_freq_scale(struct clocksource *cs, u32 scale, u32 freq
 	 * Ensure clocksources that have large 'mult' values don't overflow
 	 * when adjusted.
 	 */
+	 // 计算能够保证换算时不溢出的 max adjustment
 	cs->maxadj = clocksource_max_adjustment(cs);
 	while (freq && ((cs->mult + cs->maxadj < cs->mult)
 		|| (cs->mult - cs->maxadj > cs->mult))) {
@@ -736,9 +742,9 @@ void __clocksource_update_freq_scale(struct clocksource *cs, u32 scale, u32 freq
 	WARN_ONCE(cs->mult + cs->maxadj < cs->mult,
 		"timekeeping: Clocksource %s might overflow on 11%% adjustment\n",
 		cs->name);
-
+	// 计算 max_idle_ns(最大空闲时间) 和 max_cycles(cycle 上限)
 	clocksource_update_max_deferment(cs);
-
+	// 输出信息到 kernel buffer
 	pr_info("%s: mask: 0x%llx max_cycles: 0x%llx, max_idle_ns: %lld ns\n",
 		cs->name, cs->mask, cs->max_cycles, cs->max_idle_ns);
 }
@@ -762,10 +768,11 @@ int __clocksource_register_scale(struct clocksource *cs, u32 scale, u32 freq)
 	__clocksource_update_freq_scale(cs, scale, freq);
 
 	/* Add clocksource to the clocksource list */
+	// 需要加锁，保护 curr_clocksource 和 clocksource_list
 	mutex_lock(&clocksource_mutex);
 	clocksource_enqueue(cs);
-	clocksource_enqueue_watchdog(cs);
-	clocksource_select();
+	clocksource_enqueue_watchdog(cs); // 将 cs 加入到 wd_list，启动一个新的 watchdog timer
+	clocksource_select();	// 设置 curr_clocksource 为当前 rating 最高的作为时间源
 	clocksource_select_watchdog(false);
 	mutex_unlock(&clocksource_mutex);
 	return 0;
@@ -992,17 +999,21 @@ static struct device device_clocksource = {
 
 static int __init init_clocksource_sysfs(void)
 {
+	// 创建 /sys/devices/system/clocksource 目录
 	int error = subsys_system_register(&clocksource_subsys, NULL);
-
+	 // 创建 /sys/devices/system/clocksource/clocksource0/ 目录
 	if (!error)
 		error = device_register(&device_clocksource);
+	 // 创建 clocksource0 下的 current_clocksource
 	if (!error)
 		error = device_create_file(
 				&device_clocksource,
 				&dev_attr_current_clocksource);
+	 // 创建 clocksource0 下的 unbind_clocksource(write only)
 	if (!error)
 		error = device_create_file(&device_clocksource,
 					   &dev_attr_unbind_clocksource);
+	// 创建 clocksource0 下的 available_clocksource(read only)
 	if (!error)
 		error = device_create_file(
 				&device_clocksource,

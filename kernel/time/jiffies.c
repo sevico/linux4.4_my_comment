@@ -63,14 +63,14 @@ static cycle_t jiffies_read(struct clocksource *cs)
 {
 	return (cycle_t) jiffies;
 }
-
+//没有 CLOCK_SOURCE_VALID_FOR_HRES 的 flag，所以不会出现在 available_clocksource 中
 static struct clocksource clocksource_jiffies = {
 	.name		= "jiffies",
 	.rating		= 1, /* lowest valid rating*/
-	.read		= jiffies_read,
+	.read		= jiffies_read, // 读时返回 jiffies
 	.mask		= 0xffffffff, /*32bits*/
 	.mult		= NSEC_PER_JIFFY << JIFFIES_SHIFT, /* details above */
-	.shift		= JIFFIES_SHIFT,
+	.shift		= JIFFIES_SHIFT,// NSEC_PER_JIFFY 和 JIFFIES_SHIFT 由 CONFIG_HZ 决定
 	.max_cycles	= 10,
 };
 
@@ -116,10 +116,11 @@ int register_refined_jiffies(long cycles_per_second)
 
 	refined_jiffies = clocksource_jiffies;
 	refined_jiffies.name = "refined-jiffies";
-	refined_jiffies.rating++;
+	refined_jiffies.rating++;// rating 为 2，比 clocksource_jiffies 高
 
 	/* Calc cycles per tick */
-	cycles_per_tick = (cycles_per_second + HZ/2)/HZ;
+	// 和 clocksource_jiffies 不同，根据传入参数 (CLOCK_TICK_RATE) 来计算 shift_hz，然后算出 mult
+	cycles_per_tick = (cycles_per_second + HZ/2)/HZ; // CLOCK_TICK_RATE = PIT_TICK_RATE
 	/* shift_hz stores hz<<8 for extra accuracy */
 	shift_hz = (u64)cycles_per_second << 8;
 	shift_hz += cycles_per_tick/2;
@@ -130,7 +131,7 @@ int register_refined_jiffies(long cycles_per_second)
 	do_div(nsec_per_tick, (u32)shift_hz);
 
 	refined_jiffies.mult = ((u32)nsec_per_tick) << JIFFIES_SHIFT;
-
+	// 注册时间源
 	__clocksource_register(&refined_jiffies);
 	return 0;
 }

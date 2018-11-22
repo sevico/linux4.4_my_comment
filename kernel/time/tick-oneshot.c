@@ -24,6 +24,7 @@
 /**
  * tick_program_event
  */
+ //找到当前 CPU 的 clock_event_device，将其切换到 oneshot 模式，然后设定超时时间为 hrtimer 超时时间。
 int tick_program_event(ktime_t expires, int force)
 {
 	struct clock_event_device *dev = __this_cpu_read(tick_cpu_device.evtdev);

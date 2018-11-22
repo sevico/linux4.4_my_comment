@@ -587,12 +587,16 @@ asmlinkage __visible void __init start_kernel(void)
 	/* init some links before init_ISA_irqs() */
 	early_irq_init();
 	init_IRQ();
+	//初始化 tick 系统
 	tick_init();
 	rcu_init_nohz();
+	//初始化低精度定期器系统
 	init_timers();
+	//初始化高精度定期器系统
 	hrtimers_init();
 	softirq_init();
 	timekeeping_init();
+	//设置 late_time_init 为 x86_late_time_init
 	time_init();
 	sched_clock_postinit();
 	perf_event_init();
@@ -684,7 +688,7 @@ asmlinkage __visible void __init start_kernel(void)
 	ftrace_init();
 
 	/* Do the rest non-__init'ed, we're now alive */
-	rest_init();
+	rest_init();//APIC timer 在此初始化
 }
 
 /* Call all constructor functions linked into the kernel. */

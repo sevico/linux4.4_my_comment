@@ -90,7 +90,9 @@ struct tvec_base {
 	unsigned long all_timers;
 	//represents number of a processor which owns timers
 	int cpu;
+	// 是否支持 timer_list 迁移到其他 CPU
 	bool migration_enabled;
+	// 是否维护 NO_HZ timer_list
 	bool nohz_active;
 	///下面表示了5级的定时器级联表.  
 	struct tvec_root tv1;
@@ -1041,8 +1043,10 @@ int del_timer(struct timer_list *timer)
 	debug_assert_init(timer);
 
 	timer_stats_timer_clear_start_info(timer);
+	// 如果 timer 位于 timer_base ，则需要移除之
 	if (timer_pending(timer)) {
 		base = lock_timer_base(timer, &flags);
+		// 将 timer 从对应的链表中移除，如果 timer 是该链表中唯一的节点，清掉 bitmap 中相应的 bit
 		ret = detach_if_pending(timer, base, true);
 		spin_unlock_irqrestore(&base->lock, flags);
 	}

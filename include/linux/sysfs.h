@@ -27,7 +27,7 @@ struct bin_attribute;
 enum kobj_ns_type;
 
 struct attribute {
-	const char		*name;
+	const char		*name;  // 属性名
 	umode_t			mode;
 #ifdef CONFIG_DEBUG_LOCK_ALLOC
 	bool			ignore_lockdep:1;

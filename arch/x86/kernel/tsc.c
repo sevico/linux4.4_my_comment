@@ -1152,11 +1152,13 @@ static int __init init_tsc_clocksource(void)
 {
 	if (!cpu_has_tsc || tsc_disabled > 0 || !tsc_khz)
 		return 0;
-
+	 // 如果 tsc 的可靠性已经验证，则清除 必须验证 标记
 	if (tsc_clocksource_reliable)
 		clocksource_tsc.flags &= ~CLOCK_SOURCE_MUST_VERIFY;
 	/* lower the rating if we already know its unstable: */
+	 // 检查 TSC 是否稳定，在 tsc_init 前通过全局变量标记 TSC 是否稳定
 	if (check_tsc_unstable()) {
+		// 如果 tsc 不稳定，则降低 rating 最低，清除连续标记
 		clocksource_tsc.rating = 0;
 		clocksource_tsc.flags &= ~CLOCK_SOURCE_IS_CONTINUOUS;
 	}
@@ -1169,6 +1171,7 @@ static int __init init_tsc_clocksource(void)
 	 * exporting a reliable TSC.
 	 */
 	if (boot_cpu_has(X86_FEATURE_TSC_RELIABLE)) {
+		// 注册为时钟源
 		clocksource_register_khz(&clocksource_tsc, tsc_khz);
 		return 0;
 	}
@@ -1193,7 +1196,8 @@ void __init tsc_init(void)
 		setup_clear_cpu_cap(X86_FEATURE_TSC_DEADLINE_TIMER);
 		return;
 	}
-
+	// 校准 CPU，获取 CPU 频率
+	// 校准 TSC，获取 TSC 频率，前文提到过 TSC 需要通过其他时间源来确定 TSC 的实际频率
 	tsc_khz = x86_platform.calibrate_tsc();
 	cpu_khz = tsc_khz;
 
@@ -1213,11 +1217,12 @@ void __init tsc_init(void)
 	 * speed as the bootup CPU. (cpufreq notifiers will fix this
 	 * up if their speed diverges)
 	 */
+	 // 以当前 CPU(BSP) 频率为准，为所有的 CPU 计算 cycle 到 ns 转换的辅助参数 scale
 	for_each_possible_cpu(cpu) {
 		cyc2ns_init(cpu);
 		set_cyc2ns_scale(cpu_khz, cpu);
 	}
-
+	// 内核参数禁用了 TSC，返回
 	if (tsc_disabled > 0)
 		return;
 
@@ -1232,12 +1237,12 @@ void __init tsc_init(void)
 	lpj = ((u64)tsc_khz * 1000);
 	do_div(lpj, HZ);
 	lpj_fine = lpj;
-
+	// 设置 delay 系列(ndely / udelay / mdelay)函数基于 TSC 来实现(delay_tsc)
 	use_tsc_delay();
-
+	// 检查 CPU 和 TSC 是否同步
 	if (unsynchronized_tsc())
 		mark_tsc_unstable("TSCs unsynchronized");
-
+	// 检查 TSC 是否可靠
 	check_system_tsc_reliable();
 }
 

@@ -98,11 +98,17 @@ enum hrtimer_restart {
  * The hrtimer structure must be initialized by hrtimer_init()
  */
 struct hrtimer {
+	// 红黑树节点的封装
 	struct timerqueue_node		node;
+	// 最早超时时间
 	ktime_t				_softexpires;
+	// 超时的回调函数
 	enum hrtimer_restart		(*function)(struct hrtimer *);
+	// 指向所属的 hrtimer_clock_base
 	struct hrtimer_clock_base	*base;
+	 // 当前的状态，只有 HRTIMER_STATE_INACTIVE 和 HRTIMER_STATE_ENQUEUED 两种
 	u8				state;
+	 // 是否是 relative
 	u8				is_rel;
 #ifdef CONFIG_TIMER_STATS
 	int				start_pid;
@@ -142,6 +148,7 @@ struct hrtimer_sleeper {
 struct hrtimer_clock_base {
 // 指向所属cpu的hrtimer_cpu_base结构
 	struct hrtimer_cpu_base	*cpu_base;
+	// 类型 index
 	int			index;
 	clockid_t		clockid;
 	// 红黑树，包含了所有使用该时间基准系统的hrtimer
@@ -155,7 +162,7 @@ enum  hrtimer_base_type {
 	HRTIMER_BASE_MONOTONIC, // 单调递增的monotonic时间，不包含休眠时间
 	HRTIMER_BASE_REALTIME,// 平常使用的墙上真实时间
 	HRTIMER_BASE_BOOTTIME, // 单调递增的boottime，包含休眠时间
-	HRTIMER_BASE_TAI,
+	HRTIMER_BASE_TAI,	// Temps Atomique International，CLOCK_TAI = CLOCK_REALTIME(UTC) + tai_offset
 	HRTIMER_MAX_CLOCK_BASES, // 用于后续数组的定义
 };
 

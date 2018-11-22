@@ -68,6 +68,7 @@ struct driver_private {
  *
  * Nothing outside of the driver core should ever touch these fields.
  */
+ //klist_node 用来作为在所属 driver 链表、所属 bus 链表等中的节点
 struct device_private {
 	struct klist klist_children;
 	struct klist_node knode_parent;

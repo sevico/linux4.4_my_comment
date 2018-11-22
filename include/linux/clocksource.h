@@ -70,32 +70,46 @@ struct clocksource {
 	 */
 	 // 指向读取时钟的函数
 	cycle_t (*read)(struct clocksource *cs);
+	 // 能够表示的 cycle 上限，通常是 32/64 位的全 f，做与操作可以避免对 overflow 进行专门处理
 	cycle_t mask;
+	 // 将时间源的计数单位 (cycle_t) 转换为 ns
 	u32 mult;
+	 // 换算公式为 (cycles * mult) >> shift
 	u32 shift;
-	u64 max_idle_ns;
+	  // 允许的最大空闲时间，单位 ns。当设置 CONFIG_NO_HZ 时，使用动态 tick，不限制 kernel 的睡眠时间，需要进行限制
+	u64 max_idle_ns;	  
+	// 允许的最大调整值，避免转换时 overflow
 	u32 maxadj;
 #ifdef CONFIG_ARCH_CLOCKSOURCE_DATA
+	// 架构专有(目前只有 x86 和 ia64)。
 	struct arch_clocksource_data archdata;
 #endif
+	// 设置了 cycle 上限，避免换算时溢出
 	u64 max_cycles;
+	// 时间源名称
 	const char *name;
+	// 该时间源注册表头 clocksource_list
 	struct list_head list;
+	// 优先级
 	int rating;
+	// 启用时间源函数
 	int (*enable)(struct clocksource *cs);
+	// 停用时间源函数
 	void (*disable)(struct clocksource *cs);
 	unsigned long flags;
+	// 暂停时间源函数
 	void (*suspend)(struct clocksource *cs);
+	// 恢复时间源函数
 	void (*resume)(struct clocksource *cs);
 
 	/* private: */
-#ifdef CONFIG_CLOCKSOURCE_WATCHDOG
+#ifdef CONFIG_CLOCKSOURCE_WATCHDOG // 用于监控时间源，校验时间是否准确
 	/* Watchdog related data, used by the framework */
 	struct list_head wd_list;
 	cycle_t cs_last;
 	cycle_t wd_last;
 #endif
-	struct module *owner;
+	struct module *owner; // 指向拥有该时间源的内核模块
 } ____cacheline_aligned;
 
 /*
@@ -208,6 +222,7 @@ __clocksource_update_freq_scale(struct clocksource *cs, u32 scale, u32 freq);
  */
 static inline int __clocksource_register(struct clocksource *cs)
 {
+	// 使用默认 mult 和 shift
 	return __clocksource_register_scale(cs, 1, 0);
 }
 

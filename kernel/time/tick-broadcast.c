@@ -1005,12 +1005,18 @@ int __tick_broadcast_oneshot_control(enum tick_broadcast_state state)
 
 void __init tick_broadcast_init(void)
 {
+	 // 正在处于睡眠的 CPU
 	zalloc_cpumask_var(&tick_broadcast_mask, GFP_NOWAIT);
+	 // 处于周期性广播状态的 CPU
 	zalloc_cpumask_var(&tick_broadcast_on, GFP_NOWAIT);
+	 // 临时变量
 	zalloc_cpumask_var(&tmpmask, GFP_NOWAIT);
 #ifdef CONFIG_TICK_ONESHOT
+	// 需要被通知的 CPU
 	zalloc_cpumask_var(&tick_broadcast_oneshot_mask, GFP_NOWAIT);
+	// 阻塞广播的 CPU
 	zalloc_cpumask_var(&tick_broadcast_pending_mask, GFP_NOWAIT);
+	// 强制执行广播的 CPU
 	zalloc_cpumask_var(&tick_broadcast_force_mask, GFP_NOWAIT);
 #endif
 }

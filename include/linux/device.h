@@ -103,7 +103,9 @@ extern void bus_remove_file(struct bus_type *, struct bus_attribute *);
  * private data.
  */
 struct bus_type {
+	// 总线名称
 	const char		*name;
+	// 该总线下设备的前缀名称
 	const char		*dev_name;
 	struct device		*dev_root;
 	struct device_attribute	*dev_attrs;	/* use dev_groups instead */
@@ -257,7 +259,9 @@ enum probe_type {
  * of any specific device.
  */
 struct device_driver {
+	// 驱动名称
 	const char		*name;
+	// 驱动管理设备挂接的总线类型
 	struct bus_type		*bus;
 
 	struct module		*owner;
@@ -268,7 +272,7 @@ struct device_driver {
 
 	const struct of_device_id	*of_match_table;
 	const struct acpi_device_id	*acpi_match_table;
-
+	// 相关函数，统一接口
 	int (*probe) (struct device *dev);
 	int (*remove) (struct device *dev);
 	void (*shutdown) (struct device *dev);
@@ -382,7 +386,7 @@ int subsys_virtual_register(struct bus_type *subsys,
  * connected or how they work.
  */
 struct class {
-	const char		*name;
+	const char		*name; // 设备分类名
 	struct module		*owner;
 
 	struct class_attribute		*class_attrs;

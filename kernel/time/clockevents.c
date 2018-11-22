@@ -451,17 +451,20 @@ void clockevents_register_device(struct clock_event_device *dev)
 	unsigned long flags;
 
 	/* Initialize state to DETACHED */
+	// 设置设备状态
 	clockevent_set_state(dev, CLOCK_EVT_STATE_DETACHED);
-
+	 // 如果未指配所属 CPU，设置为当前 CPU
 	if (!dev->cpumask) {
 		WARN_ON(num_possible_cpus() > 1);
 		dev->cpumask = cpumask_of(smp_processor_id());
 	}
-
+	// 关闭抢占，加锁
 	raw_spin_lock_irqsave(&clockevents_lock, flags);
-
+	// 加入到 clockevent_devices 链表中
 	list_add(&dev->list, &clockevent_devices);
+	// 和 tick_device 当前的绑定的 clock_event_device 比较，如果新设备更优，则切换到新设备
 	tick_check_new_device(dev);
+	// 清除 clockevents_released 上的 clockevent 设备，转移到 clockevent_devices
 	clockevents_notify_released();
 
 	raw_spin_unlock_irqrestore(&clockevents_lock, flags);
@@ -581,6 +584,7 @@ void clockevents_exchange_device(struct clock_event_device *old,
 
 	if (new) {
 		BUG_ON(!clockevent_state_detached(new));
+		//对新设备也调用 shutdown
 		clockevents_shutdown(new);
 	}
 }

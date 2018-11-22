@@ -76,6 +76,7 @@ void __init setup_default_timer_irq(void)
 /* Default timer init function */
 void __init hpet_time_init(void)
 {
+	// 初始化 HPET ，如果失败，则启用 PIT
 	if (!hpet_enable())
 		setup_pit_timer();
 	setup_default_timer_irq();
@@ -84,6 +85,7 @@ void __init hpet_time_init(void)
 static __init void x86_late_time_init(void)
 {
 	x86_init.timers.timer_init();
+	//初始化 tsc，需要借助其他时间源来校准，因此放 hpet 后
 	tsc_init();
 }
 
@@ -93,5 +95,6 @@ static __init void x86_late_time_init(void)
  */
 void __init time_init(void)
 {
+	//x86_init.timers.timer_init(hpet_time_init) 初始化 hpet，如果不支持，则初始化 pit
 	late_time_init = x86_late_time_init;
 }

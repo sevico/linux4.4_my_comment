@@ -1132,10 +1132,12 @@ static int change_clocksource(void *data)
 int timekeeping_notify(struct clocksource *clock)
 {
 	struct timekeeper *tk = &tk_core.timekeeper;
-
+	// 如果时钟源没变，则返回
 	if (tk->tkr_mono.clock == clock)
 		return 0;
+	 // 在 machine 停止的状况下执行 change_clocksource，切换时钟源
 	stop_machine(change_clocksource, clock, NULL);
+	// 通知 tick_cpu_sched 时钟源改变了
 	tick_clock_notify();
 	return tk->tkr_mono.clock == clock ? 0 : -1;
 }
@@ -1257,7 +1259,7 @@ void __init timekeeping_init(void)
 	struct clocksource *clock;
 	unsigned long flags;
 	struct timespec64 now, boot, tmp;
-
+	 // 获取持久化时间，在 x86 下是调用 x86_platform.get_wallclock (mach_get_cmos_time)，即读取 RTC
 	read_persistent_clock64(&now);
 	if (!timespec64_valid_strict(&now)) {
 		pr_warn("WARNING: Persistent clock returned invalid value!\n"
@@ -1266,7 +1268,7 @@ void __init timekeeping_init(void)
 		now.tv_nsec = 0;
 	} else if (now.tv_sec || now.tv_nsec)
 		persistent_clock_exists = true;
-
+	// x86 下为 0
 	read_boot_clock64(&boot);
 	if (!timespec64_valid_strict(&boot)) {
 		pr_warn("WARNING: Boot clock returned invalid value!\n"
@@ -1277,19 +1279,23 @@ void __init timekeeping_init(void)
 
 	raw_spin_lock_irqsave(&timekeeper_lock, flags);
 	write_seqcount_begin(&tk_core.seq);
+	// 初始化 NTP，重置相关变量
 	ntp_init();
-
+	 // 获取默认的时钟源，即 clocksource_jiffies
 	clock = clocksource_default_clock();
 	if (clock->enable)
 		clock->enable(clock);
+	// 将 timekeeper 和 clocksource_jiffies 关联起来，即使用 clocksource_jiffies 来作为时钟源
+	//tick_periodic / tick_do_update_jiffies64 => update_wall_time
+	
 	tk_setup_internals(tk, clock);
-
+	// 利用 RTC 读到的时间来设置 xtime / raw time
 	tk_set_xtime(tk, &now);
 	tk->raw_time.tv_sec = 0;
 	tk->raw_time.tv_nsec = 0;
 	if (boot.tv_sec == 0 && boot.tv_nsec == 0)
 		boot = tk_xtime(tk);
-
+	// 将自启动以来的时间作为 monotonic time 和 xtime 的差值(wall_to_monotonic)，这里为 0？
 	set_normalized_timespec64(&tmp, -boot.tv_sec, -boot.tv_nsec);
 	tk_set_wall_to_mono(tk, tmp);
 

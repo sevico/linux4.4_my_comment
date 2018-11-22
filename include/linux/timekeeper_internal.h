@@ -80,21 +80,32 @@ struct tk_read_base {
  * used instead.
  */
 struct timekeeper {
+	// 维护 CLOCK_MONOTONIC
 	struct tk_read_base	tkr_mono;
+	// 维护 CLOCK_MONOTONIC_RAW
 	struct tk_read_base	tkr_raw;
+	 // 当前 CLOCK_REALTIME，单位秒
 	u64			xtime_sec;
+	 // 当前 CLOCK_MONOTONIC，单位秒
 	unsigned long		ktime_sec;
+	 // CLOCK_REALTIME 和 CLOCK_MONOTONIC 的差值
 	struct timespec64	wall_to_monotonic;
+	 // CLOCK_MONOTONIC 和 CLOCK_REALTIME 的差值
 	ktime_t			offs_real;
+	 // CLOCK_MONOTONIC 和 boot time 的差值
 	ktime_t			offs_boot;
+	 // CLOCK_MONOTONIC 和 CLOCK_TAI 的差值
 	ktime_t			offs_tai;
+	 // UTC 和 TAI 的差值，单位秒
 	s32			tai_offset;
 	unsigned int		clock_was_set_seq;
 	ktime_t			next_leap_ktime;
 	struct timespec64	raw_time;
 
 	/* The following members are for timekeeping internal use */
+	 // 一个 NTP interval 的 cycle 数
 	cycle_t			cycle_interval;
+	// 一个 NTP interval 的 ns 数
 	u64			xtime_interval;
 	s64			xtime_remainder;
 	u64			raw_interval;

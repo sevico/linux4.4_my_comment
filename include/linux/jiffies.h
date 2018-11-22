@@ -73,7 +73,11 @@ extern int register_refined_jiffies(long clock_tick_rate);
  * without sampling the sequence number in jiffies_lock.
  * get_jiffies_64() will do this for you as appropriate.
  */
+ //arch/x86/kernel/vmlinux.lds.S，在 32 位下，jiffies 指向 jiffies_64 的低 32 位
+// x86_64 下使用，非原子，读时需要加锁，如 get_jiffies_64 用了 seqlock
+//tick_handle_periodic => tick_periodic => do_timer => jiffies_64 += ticks
 extern u64 __cacheline_aligned_in_smp jiffies_64;
+// x86_32 下使用
 extern unsigned long volatile __cacheline_aligned_in_smp __jiffy_arch_data jiffies;
 
 #if (BITS_PER_LONG < 64)

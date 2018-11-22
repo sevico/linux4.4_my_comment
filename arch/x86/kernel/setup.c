@@ -1251,13 +1251,13 @@ void __init setup_arch(char **cmdline_p)
 #endif
 #endif
 	x86_init.oem.banner();
-
+	//初始化 wallclock
 	x86_init.timers.wallclock_init();
 
 	mcheck_init();
 
 	arch_init_ideal_nops();
-
+	//初始化 refined_jiffies
 	register_refined_jiffies(CLOCK_TICK_RATE);
 
 #ifdef CONFIG_EFI

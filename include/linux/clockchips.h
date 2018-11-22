@@ -32,10 +32,15 @@ struct module;
  *		    stopped.
  */
 enum clock_event_state {
+	// 设备未使用。一般作为初始状态来使用
 	CLOCK_EVT_STATE_DETACHED,
+	// 设备已关闭
 	CLOCK_EVT_STATE_SHUTDOWN,
+	// 设备被编程为产生周期性事件
 	CLOCK_EVT_STATE_PERIODIC,
+	// 设备被编程为产生单次事件
 	CLOCK_EVT_STATE_ONESHOT,
+	// 设备被编程为产生单次事件，但目前暂时停止了
 	CLOCK_EVT_STATE_ONESHOT_STOPPED,
 };
 
@@ -129,6 +134,7 @@ struct clock_event_device {
 	unsigned long		max_delta_ticks;
 
 	const char		*name;
+	// 优先级
 	int			rating;
 	int			irq;
 	int			bound_on;
