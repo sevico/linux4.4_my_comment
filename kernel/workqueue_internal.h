@@ -20,6 +20,7 @@ struct worker_pool;
  *
  * Only to be used in workqueue and async.
  */
+ //本质上是一个内核线程，通过 task 成员指向。通过 current_work 指向当前正在处理的 work，current_func 指向 work 相应的函数
 struct worker {
 	/* on idle list while idle, on busy hash table while busy */
 	union {

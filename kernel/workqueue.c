@@ -195,6 +195,7 @@ struct worker_pool {
  * point to the pwq; thus, pwqs need to be aligned at two's power of the
  * number of flag bits.
  */
+ //pool_workqueue 维护了 workqueue 和 worker pool 的指针，起到关联作用
 struct pool_workqueue {
 	struct worker_pool	*pool;		/* I: the associated pool */
 	struct workqueue_struct *wq;		/* I: the owning workqueue */
@@ -1453,9 +1454,9 @@ bool queue_work_on(int cpu, struct workqueue_struct *wq,
 	unsigned long flags;
 
 	local_irq_save(flags);
-
+	//work_struct的data member中的WORK_STRUCT_PENDING_BIT这个bit标识了该work是处于pending状态还是正在处理中
 	if (!test_and_set_bit(WORK_STRUCT_PENDING_BIT, work_data_bits(work))) {
-		__queue_work(cpu, wq, work);
+		__queue_work(cpu, wq, work);  //挂入work list并通知worker thread pool来处理 
 		ret = true;
 	}
 
@@ -1732,17 +1733,18 @@ static struct worker *create_worker(struct worker_pool *pool)
 	char id_buf[16];
 
 	/* ID is needed to determine kthread name */
+	//分配ID
 	id = ida_simple_get(&pool->worker_ida, 0, 0, GFP_KERNEL);
 	if (id < 0)
 		goto fail;
-
+	//分配worker struct的内存
 	worker = alloc_worker(pool->node);
 	if (!worker)
 		goto fail;
 
 	worker->pool = pool;
 	worker->id = id;
-
+	//worker的名字
 	if (pool->cpu >= 0)
 		snprintf(id_buf, sizeof(id_buf), "%d:%d%s", pool->cpu, id,
 			 pool->attrs->nice < 0  ? "H" : "");
@@ -1753,17 +1755,19 @@ static struct worker *create_worker(struct worker_pool *pool)
 					      "kworker/%s", id_buf);
 	if (IS_ERR(worker->task))
 		goto fail;
-
+	//创建task并设定nice value 
 	set_user_nice(worker->task, pool->attrs->nice);
 	kthread_bind_mask(worker->task, pool->attrs->cpumask);
 
 	/* successful, attach the worker to the pool */
+	//建立worker和线程池的关系
 	worker_attach_to_pool(worker, pool);
 
 	/* start the newly created worker */
 	spin_lock_irq(&pool->lock);
 	worker->pool->nr_workers++;
 	worker_enter_idle(worker);
+	//让worker运行起来
 	wake_up_process(worker->task);
 	spin_unlock_irq(&pool->lock);
 
@@ -3533,10 +3537,10 @@ apply_wqattrs_prepare(struct workqueue_struct *wq,
 	int node;
 
 	lockdep_assert_held(&wq_pool_mutex);
-
+	//数组用来保存unbound workqueue各个node的pool workqueue的指针
 	ctx = kzalloc(sizeof(*ctx) + nr_node_ids * sizeof(ctx->pwq_tbl[0]),
 		      GFP_KERNEL);
-
+	//new_attrs和tmp_attrs都是一些计算workqueue attribute的中间变量，开始的时候设定为用户传入的workqueue的attribute。
 	new_attrs = alloc_workqueue_attrs(GFP_KERNEL);
 	tmp_attrs = alloc_workqueue_attrs(GFP_KERNEL);
 	if (!ctx || !new_attrs || !tmp_attrs)
@@ -3569,6 +3573,7 @@ apply_wqattrs_prepare(struct workqueue_struct *wq,
 		goto out_free;
 
 	for_each_node(node) {
+	//是否使用default pool wq ,根据该node的cpu情况以及workqueue attribute中的cpumask成员来更新tmp_attrs->cpumask
 		if (wq_calc_node_cpumask(new_attrs, node, -1, tmp_attrs->cpumask)) {
 			ctx->pwq_tbl[node] = alloc_unbound_pwq(wq, tmp_attrs);
 			if (!ctx->pwq_tbl[node])
@@ -3776,14 +3781,14 @@ out_unlock:
 
 static int alloc_and_link_pwqs(struct workqueue_struct *wq)
 {
-	bool highpri = wq->flags & WQ_HIGHPRI;
+	bool highpri = wq->flags & WQ_HIGHPRI;  //normal or high priority？
 	int cpu, ret;
 
 	if (!(wq->flags & WQ_UNBOUND)) {
-		wq->cpu_pwqs = alloc_percpu(struct pool_workqueue);
+		wq->cpu_pwqs = alloc_percpu(struct pool_workqueue); //per cpu workqueue的处理 
 		if (!wq->cpu_pwqs)
 			return -ENOMEM;
-
+		//逐个cpu进行设定 
 		for_each_possible_cpu(cpu) {
 			struct pool_workqueue *pwq =
 				per_cpu_ptr(wq->cpu_pwqs, cpu);
@@ -3793,11 +3798,12 @@ static int alloc_and_link_pwqs(struct workqueue_struct *wq)
 			init_pwq(pwq, wq, &cpu_pools[highpri]);
 
 			mutex_lock(&wq->mutex);
+			//上面两行代码用来建立workqueue、pool wq和thread pool之间的关系 
 			link_pwq(pwq);
 			mutex_unlock(&wq->mutex);
 		}
 		return 0;
-	} else if (wq->flags & __WQ_ORDERED) {
+	} else if (wq->flags & __WQ_ORDERED) { //ordered unbound workqueue的处理 
 		ret = apply_workqueue_attrs(wq, ordered_wq_attrs[highpri]);
 		/* there should only be single pwq for ordering guarantee */
 		WARN(!ret && (wq->pwqs.next != &wq->dfl_pwq->pwqs_node ||
@@ -3805,6 +3811,7 @@ static int alloc_and_link_pwqs(struct workqueue_struct *wq)
 		     "ordering guarantee broken for workqueue %s\n", wq->name);
 		return ret;
 	} else {
+		//unbound workqueue的处理 
 		return apply_workqueue_attrs(wq, unbound_std_wq_attrs[highpri]);
 	}
 }
@@ -3839,10 +3846,12 @@ struct workqueue_struct *__alloc_workqueue_key(const char *fmt,
 	 * workqueue, keep the previous behavior to avoid subtle breakages
 	 * on NUMA.
 	 */
+	 //如果设置了 WQ_UNBOUND 且 max_active == 1，设置 __WQ_ORDERED(严格串行执行)
 	if ((flags & WQ_UNBOUND) && max_active == 1)
 		flags |= __WQ_ORDERED;
 
 	/* see the comment above the definition of WQ_POWER_EFFICIENT */
+	// 如果设置了 WQ_POWER_EFFICIENT 且开启了 CONFIG_WQ_POWER_EFFICIENT_DEFAULT ，设置 WQ_UNBOUND(不绑定 CPU)
 	if ((flags & WQ_POWER_EFFICIENT) && wq_power_efficient)
 		flags |= WQ_UNBOUND;
 
@@ -3853,7 +3862,7 @@ struct workqueue_struct *__alloc_workqueue_key(const char *fmt,
 	wq = kzalloc(sizeof(*wq) + tbl_size, GFP_KERNEL);
 	if (!wq)
 		return NULL;
-
+	//如果是 unbound workqueue，由于属性较多，专门使用 workqueue_attrs 来存放，这里进行初始化
 	if (flags & WQ_UNBOUND) {
 		wq->unbound_attrs = alloc_workqueue_attrs(GFP_KERNEL);
 		if (!wq->unbound_attrs)
@@ -3879,7 +3888,7 @@ struct workqueue_struct *__alloc_workqueue_key(const char *fmt,
 
 	lockdep_init_map(&wq->lockdep_map, lock_name, key, 0);
 	INIT_LIST_HEAD(&wq->list);
-
+	// 创建相应数目的 pool_workqueue ，用作连接 worker pool 的桥梁
 	if (alloc_and_link_pwqs(wq) < 0)
 		goto err_free_wq;
 

@@ -2460,19 +2460,21 @@ void wake_up_new_task(struct task_struct *p)
 	 *  - any previously selected cpu might disappear through hotplug
 	 */
 	 /* 为进程选择一个合适的CPU */
+//通过调用select_task_rq()函数重新选择cpu，通过调用调度类中select_task_rq方法选择调度类中最空闲的cpu。
 	set_task_cpu(p, select_task_rq(p, task_cpu(p), SD_BALANCE_FORK, 0));
 #endif
 	/* 上锁 */
 
 	rq = __task_rq_lock(p);
 	/* 将进程加入到CPU的运行队列 */
-
+	//将进程加入就绪队列，通过调用调度类中enqueue_task方法。
 	activate_task(rq, p, 0); //->enqueue_task
 	/* 标记进程p处于队列中 */
 	p->on_rq = TASK_ON_RQ_QUEUED;
 	/* 跟调试有关 */
 	trace_sched_wakeup_new(p);
 	/* 检查是否需要切换当前进程 */
+	//既然新进程已经准备就绪，那么此时需要检查新进程是否满足抢占当前正在运行进程的条件，如果满足抢占条件需要设置TIF_NEED_RESCHED标志位。
 	check_preempt_curr(rq, p, WF_FORK);
 #ifdef CONFIG_SMP
 	if (p->sched_class->task_woken) {

@@ -98,8 +98,11 @@ enum {
 };
 
 struct work_struct {
+	//work 的数据，包括 flags、所处 pool_workqueue 等
 	atomic_long_t data;
+	//entry 用来加入到 workqueue,实际上是 worker pool中的 work 链表
 	struct list_head entry;
+	//相应的函数指针
 	work_func_t func;
 #ifdef CONFIG_LOCKDEP
 	struct lockdep_map lockdep_map;
