@@ -21,27 +21,34 @@ union inet_addr {
 };
 
 struct netpoll {
+	//netpoll 实例所绑定的网络设备，通过该网络设备接收和发送报文。
 	struct net_device *dev;
+	//Netpoll 实例所绑定的网络设备名，如“eth0”
 	char dev_name[IFNAMSIZ];
+	//“netpoll 实例名，比如 netconsole"
 	const char *name;
-
+	//本机及远端 IP 地址
 	union inet_addr local_ip, remote_ip;
 	bool ipv6;
+	//本地及远端 UDP 端口号
 	u16 local_port, remote_port;
+	//远端 mac 地址
 	u8 remote_mac[ETH_ALEN];
 
 	struct work_struct cleanup_work;
 };
 
 struct netpoll_info {
+	//引用计数
 	atomic_t refcnt;
-
+//并发访问锁，以确保同时刻只有一个 CPU 调用网络设备的 poll 接口进行轮询操作
 	struct semaphore dev_lock;
-
+//如果 netpoll 输出调用 netpollsend_skb（）没有能成功输出数据包或者设备
+//繁忙，则将待输出报文缓存到 txq 队列中，待 tx_ work 工作队列再尝试将它们输出。
 	struct sk_buff_head txq;
 
 	struct delayed_work tx_work;
-
+	//实际进行收发的 netpoll
 	struct netpoll *netpoll;
 	struct rcu_head rcu;
 };

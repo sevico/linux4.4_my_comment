@@ -400,15 +400,15 @@ void netpoll_send_udp(struct netpoll *np, const char *msg, int len)
 		ip_len = udp_len + sizeof(*iph);
 
 	total_len = ip_len + LL_RESERVED_SPACE(np->dev);
-
+//根据待发送数据的长度分配 SKB.
 	skb = find_skb(np, total_len + np->dev->needed_tailroom,
 		       total_len - len);
 	if (!skb)
 		return;
-
+	//将待发送的数据复制到 UDP 数据报中
 	skb_copy_to_linear_data(skb, msg, len);
 	skb_put(skb, len);
-
+	//设置 UDP 数据报首部中的各个域，包括源、目的端口、长度等
 	skb_push(skb, sizeof(*udph));
 	skb_reset_transport_header(skb);
 	udph = udp_hdr(skb);
@@ -458,6 +458,7 @@ void netpoll_send_udp(struct netpoll *np, const char *msg, int len)
 		iph = ip_hdr(skb);
 
 		/* iph->version = 4; iph->ihl = 5; */
+		//设置 IP 数据报首部中的各个域，包括 tos、id 等。
 		put_unaligned(0x45, (unsigned char *)iph);
 		iph->tos      = 0;
 		put_unaligned(htons(ip_len), &(iph->tot_len));
@@ -474,12 +475,12 @@ void netpoll_send_udp(struct netpoll *np, const char *msg, int len)
 		skb_reset_mac_header(skb);
 		skb->protocol = eth->h_proto = htons(ETH_P_IP);
 	}
-
+	//设置以太网帧首部中的各个域，包括源、目的硬件地址等
 	ether_addr_copy(eth->h_source, np->dev->dev_addr);
 	ether_addr_copy(eth->h_dest, np->remote_mac);
-
+	//设置输出 UDP 数据报的网络设备
 	skb->dev = np->dev;
-
+	//完成构建 UDP 数据报后调用 netpoll send skb输出 UDP 数据报
 	netpoll_send_skb(np, skb);
 }
 EXPORT_SYMBOL(netpoll_send_udp);
@@ -648,6 +649,7 @@ int __netpoll_setup(struct netpoll *np, struct net_device *ndev)
 	npinfo->netpoll = np;
 
 	/* last thing to do is link it to the net device structure */
+	//将 netpoll 信息块绑定到网络设备上
 	rcu_assign_pointer(ndev->npinfo, npinfo);
 
 	return 0;
@@ -666,6 +668,11 @@ int netpoll_setup(struct netpoll *np)
 	int err;
 
 	rtnl_lock();
+	/*
+	根据指定的网络名获取对应的网络设备。如果找到指定的网络设备，
+	则将其与 netpoll 实例相关联，否则无法注册 netpoll 实例，
+	打印错误信息后返回错误码。
+	*/
 	if (np->dev_name) {
 		struct net *net = current->nsproxy->net_ns;
 		ndev = __dev_get_by_name(net, np->dev_name);
@@ -682,7 +689,7 @@ int netpoll_setup(struct netpoll *np)
 		err = -EBUSY;
 		goto put;
 	}
-
+	//如果网络设备还未启动，则启动之
 	if (!netif_running(ndev)) {
 		unsigned long atmost, atleast;
 
@@ -696,6 +703,7 @@ int netpoll_setup(struct netpoll *np)
 		}
 
 		rtnl_unlock();
+		//如果网络设备当前不能传输数据包，则需等待，直到网络设备可以传输数据包或者等待时间达到 4 s 为止
 		atleast = jiffies + HZ/10;
 		atmost = jiffies + carrier_timeout * HZ;
 		while (!netif_carrier_ok(ndev)) {
@@ -710,14 +718,14 @@ int netpoll_setup(struct netpoll *np)
 		 * trust it and pause so that we don't pump all our
 		 * queued console messages into the bitbucket.
 		 */
-
+//在打开网络设备后的很短时间内：(0.1 s）就发现网络设备可传输数据包，这是不可信的，需等待 4 s，以确保网络设备真正可传输数据包。
 		if (time_before(jiffies, atleast)) {
 			np_notice(np, "carrier detect appears untrustworthy, waiting 4 seconds\n");
 			msleep(4000);
 		}
 		rtnl_lock();
 	}
-
+//如果待注册 netpoll 实例未设置本地 IP 地址，则从网络设备 IP 配置块中获取
 	if (!np->local_ip.ip) {
 		if (!np->ipv6) {
 			in_dev = __in_dev_get_rtnl(ndev);
@@ -765,7 +773,10 @@ int netpoll_setup(struct netpoll *np)
 		}
 	}
 
-	/* fill up the skb queue */
+	/* fill up the skb queue 
+	为发送 UDP 和 ARP 应答报文，创建 SKB 的缓存区。发送报文时，如果分配 SKB 失败，
+	则从 SKB 的缓存区中直接获取。
+	*/
 	refill_skbs();
 
 	err = __netpoll_setup(np, ndev);

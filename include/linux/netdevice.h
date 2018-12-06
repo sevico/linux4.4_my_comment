@@ -2062,13 +2062,22 @@ struct packet_type {
 	__be16			type;	/* This is really htons(ether_type). */
 	/* NULL在这里表示通配符 */
 	struct net_device	*dev;	/* NULL is wildcarded here	     */
+	/*
+	协议入口接收处理函数。第一个参数为待输入的报文，第二个参数为当前处理该报文的网络设备，
+	第三个参数为报文类型，第四个参数为报文的原始输入网络设备。
+	通常情况下当前处理该报文的网络设备与报文的原始输入网络设备是同一个网络设备，
+	但在某些情况会是不同的网络设备（例如，启用了 bonding 来实现负载均衡和失效保护,
+	此时，原始的输入设备为物理网络设备，而当前处理该报文的网络设备是虚拟网络设备。
+	*/
 	int			(*func) (struct sk_buff *,
 					 struct net_device *,
 					 struct packet_type *,
 					 struct net_device *);
 	bool			(*id_match)(struct packet_type *ptype,
 					    struct sock *sk);
+	//用来存储各协议族的私有数据，在原始套接口中，用于标识是原始套接口的传输控制块。
 	void			*af_packet_priv;
+	//链接不同协议族报文接收例程的链表
 	struct list_head	list;
 };
 

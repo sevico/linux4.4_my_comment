@@ -1881,6 +1881,7 @@ again:
 		}
 
 		/* need to clone skb, done only once */
+		//由于该数据包是额外输入到这个原始套接口的，因此需要克隆一个数据包。
 		skb2 = skb_clone(skb, GFP_ATOMIC);
 		if (!skb2)
 			goto out_unlock;
@@ -1891,6 +1892,7 @@ again:
 		 * set by sender, so that the second statement is
 		 * just protection against buggy protocols.
 		 */
+		 //检验数据包是否有效
 		skb_reset_mac_header(skb2);
 
 		if (skb_network_header(skb2) < skb2->data ||
@@ -4026,6 +4028,10 @@ ncls:
 		skb->vlan_tci = 0;
 	}
 	  /* 根据数据包的类型，遍历对应的处理函数 */
+	/*
+	遍历 ptype_base 散列表，通过接收到报文的传输层协议类型得到与之对应的报文接收例程，
+	然后调用该例程接收报文。
+	*/
 	type = skb->protocol;
 
 	/* deliver only exact match when indicated */
@@ -7551,7 +7557,11 @@ out:
 	return err;
 }
 EXPORT_SYMBOL_GPL(dev_change_net_namespace);
-
+/*
+nfb，包括用来响应 CPU 状态变化回调函数的信息块。
+action，状态发生变化的 CPU 的当前状态。
+ocpu，状态发生变化的 CPU。
+*/
 static int dev_cpu_callback(struct notifier_block *nfb,
 			    unsigned long action,
 			    void *ocpu)
@@ -7560,16 +7570,18 @@ static int dev_cpu_callback(struct notifier_block *nfb,
 	struct sk_buff *skb;
 	unsigned int cpu, oldcpu = (unsigned long)ocpu;
 	struct softnet_data *sd, *oldsd;
-
+//只处理 CPU_ DEAD 状态，处于该状态的 CPU 已不能再处理其 sofnet_ data 上的相关队列了，因此需作相应的处理。
 	if (action != CPU_DEAD && action != CPU_DEAD_FROZEN)
 		return NOTIFY_OK;
 
 	local_irq_disable();
+	//获取状态发生变化 CPU 的 softnet_data 以及当前 CPU 的 softnet_data
 	cpu = smp_processor_id();
 	sd = &per_cpu(softnet_data, cpu);
 	oldsd = &per_cpu(softnet_data, oldcpu);
 
 	/* Find end of our completion_queue. */
+	//将状态发生变化 CPU 的 completion_queue 队列中的报文转移到当前 CPU 的 completion_queue 队列。
 	list_skb = &sd->completion_queue;
 	while (*list_skb)
 		list_skb = &(*list_skb)->next;
@@ -7578,6 +7590,7 @@ static int dev_cpu_callback(struct notifier_block *nfb,
 	oldsd->completion_queue = NULL;
 
 	/* Append output queue from offline CPU. */
+	//将状态发生变化 CPU 的 output_ queue 队列中的报文转移到当前 CPU 的 output_ queue 队列。
 	if (oldsd->output_queue) {
 		*sd->output_queue_tailp = oldsd->output_queue;
 		sd->output_queue_tailp = oldsd->output_queue_tailp;
@@ -7599,7 +7612,7 @@ static int dev_cpu_callback(struct notifier_block *nfb,
 		else
 			____napi_schedule(sd, napi);
 	}
-
+	//经过以上操作，当前 CPU 的 softnet_data 中可能存在完成输出和等待输出的报文因此再次激活数据包输出软中断，以便释放完成输出的报文，输出等待发送的报文。
 	raise_softirq_irqoff(NET_TX_SOFTIRQ);
 	local_irq_enable();
 
@@ -7608,6 +7621,7 @@ static int dev_cpu_callback(struct notifier_block *nfb,
 		netif_rx_ni(skb);
 		input_queue_head_incr(oldsd);
 	}
+	//最后处理状态发生变化 CPU 的 input_pkt_queue 队列，将队列上的报文输入到上层协议。
 	while ((skb = skb_dequeue(&oldsd->input_pkt_queue))) {
 		netif_rx_ni(skb);
 		input_queue_head_incr(oldsd);
