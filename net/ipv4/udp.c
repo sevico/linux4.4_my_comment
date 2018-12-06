@@ -925,6 +925,11 @@ int udp_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 	u8  tos;
 	int err, is_udplite = IS_UDPLITE(sk);
 	/* 是否有数据包聚合：或者UDP套接字设置了聚合选项，或者数据包消息指明了还有更多数据 */
+	/**
+	 * 局部标志corkreq的初始化取决于多个因素，而此标志会传给ip_append_data，用于指出是否应该使用缓冲区机制。其中一些因素是：
+	 *		MSG_MORE：				此标志可以在每次传输请求时单独设定或清除。
+	 *		corkflag（UDP_CORE）：	这个标志只会对套接字设定一次，然后一直保持不变，直到显式的被关闭为止。
+	 */
 	int corkreq = up->corkflag || msg->msg_flags&MSG_MORE;
 	int (*getfrag)(void *, char *, int, int, int, struct sk_buff *);
 	struct sk_buff *skb;
@@ -963,16 +968,19 @@ int udp_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 				return -EINVAL;
 			}
 			 /* 调到追加数据处 */
+			 /* 确实在输出数据，跳转到do_append_data直接处理UDP数据 */
 			goto do_append_data;
 		}
 		release_sock(sk);
 	}
+	/* 计算UDP报文总长度 */
 	ulen += sizeof(struct udphdr);
 
 	/*
 	 *	Get and verify the address.
 	 */
 	 /* 若指定了目标地址，则对其进行校验 */
+	/* 处理msg中带有目的地址的情况，即应用程序通过sendto调用本函数 */
 	if (msg->msg_name) {
 		DECLARE_SOCKADDR(struct sockaddr_in *, usin, msg->msg_name);
 		/* 检查长度 */
@@ -984,6 +992,7 @@ int udp_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 				return -EAFNOSUPPORT;
 		}
 		 /* 若通过了检查，则设置目的地址与目的端口 */
+		/* 缓存目的地址和端口 */
 		daddr = usin->sin_addr.s_addr;
 		dport = usin->sin_port;
 		if (dport == 0)
@@ -998,7 +1007,7 @@ int udp_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 		/* Open fast path for connected socket.
 		   Route will not be used, if at least one option is set.
 		 */
-		connected = 1;
+		connected = 1;/* 后续处理路由时用 */
 	}
 	ipc.addr = inet->inet_saddr;
 
@@ -1009,6 +1018,7 @@ int udp_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 
 	if (msg->msg_controllen) {
 		 /* 虽然这个函数的名字叫作send，其实并没有任何发送动作，而只是将控制消息设置到ipc中 */
+	/* 处理控制信息，如IP选项，源地址和源设备索引 */
 		err = ip_cmsg_send(sock_net(sk), msg, &ipc,
 				   sk->sk_family == AF_INET6);
 		if (unlikely(err)) {
@@ -1016,12 +1026,14 @@ int udp_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 			return err;
 		}
 		 /* 设置释放ipc.opt的标志 */
+		/* 有选项信息，则设置free标志，表示选项是在ip_cmsg_send中分配的 */
 		if (ipc.opt)
 			free = 1;
 		connected = 0;
 	}
 	if (!ipc.opt) {
 		 /* 如果没有使用控制消息指定IP选项，则检查套接字的IP选项设置。如果有，则使用套接字的IP选项 */
+	/* 没有指定选项，则使用套接口结构中的选项，它是用IP_OPTIONS套接口选项设置的 */
 		struct ip_options_rcu *inet_opt;
 
 		rcu_read_lock();
@@ -1037,11 +1049,13 @@ int udp_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 	saddr = ipc.addr;
 	ipc.addr = faddr = daddr;
 	/* 设置了严格路由 */
+	 /* 指定了选路信息 */
 	if (ipc.opt && ipc.opt->opt.srr) {
 		if (!daddr) {
 			err = -EINVAL;
 			goto out_free;
 		}
+		/* 目的地址应当是第一个源路由 */
 		faddr = ipc.opt->opt.faddr;
 		connected = 0;
 	}
@@ -1053,28 +1067,35 @@ int udp_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 3）设置了IP严格路由选项。
 则设置不查找路由标志
 */
+	/* 如果设置了SO_DONTROUTE或者发送时设置了MSG_DONTROUTE */
+	/* 或者设置了严格源站选路 */
+
 	if (sock_flag(sk, SOCK_LOCALROUTE) ||
 	    (msg->msg_flags & MSG_DONTROUTE) ||
 	    (ipc.opt && ipc.opt->opt.is_strictroute)) {
-		tos |= RTO_ONLINK;
+		tos |= RTO_ONLINK;/* 此标志表示下一站必定位于本地子网 */
 		connected = 0;
 	}
 	 /* 如果目的地址是多播地址 */
+		// 看是不是组播地址
 	if (ipv4_is_multicast(daddr)) {
 		/* 若未指定出口接口，则使用套接字的多播接口索引 */
+	/* 没有指定组播输出网络设备，则使用IP_MULTICAST_IF选项设置的默认组播设备 */
 		if (!ipc.oif)
 			ipc.oif = inet->mc_index;
 		/* 若源地址为0，则使用套接字的多播地址 */
 		if (!saddr)
 			saddr = inet->mc_addr;
-		connected = 0;
+		connected = 0;/* 由于是组播报文，因此需要在路由表中查找路由 */
 	} else if (!ipc.oif)
 		ipc.oif = inet->uc_index;
 	/* 连接标志为真，即此次发送的数据包与上次的地址相同，则判断保存的路由缓存是否还可用。*/
 	if (connected)
 		 /* 从套接字检查并获得保存的路由缓存 */
+	/* 获取路由缓存项 */
 		rt = (struct rtable *)sk_dst_check(sk, 0);
 	 /* 若目前路由缓存为空，则需要查找路由 */
+	// 对于未建立连接的UDP套接口，或者指定了控制信息，或者是组播报文
 	if (!rt) {
 		struct net *net = sock_net(sk);
 		__u8 flow_flags = inet_sk_flowi_flags(sk);
@@ -1094,6 +1115,7 @@ int udp_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 
 		security_sk_classify_flow(sk, flowi4_to_flowi(fl4));
 		 /* 查找出口路由 */
+		/* 在路由表中查询路由 */
 		rt = ip_route_output_flow(net, fl4, sk);
 		if (IS_ERR(rt)) {
 			//查找路由失败
@@ -1106,15 +1128,19 @@ int udp_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 
 		err = -EACCES;
 		 /* 若路由是广播路由，并且套接字非广播套接字 */
+		/* 广播地址，但是不允许进行广播，退出 */
 		if ((rt->rt_flags & RTCF_BROADCAST) &&
 		    !sock_flag(sk, SOCK_BROADCAST))
 			goto out;
+		/* 如果已经调用了connect，则缓存本次查询到的路由 */
 		if (connected)
 			/* 若该UDP为已连接状态，则保存这个路由缓存 */
 			sk_dst_set(sk, dst_clone(&rt->dst));
 	}
 /* 如果数据包设置了MSG_CONFIRM标志，则是要告诉链路层，对端是可达的。调到do_confrim处，可
 以发现其实现方法是在有neibour信息的情况下，直接更新neibour确认时间戳为当前时间。 */
+	/* 用户层确认路径 */
+
 	if (msg->msg_flags&MSG_CONFIRM)
 		goto do_confirm;
 back_from_confirm:

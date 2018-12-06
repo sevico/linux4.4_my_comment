@@ -21,9 +21,13 @@ struct ipv4_devconf {
 #define MC_HASH_SZ_LOG 9
 
 struct in_device {
+//所属的网络设备
 	struct net_device	*dev;
+	//引用计数
 	atomic_t		refcnt;
+	//为1时表示所在的IP块将要被释放，不再允许访问其成员
 	int			dead;
+	//链接了网络设备中的多个IP地址
 	struct in_ifaddr	*ifa_list;	/* IP ifaddr chain		*/
 
 	struct ip_mc_list __rcu	*mc_list;	/* IP multicast filter chain    */
@@ -131,16 +135,27 @@ static inline void ipv4_devconf_setall(struct in_device *in_dev)
 
 struct in_ifaddr {
 	struct hlist_node	hash;
+	//一个网络设备的多个IP地址块用ifa_next构成链表
 	struct in_ifaddr	*ifa_next;
+	//指向所属的IP配置块
 	struct in_device	*ifa_dev;
+	//RCU机制释放
 	struct rcu_head		rcu_head;
+	//以下两个字段均用来存储IP地址：
+	//在配置了之处广播的设备上，ifa_local和ifa_address是一样的，都是本地IP地址
+	//如果是点对点，则ifa_address存储点对点的IP地址，而ifa_local存储本地IP地址
 	__be32			ifa_local;
 	__be32			ifa_address;
+	//IP子网掩码
 	__be32			ifa_mask;
+	//网络设备的广播地址
 	__be32			ifa_broadcast;
+	//寻址范围
 	unsigned char		ifa_scope;
+	//子网掩码长度
 	unsigned char		ifa_prefixlen;
 	__u32			ifa_flags;
+	//地址标签，通常是网络设备名或网络设备别名
 	char			ifa_label[IFNAMSIZ];
 
 	/* In seconds, relative to tstamp. Expiry is at tstamp + HZ * lft. */

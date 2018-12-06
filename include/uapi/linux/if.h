@@ -227,22 +227,39 @@ struct ifreq {
 #define IFHWADDRLEN	6
 	union
 	{
+		//网络设备名。在执行SIOCGIFNAME命令时，存储获得的网络设备名；
+		//而在执行其他命令时，存储指定的网络设备名，由该网络设备名得到对应的网络设备
 		char	ifrn_name[IFNAMSIZ];		/* if name, e.g. "en0" */
 	} ifr_ifrn;
 	
 	union {
+		//用来获取和设置指定网络设备的广播地址、点对点对端地址、本地地址以及网络掩码
 		struct	sockaddr ifru_addr;
+		//原本用来获取和设置点对点对端的地址，目前尚未使用
 		struct	sockaddr ifru_dstaddr;
+		//原本用来获取和设置网络设备广播地址，目前尚未使用
 		struct	sockaddr ifru_broadaddr;
+		//原本用来获取和设置网络掩码，目前尚未使用
 		struct	sockaddr ifru_netmask;
+		//用来获取和设置网络设备的硬件地址
 		struct  sockaddr ifru_hwaddr;
+		//用来获取和设置网络设备的标志
 		short	ifru_flags;
+		//在通过ioctl获取/设置网络设备的属性等操作时，表示网络设备的索引号、网络设备
+		//输出队列的长度
 		int	ifru_ivalue;
+		//用来获取和设置网络的MTU
 		int	ifru_mtu;
+		//用来获取和设置网络设备的硬件参数，与net_device结构的mem_start
+		//mem_end,base_addr,irq,dma以及if_port成员一一对应
 		struct  ifmap ifru_map;
+		//目前未使用
 		char	ifru_slave[IFNAMSIZ];	/* Just fits the size */
+		//用于设置网络设备的新名称
 		char	ifru_newname[IFNAMSIZ];
+		//在执行SIOCETHTOOL命令时，根据不同的子命令对应不同的结构，参考dev_ethtool
 		void __user *	ifru_data;
+		//用来设置相关设备及协议，如高级数据链路控制(HDLC)等
 		struct	if_settings ifru_settings;
 	} ifr_ifru;
 };

@@ -262,8 +262,9 @@ static int dev_ifsioc(struct net *net, struct ifreq *ifr, unsigned int cmd)
 		return dev_set_mtu(dev, ifr->ifr_mtu);
 
 	case SIOCSIFHWADDR:
+		//设置指定设备的硬件地址
 		return dev_set_mac_address(dev, &ifr->ifr_hwaddr);
-
+	//获取，添加或删除指定网络设备的硬件广播地址。
 	case SIOCSIFHWBROADCAST:
 		if (ifr->ifr_hwaddr.sa_family != dev->type)
 			return -EINVAL;
@@ -274,13 +275,15 @@ static int dev_ifsioc(struct net *net, struct ifreq *ifr, unsigned int cmd)
 		return 0;
 
 	case SIOCSIFMAP:
+		//设置接口的硬件参数，包括网络设备所使用的共享内存的起始/终止地址，网络接口的
+		//IO基地址，分配给设备的中断号，分配给设备的DMA通道以及在多端口设备上指定的端口
 		if (ops->ndo_set_config) {
 			if (!netif_device_present(dev))
 				return -ENODEV;
 			return ops->ndo_set_config(dev, &ifr->ifr_map);
 		}
 		return -EOPNOTSUPP;
-
+	//添加指定网络设备的组播过滤器，只有组播地址在这些指定值中的组播报文才接收
 	case SIOCADDMULTI:
 		if (!ops->ndo_set_rx_mode ||
 		    ifr->ifr_hwaddr.sa_family != AF_UNSPEC)
@@ -298,11 +301,12 @@ static int dev_ifsioc(struct net *net, struct ifreq *ifr, unsigned int cmd)
 		return dev_mc_del_global(dev, ifr->ifr_hwaddr.sa_data);
 
 	case SIOCSIFTXQLEN:
+		//设置指定网络设备的传输队列长度
 		if (ifr->ifr_qlen < 0)
 			return -EINVAL;
 		dev->tx_queue_len = ifr->ifr_qlen;
 		return 0;
-
+	//设置网络设备的接口名
 	case SIOCSIFNAME:
 		ifr->ifr_newname[IFNAMSIZ-1] = '\0';
 		return dev_change_name(dev, ifr->ifr_newname);

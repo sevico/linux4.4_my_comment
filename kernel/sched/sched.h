@@ -246,16 +246,27 @@ struct task_group {
 #ifdef CONFIG_FAIR_GROUP_SCHED
 	/* CFS调度器的进程组变量，在 alloc_fair_sched_group() 中进程初始化及分配内存 */
 	/* 该进程组在每个CPU上都有对应的一个调度实体，因为有可能此进程组同时在两个CPU上运行(它的A进程在CPU0上运行，B进程在CPU1上运行) */
-
+	/*
+	指针数组，数组大小等于CPU数量。现在假设只有一个CPU的系统。
+	我们将一个用户组也用一个调度实体代替，插入对应的红黑树。
+	例如，上面用户组A和用户组B就是两个调度实体se，挂在顶层的就绪队列cfs_rq中。
+	用户组A管理9个可运行的进程，这9个调度实体se作为用户组A调度实体的child。
+	通过se->parent成员建立关系。用户组A也维护一个就绪队列cfs_rq，暂且称之为group cfs_rq，管理的9个进程的调度实体挂在group cfs_rq上。
+	当我们选择进程运行的时候，首先从根就绪队列cfs_rq上选择用户组A，再从用户组A的group cfs_rq上选择其中一个进程运行。
+	现在考虑多核CPU的情况，用户组中的进程可以在多个CPU上运行。因此，我们需要CPU个数的调度实体se，分别挂在每个CPU的根cfs_rq上。
+	*/
 	/* schedulable entities of this group on each cpu */
 	struct sched_entity **se;
 	/* runqueue "owned" by this group on each cpu */
 	/* 进程组在每个CPU上都有一个CFS运行队列(为什么需要，稍后解释) */
+	//上面提到的group cfs_rq，同样是指针数组，大小是CPU的数量。因为每一个CPU上都可以运行进程，因此需要维护CPU个数的group cfs_rq。
 	struct cfs_rq **cfs_rq;
 	/* 用于保存优先级默认为NICE 0的优先级 */
+	//调度实体有权重的概念，以权重的比例分配CPU时间。用户组同样有权重的概念，share就是task_group的权重。
 	unsigned long shares;
 
 #ifdef	CONFIG_SMP
+//整个用户组的负载贡献总和。
 	atomic_long_t load_avg;
 #endif
 #endif
@@ -1331,6 +1342,7 @@ struct sched_class {
 
 static inline void put_prev_task(struct rq *rq, struct task_struct *prev)
 {
+//put_prev_task_fair
 	prev->sched_class->put_prev_task(rq, prev);
 }
 

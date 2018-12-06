@@ -1311,7 +1311,7 @@ static int __dev_open(struct net_device *dev)
 	int ret;
 
 	ASSERT_RTNL();
-
+	//如果设备被挂起，则不激活
 	if (!netif_device_present(dev))
 		return -ENODEV;
 
@@ -1341,6 +1341,7 @@ static int __dev_open(struct net_device *dev)
 	else {
 		dev->flags |= IFF_UP;
 		dev_set_rx_mode(dev);
+		//初始化用于流量排队的规则
 		dev_activate(dev);
 		add_device_randomness(dev->dev_addr, dev->addr_len);
 	}
@@ -3556,8 +3557,11 @@ static int enqueue_to_backlog(struct sk_buff *skb, int cpu,
 	rps_lock(sd);
 	if (!netif_running(skb->dev))
 		goto drop;
+	//如果链路层队列未满，则将报文加入队列，否则说明上层处理严重阻塞，丢弃该报文
 	qlen = skb_queue_len(&sd->input_pkt_queue);
 	if (qlen <= netdev_max_backlog && !skb_flow_limit(skb, qlen)) {
+		//输入队列不为空，说明该队列由于数据包较多需等待下次软中断处理
+		//因此只需将该数据包加入输入队列即可
 		if (qlen) {
 enqueue:
 			__skb_queue_tail(&sd->input_pkt_queue, skb);
@@ -3570,6 +3574,9 @@ enqueue:
 		/* Schedule NAPI for backlog device
 		 * We can use non atomic operation since we own the queue lock
 		 */
+		 //输入队列为空，说明该队列没有被软中断处理过，因此将数据包添加到输入
+		 //队列，并将虚拟网络设备backlog_dev添加到网络设备轮询队列，最后激活包输入软中断。
+		 //在数据包输入软中断处理例程中，会调用backlog_dev的轮询函数process_backlog(),最终将报文传递到上层协议
 		if (!__test_and_set_bit(NAPI_STATE_SCHED, &sd->backlog.state)) {
 			if (!rps_ipi_queued(sd))
 				____napi_schedule(sd, &sd->backlog);
@@ -3578,6 +3585,7 @@ enqueue:
 	}
 
 drop:
+//如果接口层缓存队列已满，则丢弃接受到的报文，同时更新挡墙CPU接口层丢弃报文数
 	sd->dropped++;
 	rps_unlock(sd);
 
@@ -4679,6 +4687,7 @@ static int process_backlog(struct napi_struct *napi, int quota)
 			rcu_read_unlock();
 			local_irq_disable();
 			input_queue_head_incr(sd);
+			//统计本次读取的报文数，用于之后更新网络设备的读取报文配额
 			if (++work >= quota) {
 				local_irq_enable();
 				return work;
@@ -4970,6 +4979,7 @@ static void net_rx_action(struct softirq_action *h)
 	unsigned long time_limit = jiffies + 2;
 	/*    一次软中断最多处理的包个数。
 	netdev_budget的值为/proc/sys/net/core/netdev_budget    */
+	//获取本次软中断的接收报文配额
 	int budget = netdev_budget;
 	LIST_HEAD(list);
 	LIST_HEAD(repoll);
@@ -7880,14 +7890,16 @@ static int __init net_dev_init(void)
 	int i, rc = -ENOMEM;
 
 	BUG_ON(!dev_boot_phase);
-
+	//注册接口层用于显示网络设备收发数据包统计信息的/proc/net/dev文件，
+	//以及用于显示每个CPU的softnet_stat统计信息的/proc/net/softnet_stat文件
 	if (dev_proc_init())
 		goto out;
-
+	//为网络设备创建sys文件系统
 	if (netdev_kobject_init())
 		goto out;
-
+	//初始化ptype_all链表
 	INIT_LIST_HEAD(&ptype_all);
+	//初始化ptype_base散列表
 	for (i = 0; i < PTYPE_HASH_SIZE; i++)
 		INIT_LIST_HEAD(&ptype_base[i]);
 
@@ -7899,7 +7911,7 @@ static int __init net_dev_init(void)
 	/*
 	 *	Initialise the packet receive queues.
 	 */
-
+//初始化每个CPU的softnet_data,包括完成发送数据包的等待释放队列，以及非NAPI驱动的输入队列，轮询函数
 	for_each_possible_cpu(i) {
 		struct softnet_data *sd = &per_cpu(softnet_data, i);
 
@@ -7933,10 +7945,10 @@ static int __init net_dev_init(void)
 
 	if (register_pernet_device(&default_device_ops))
 		goto out;
-
+	//注册网络报文输入输出软中断极其例程
 	open_softirq(NET_TX_SOFTIRQ, net_tx_action);
 	open_softirq(NET_RX_SOFTIRQ, net_rx_action);
-
+	//注册响应CPU状态变化的回调函数。当CPU状态变化时，会调用dev_cpu_callback
 	hotcpu_notifier(dev_cpu_callback, 0);
 	dst_subsys_init();
 	rc = 0;

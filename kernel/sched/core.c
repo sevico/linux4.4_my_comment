@@ -1038,9 +1038,17 @@ void check_preempt_curr(struct rq *rq, struct task_struct *p, int flags)
 	const struct sched_class *class;
 
 	if (p->sched_class == rq->curr->sched_class) {
+		/*
+		唤醒的进程和当前的进程同属于一个调度类，直接调用调度类的check_preempt_curr方法检查抢占条件。
+		毕竟调度器自己管理的进程，自己最清楚是否适合抢占当前进程。
+		*/
+		//check_preempt_wakeup
 		rq->curr->sched_class->check_preempt_curr(rq, p, flags);
 	} else {
-	　/*for_each_class，从高优先级的调度类到低优先级的调度类*/
+	　/*for_each_class，从高优先级的调度类到低优先级的调度类
+		如果唤醒的进程和当前进程不属于一个调度类，就需要比较调度类的优先级。
+		例如，当期进程是CFS调度类，唤醒的进程是RT调度类，自然实时进程是需要抢占当前进程的，因为优先级更高。
+		*/
 		for_each_class(class) {
 		 /*如果候选进程的调度类低于当前进程所属的调度类，就直接跳出。　
 		 不许低优先级的调度类抢占高优先级的调度类*/
@@ -2969,6 +2977,7 @@ void scheduler_tick(void)
 	raw_spin_lock(&rq->lock);
 	/* 更新该CPU的rq运行时间 */
 	update_rq_clock(rq);
+	//调用调度类对应的task_tick方法，针对CFS调度类该函数是task_tick_fair。
 	curr->sched_class->task_tick(rq, curr, 0);
 	/* 更新CPU的负载 */
 	update_cpu_load_active(rq);
@@ -2979,6 +2988,7 @@ void scheduler_tick(void)
 
 #ifdef CONFIG_SMP
 	rq->idle_balance = idle_cpu(cpu);
+	//触发负载均衡
 	trigger_load_balance(rq);
 #endif
 	rq_last_tick_reset(rq);
@@ -3271,6 +3281,7 @@ static void __sched notrace __schedule(bool preempt)
 		 /*先前的进程不再处于可执行状态，需要将其从运行队列中移除出去*/
 		 /* 没有信号挂起需要处理，会将此进程移除运行队列 */
 		/* 如果代码执行到此，说明当前进程要么准备退出，要么是处于即将睡眠状态 */
+		 //针对主动放弃cpu进入睡眠的进程，我们需要从对应的就绪队列上删除该进程。
 			deactivate_task(rq, prev, DEQUEUE_SLEEP);
 			prev->on_rq = 0;
 
@@ -3294,8 +3305,9 @@ static void __sched notrace __schedule(bool preempt)
 
 	if (task_on_rq_queued(prev))
 		update_rq_clock(rq);
-
+	//选择下个合适的进程开始运行，该函数前面已经分析过。
 	next = pick_next_task(rq, prev);  //从红黑树中挑选出下一个要运行的进程, 并将其设置为当前进程
+	//清除TIF_NEED_RESCHED flag。
 	clear_tsk_need_resched(prev); //清除需要调度的位  
 	clear_preempt_need_resched();
 	rq->clock_skip_update = 0;
@@ -3310,6 +3322,7 @@ static void __sched notrace __schedule(bool preempt)
 
 		trace_sched_switch(preempt, prev, next);
 		/* 这里进行了进程上下文的切换 */
+		//上下文切换，从prev进程切换到next进程。
 		rq = context_switch(rq, prev, next); /* unlocks the rq */
 		/* 新的进程有可能在其他CPU上运行，重新获取一次CPU和rq */
 		cpu = cpu_of(rq);

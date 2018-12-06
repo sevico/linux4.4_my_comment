@@ -2486,13 +2486,15 @@ static inline void skb_split_inside_header(struct sk_buff *skb,
 					   const u32 len, const int pos)
 {
 	int i;
+	// 这是个把sk_buff结构中有效数据拷贝到新的skb1中,pos为有效数据长度，len为要拷贝的长度，得：pos-len为要剩下的长度
+        // skb_put(skb1,pos-len)是移动tail指针让skb1结构数据区空出空间来存放将要拷贝的数据，该函数返回tail指针
 
 	skb_copy_from_linear_data_offset(skb, len, skb_put(skb1, pos - len),
 					 pos - len);
 	/* And move data appendix as is. */
 	for (i = 0; i < skb_shinfo(skb)->nr_frags; i++)
 		skb_shinfo(skb1)->frags[i] = skb_shinfo(skb)->frags[i];
-
+	//下面做的都是些成员字段拷贝赋值操作，并且设置skb的字段
 	skb_shinfo(skb1)->nr_frags = skb_shinfo(skb)->nr_frags;
 	skb_shinfo(skb)->nr_frags  = 0;
 	skb1->data_len		   = skb->data_len;
@@ -2549,15 +2551,17 @@ static inline void skb_split_no_header(struct sk_buff *skb,
  * @skb1: the buffer to receive the second part
  * @len: new length for skb
  */
+// skb为原来的skb结构体（将要被拆分的），skb1为拆分后得到的子skb，len为拆分后的skb的新长度
 void skb_split(struct sk_buff *skb, struct sk_buff *skb1, const u32 len)
 {
 	int pos = skb_headlen(skb);
 
 	skb_shinfo(skb1)->tx_flags |= skb_shinfo(skb)->tx_flags &
 				      SKBTX_SHARED_FRAG;
-	if (len < pos)	/* Split line is inside header. */
+	if (len < pos)	/* Split line is inside header. */// 该函数只拆分skb数据区中的数据
 		skb_split_inside_header(skb, skb1, len, pos);
-	else		/* Second chunk has no header, nothing to copy. */
+	else		/* Second chunk has no header, nothing to copy. */// 反之，如果拆分长度不小于skb数据区中的有效长度，则调用下面函数
+	// 拆分skb结构中的分片结构中数据区数据
 		skb_split_no_header(skb, skb1, len, pos);
 }
 EXPORT_SYMBOL(skb_split);

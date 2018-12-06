@@ -807,15 +807,16 @@ __mod_timer(struct timer_list *timer, unsigned long expires,
 	BUG_ON(!timer->function);
 
 	base = lock_timer_base(timer, &flags);
-
+	// 将 timer 从对应的链表中移除，如果 timer 是该链表中唯一的节点，清掉 bitmap 中相应的 bit
 	ret = detach_if_pending(timer, base, false);
 	if (!ret && pending_only)
 		goto out_unlock;
 
 	debug_activate(timer, expires);
-
+	// 获取当前 CPU 的 timer_base
 	new_base = get_target_base(base, pinned);
-
+	// 如果 timer 的 timer_base 和当前 CPU 的 timer_base 不一致，则 timer 需要迁移到当前 CPU
+	// 于是设置 timer flags 为 TIMER_MIGRATING，表示从别的 CPU 上迁移过来的
 	if (base != new_base) {
 		/*
 		 * We are trying to schedule the timer on the local CPU.

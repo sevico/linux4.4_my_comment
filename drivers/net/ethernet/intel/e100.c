@@ -2234,12 +2234,15 @@ static irqreturn_t e100_intr(int irq, void *dev_id)
 	/* We hit Receive No Resource (RNR); restart RU after cleaning */
 	if (stat_ack & stat_ack_rnr)
 		nic->ru_running = RU_SUSPENDED;
-
+//如果网络设备工作正常且系统尚未轮询接收报文
 	if (likely(napi_schedule_prep(&nic->napi))) {
+		//禁止该网络设备的中断
 		e100_disable_irq(nic);
+		//将该网络设备添加到网络设备轮询队列中，然后更新该网络设备读取报文数量的配额
+		//最后激活接收报文软中断
 		__napi_schedule(&nic->napi);
 	}
-
+	//否则说明系统正在轮询接收报文，无需再激活接收报文软中断
 	return IRQ_HANDLED;
 }
 
@@ -2247,8 +2250,9 @@ static int e100_poll(struct napi_struct *napi, int budget)
 {
 	struct nic *nic = container_of(napi, struct nic, napi);
 	unsigned int work_done = 0;
-
+	//从网络设备中读取收到的报文，并由netif_receive_skb输入到上层协议中。work_done为已读取报文数
 	e100_rx_clean(nic, &work_done, budget);
+	//释放已读取报文
 	e100_tx_clean(nic);
 
 	/* If budget not fully consumed, exit the polling mode */

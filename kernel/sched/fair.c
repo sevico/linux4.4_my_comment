@@ -642,16 +642,18 @@ static u64 sched_slice(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
 	/*本轮调度周期的时间长度*/
 	//根据就绪队列调度实体个数计算调度周期
+	//根据当前就绪进程个数计算调度周期，默认情况下，进程不超过8个情况下，调度周期默认6ms
 	u64 slice = __sched_period(cfs_rq->nr_running + !se->on_rq);
 	/*Linux支持组调度，所以此处有一个循环，　　　
 	*如果不考虑组调度，将调度实体简化成进程，会更好理解*/
 	//针对没有使能组调度的情况下，for_each_sched_entity(se)就是for (; se; se = NULL)，循环一次。
-	for_each_sched_entity(se) {
+	for_each_sched_entity(se) { //for循环根据se->parent链表往上计算比例
 		struct load_weight *load;
 		struct load_weight lw;
 
 		cfs_rq = cfs_rq_of(se);
 		//得到就绪队列的权重，也就是就绪队列上所有调度实体权重之和。
+		//获得se依附的cfs_rq的负载信息。
 		load = &cfs_rq->load;
 
 		if (unlikely(!se->on_rq)) {
@@ -666,6 +668,7 @@ static u64 sched_slice(struct cfs_rq *cfs_rq, struct sched_entity *se)
 		然后乘以调度周期时间即可得到当前调度实体应该运行的时间（参数weught传递调度实体se权重，参数lw传递就绪队列权重cfs_rq->load）。
 		例如，就绪队列权重是3072，当前调度实体se权重是1024，调度周期是6ms，那么调度实体应该得到的时间是6*1024/3072=2ms。
 		*/
+		//计算slice = slice * se->load.weight / cfs_rq->load.weight的值
 		slice = __calc_delta(slice, se->load.weight, load);
 	}
 	return slice;
@@ -2403,13 +2406,15 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 static void
 account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
+//从就绪队列权重总和中减去当前dequeue调度实体的权重。
 	update_load_sub(&cfs_rq->load, se->load.weight);
 	if (!parent_entity(se))
 		update_load_sub(&rq_of(cfs_rq)->load, se->load.weight);
 	if (entity_is_task(se)) {
 		account_numa_dequeue(rq_of(cfs_rq), task_of(se));
-		list_del_init(&se->group_node);
+		list_del_init(&se->group_node);//从链表中删除调度实体se
 	}
+	//就绪队列中可运行调度实体计数减1。
 	cfs_rq->nr_running--;
 }
 
@@ -3194,6 +3199,7 @@ dequeue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 	/*
 	 * Update run-time statistics of the 'current'.
 	 */
+	 //借机更新当前正在运行进程的虚拟时间信息，如果当前dequeue的进程就是当前正在运行的进程的话，那么此次update_curr()就很有必要了。
 	update_curr(cfs_rq);
 	dequeue_entity_load_avg(cfs_rq, se);
 
@@ -3215,16 +3221,22 @@ dequeue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 	}
 
 	clear_buddies(cfs_rq, se);
-
+	//针对当前正在运行的进程来说，其对应的调度实体已经不在红黑树上了，因此不用在调用__dequeue_entity()函数从红黑树上参数对用的节点。
 	if (se != cfs_rq->curr)
 		__dequeue_entity(cfs_rq, se);
+	//调度实体已经从就绪队列的红黑树上删除，因此更新on_rq成员
 	se->on_rq = 0;
+	//更新就绪队列相关信息，例如权重信息。稍后介绍。
 	account_entity_dequeue(cfs_rq, se);
 
 	/*
 	 * Normalize the entity after updating the min_vruntime because the
 	 * update can refer to the ->curr item and we need to reflect this
 	 * movement in our normalized position.
+	 */
+	 /*
+	 如果进程不是睡眠（例如从一个CPU迁移到另一个CPU），进程最小虚拟时间需要减去当前就绪队列对应的最小虚拟时间，原因之前也说了。
+	 迁移之后会在enqueue的时候加上对应的CFS就绪队列最小拟时间。
 	 */
 	if (!(flags & DEQUEUE_SLEEP))
 		se->vruntime -= cfs_rq->min_vruntime;
@@ -3261,9 +3273,11 @@ check_preempt_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr)
 	/* ideal_runtime保存的是CPU分配给当前进程一个周期内实际的运行时间，计算公式为:  一个周期内进程应当运行的时间 = 一个周期内队列中所有进程运行一遍需要的时间 * 当前进程权重 / 队列总权重
 	* delta_exec保存的是当前进程增加使用的实际运行时间
 	*/
-
+	//计算curr进程在本次调度周期中应该分配的时间片。时间片用完就应该被抢占。
 	ideal_runtime = sched_slice(cfs_rq, curr);
+	//delta_exec是当前进程已经运行的实际时间
 	delta_exec = curr->sum_exec_runtime - curr->prev_sum_exec_runtime; //得到本次调度已经运行的实际时间
+	//如果实际运行时间已经超过分配给进程的时间片，自然就需要抢占当前进程。设置TIF_NEED_RESCHED flag。
 	if (delta_exec > ideal_runtime) {
 		/* 增加的实际运行实际 > 应该运行实际，说明需要调度出去 */
 		resched_curr(rq_of(cfs_rq));   //设置TIF_NEED_RESCHED标志值
@@ -3282,18 +3296,19 @@ check_preempt_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr)
 	 * This also mitigates buddy induced latencies under load.
 	 */
 	 /* 如果当前进程运行时间低于调度的最小粒度，则不允许发生抢占 */
+	//为了防止频繁过度抢占，我们应该保证每个进程运行时间不应该小于最小粒度时间sysctl_sched_min_granularity。因此如果运行时间小于最小粒度时间，不应该抢占。
 	if (delta_exec < sysctl_sched_min_granularity)
 		return;
 	/* 获取下一个调度进程的se */
-
+	//从红黑树中找到虚拟时间最小的调度实体。
 	se = __pick_first_entity(cfs_rq);
 	/* 当前进程的虚拟运行时间 - 下个进程的虚拟运行时间 */
 	delta = curr->vruntime - se->vruntime;
 	/* 当前进程的虚拟运行时间 大于 下个进程的虚拟运行时间，说明这个进程还可以继续运行 */
-
+	//如果当前进程的虚拟时间仍然比红黑树中最左边调度实体虚拟时间小，也不应该发生调度。
 	if (delta < 0)
 		return;
-
+//这里把虚拟时间和实际时间比较，看起来很奇怪。感觉就像是bug一样，然后经过查看提交记录，作者的意图是：希望权重小的任务更容易被抢占。
 	if (delta > ideal_runtime)
 		/* 当前进程的虚拟运行时间 小于 下个进程的虚拟运行时间，说明下个进程比当前进程更应该被CPU使用，resched_curr()函数用于标记当前进程需要被调度出去 */
 		resched_curr(rq_of(cfs_rq));
@@ -3310,12 +3325,19 @@ set_next_entity(struct cfs_rq *cfs_rq, struct sched_entity *se)
 		 * runqueue.
 		 */
 		update_stats_wait_end(cfs_rq, se);
+		/*
+		__dequeue_entity()是将调度实体从红黑树中删除，针对即将运行的进程，
+		我们都会从红黑树中删除当前进程。当进程被强占后，调用put_prev_entity()函数会重新插入红黑树。
+		因此这个地方和put_prev_entity()函数中加入红黑树是个呼应
+		*/
 		__dequeue_entity(cfs_rq, se); //就是把结点从红黑树上取下来. 前面说过, 当前运行进程不在红黑树上
 		//把新选出的进程移出红黑树
+		//更新进程的负载信息。负载均衡会使用
 		update_load_avg(se, 1);
 	}
-
+	//update_stats_curr_start()函数就一句话，更新调度实体exec_start成员，为update_curr()函数统计时间做准备。
 	update_stats_curr_start(cfs_rq, se);
+	//更新就绪队列curr成员，昭告天下，“现在我是当前正在运行的进程”
 	cfs_rq->curr = se;//设置为当前进程
 #ifdef CONFIG_SCHEDSTATS
 	/*
@@ -3328,6 +3350,7 @@ set_next_entity(struct cfs_rq *cfs_rq, struct sched_entity *se)
 			se->sum_exec_runtime - se->prev_sum_exec_runtime);
 	}
 #endif
+//check_preempt_tick()函数用到，统计当前进程已经运行的时间，以此判断是否能够被其他进程抢占
 	se->prev_sum_exec_runtime = se->sum_exec_runtime;
 }
 
@@ -3402,6 +3425,11 @@ static void put_prev_entity(struct cfs_rq *cfs_rq, struct sched_entity *prev)
 	 * If still on the runqueue then deactivate_task()
 	 * was not called and update_curr() has to be done:
 	 */
+	 /*
+	 如果prev进程依然在就绪队列上，极有可能是prev进程被强占的情况。
+	 在让出cpu之前需要更新进程虚拟时间等信息。如果prev进程不在就绪队列上，
+	 这里可以直接跳过更新。因为，prev进程在deactivate_task()中已经调用了update_curr()，所以这里就可以省略了。
+	 */
 	if (prev->on_rq)
 		update_curr(cfs_rq);
 
@@ -3412,11 +3440,14 @@ static void put_prev_entity(struct cfs_rq *cfs_rq, struct sched_entity *prev)
 	if (prev->on_rq) {  ////此处表明只把还处于运行状态的进程加入红黑树, 如果是主动睡眠的进程, on_rq此时就为0了, 那么就不会把睡眠进程加入红黑树了
 		update_stats_wait_start(cfs_rq, prev);
 		/* Put 'current' back into the tree. */
+	//如果prev进程依然在就绪队列上，我们需要重新将prev进程插入红黑树等待调度
 		__enqueue_entity(cfs_rq, prev);  //加入红黑树中
 		/* in !on_rq case, update occurred at dequeue */
+		//update_load_avg()是更新prev进程的负载信息，这些信息在负载均衡的时候会用到
 		update_load_avg(prev, 0);
 	}
-	//没有当前进程了，这个当前进程将在pick_next_task中更新  
+	//没有当前进程了，这个当前进程将在pick_next_task中更新
+	//后事已经处理完毕，就绪队列的curr指针也应该指向NULL，代表当前就绪队列上没有正在运行的进程
 	cfs_rq->curr = NULL;
 }
 
@@ -3427,6 +3458,7 @@ entity_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr, int queued)
 	 * Update run-time statistics of the 'current'.
 	 */
 	 /* 更新当前进程运行时间，包括虚拟运行时间 */
+	//调用update_curr()更新当前运行的调度实体的虚拟时间等信息。
 	update_curr(cfs_rq); //更新当前进程的时间值
 
 	/*
@@ -3455,6 +3487,7 @@ entity_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr, int queued)
 #endif
 	/* 检查是否需要调度 */
 	/*如果可运行状态的进程个数大于1，检查是否可以抢占当前进程*/
+//如果就绪队列就绪态的调度实体个数大于1需要检查是否满足抢占条件，如果可以抢占就设置TIF_NEED_RESCHED flag。
 	if (cfs_rq->nr_running > 1)
 		check_preempt_tick(cfs_rq, curr);  //判断是否需要设置重新调度标志
 }
@@ -4359,9 +4392,10 @@ static void dequeue_task_fair(struct rq *rq, struct task_struct *p, int flags)
 	struct cfs_rq *cfs_rq;
 	struct sched_entity *se = &p->se;
 	int task_sleep = flags & DEQUEUE_SLEEP;
-
+	//针对组调度操作，没有使能组调度情况下，循环仅一次。
 	for_each_sched_entity(se) {
 		cfs_rq = cfs_rq_of(se);
+		//将调度实体se从对应的就绪队列cfs_rq上删除。
 		dequeue_entity(cfs_rq, se, flags);
 
 		/*
@@ -4388,7 +4422,6 @@ static void dequeue_task_fair(struct rq *rq, struct task_struct *p, int flags)
 		}
 		flags |= DEQUEUE_SLEEP;
 	}
-
 	for_each_sched_entity(se) {
 		cfs_rq = cfs_rq_of(se);
 		cfs_rq->h_nr_running--;
@@ -5355,6 +5388,7 @@ static void check_preempt_wakeup(struct rq *rq, struct task_struct *p, int wake_
 	return;
 
 preempt:
+	//如果可以抢占当前进程，设置TIF_NEED_RESCHED flag
 	resched_curr(rq);
 	/*
 	 * Only set the backward buddy when the current task is still
@@ -5375,6 +5409,7 @@ preempt:
 static struct task_struct *
 pick_next_task_fair(struct rq *rq, struct task_struct *prev)
 {
+//从根CFS就绪队列开始便利。
 	struct cfs_rq *cfs_rq = &rq->cfs;
 	struct sched_entity *se;
 	struct task_struct *p;
@@ -5420,9 +5455,11 @@ again:
 			if (unlikely(check_cfs_rq_runtime(cfs_rq)))
 				goto simple;
 		}
-
+		//从就绪队列cfs_rq的红黑树中选择虚拟时间最小的se
 		se = pick_next_entity(cfs_rq, curr); // 选出下一个要运行的进程
+		//group_cfs_rq()返回se->my_q成员。如果是task se，那么group_cfs_rq()返回NULL。如果是group se，那么group_cfs_rq()返回group se对应的group cfs_rq。
 		cfs_rq = group_cfs_rq(se);
+		//如果是group se，我们需要从group cfs_rq上的红黑树选择下一个虚拟时间最小的se，以此循环直到最底层的task se。
 	} while (cfs_rq);
 
 	p = task_of(se);
@@ -5463,13 +5500,16 @@ simple:
 
 	if (!cfs_rq->nr_running)
 		goto idle;
-
+	//主要是处理prev进程的后事，当进程让出cpu时就会调用该函数。
 	put_prev_task(rq, prev); //把当前进程加入红黑树中
 
 	do {
+		//选择最适合运行的调度实体。
 		se = pick_next_entity(cfs_rq, NULL);
+		//选择出来的调度实体se还需要继续加工一下才能投入运行，加工的活就是由set_next_entity()函数负责
 		set_next_entity(cfs_rq, se);
 		cfs_rq = group_cfs_rq(se);
+		//针对没有使能组调度的情况下，循环一次就结束了
 	} while (cfs_rq);
 
 	p = task_of(se);
@@ -5510,7 +5550,7 @@ static void put_prev_task_fair(struct rq *rq, struct task_struct *prev)
 {
 	struct sched_entity *se = &prev->se;
 	struct cfs_rq *cfs_rq;
-
+	//针对组调度情况，暂不考虑。
 	for_each_sched_entity(se) {
 		cfs_rq = cfs_rq_of(se);
 		put_prev_entity(cfs_rq, se);
@@ -8055,7 +8095,7 @@ static void task_tick_fair(struct rq *rq, struct task_struct *curr, int queued)
 	struct cfs_rq *cfs_rq;
 	struct sched_entity *se = &curr->se;
 	/* 向上更新进程组时间片 */
-
+	//组调度未打开的情况下，这里就是一层循环。
 	for_each_sched_entity(se) {
 		cfs_rq = cfs_rq_of(se);
 		/*为了支持组调度，引入了调度实体的概念*/

@@ -1562,7 +1562,7 @@ struct net_device {
 	 */
 
 	unsigned long		state;
-
+	//链接下一个net_device
 	struct list_head	dev_list;
 	struct list_head	napi_list;
 	struct list_head	unreg_list;
@@ -2056,7 +2056,7 @@ static inline struct sk_buff **call_gro_receive(gro_receive_t cb,
 
 	return cb(head, skb);
 }
-
+//网络层输入接口，系统支持多种协议族，因此每个协议族都会实现一个报文例程
 struct packet_type {
 	/* 这实际上是htons(ether_type)的值。 */
 	__be16			type;	/* This is really htons(ether_type). */

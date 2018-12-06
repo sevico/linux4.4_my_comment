@@ -360,6 +360,9 @@ static int ip_rcv_finish(struct net *net, struct sock *sk, struct sk_buff *skb)
 			goto drop;
 		}
 	}
+	/*
+	 * 如果配置了流量控制功能，则更新QoS的统计信息
+	 */
 
 #ifdef CONFIG_IP_ROUTE_CLASSID
 	if (unlikely(skb_dst(skb)->tclassid)) {
@@ -381,7 +384,9 @@ static int ip_rcv_finish(struct net *net, struct sock *sk, struct sk_buff *skb)
 		IP_UPD_PO_STATS_BH(net, IPSTATS_MIB_INMCAST, skb->len);
 	} else if (rt->rt_type == RTN_BROADCAST)
 		IP_UPD_PO_STATS_BH(net, IPSTATS_MIB_INBCAST, skb->len);
-	  /* 调用路由的输入函数 */
+	  /* 调用路由的输入函数 
+	  函数指针的值可能为 ip_local_deliver 或 ip_forward 函数
+		*/
 	return dst_input(skb);
 
 drop:
