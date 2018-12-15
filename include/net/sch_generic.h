@@ -45,7 +45,9 @@ struct qdisc_size_table {
 };
 
 struct Qdisc {
+	//指向排队规则提供的enqueue操作接口
 	int 			(*enqueue)(struct sk_buff *skb, struct Qdisc *dev);
+	//指向排队格则提供的dequeue接口
 	struct sk_buff *	(*dequeue)(struct Qdisc *dev);
 	unsigned int		flags;
 #define TCQ_F_BUILTIN		1
@@ -68,7 +70,9 @@ struct Qdisc {
 	const struct Qdisc_ops	*ops;
 	struct qdisc_size_table	__rcu *stab;
 	struct list_head	list;
+	//排队规则、类和过滤器都有一个32位的标识，句柄
 	u32			handle;
+	//父节点的句柄
 	u32			parent;
 	int			(*reshape_fail)(struct sk_buff *skb,
 					struct Qdisc *q);
@@ -80,7 +84,7 @@ struct Qdisc {
 	 */
 	struct Qdisc		*__parent;
 	struct netdev_queue	*dev_queue;
-
+	// 速率估计
 	struct gnet_stats_rate_est64	rate_est;
 	struct gnet_stats_basic_cpu __percpu *cpu_bstats;
 	struct gnet_stats_queue	__percpu *cpu_qstats;
@@ -91,12 +95,15 @@ struct Qdisc {
 	 * For performance sake on SMP, we put highly modified fields at the end
 	 */
 	unsigned long		state;
+	//队列中当前数据包数
 	struct sk_buff_head	q;
+	// 统计信息
 	struct gnet_stats_basic_packed bstats;
 	unsigned int		__state;
 	struct gnet_stats_queue	qstats;
 	struct rcu_head		rcu_head;
 	int			padded;
+	//引用计数
 	atomic_t		refcnt;
 
 	spinlock_t		busylock ____cacheline_aligned_in_smp;
@@ -153,26 +160,36 @@ static inline void qdisc_unthrottled(struct Qdisc *qdisc)
 struct Qdisc_class_ops {
 	/* Child qdisc manipulation */
 	struct netdev_queue *	(*select_queue)(struct Qdisc *, struct tcmsg *);
+	// 减子节点
 	int			(*graft)(struct Qdisc *, unsigned long cl,
 					struct Qdisc *, struct Qdisc **);
+	// 增加子节点
 	struct Qdisc *		(*leaf)(struct Qdisc *, unsigned long cl);
 	void			(*qlen_notify)(struct Qdisc *, unsigned long);
 
 	/* Class manipulation routines */
+	// 获取, 增加使用计数 
 	unsigned long		(*get)(struct Qdisc *, u32 classid);
+	// 释放, 减少使用计数
 	void			(*put)(struct Qdisc *, unsigned long);
+	// 改变
 	int			(*change)(struct Qdisc *, u32, u32,
 					struct nlattr **, unsigned long *);
+	// 删除
 	int			(*delete)(struct Qdisc *, unsigned long);
+	// 遍历
 	void			(*walk)(struct Qdisc *, struct qdisc_walker * arg);
 
 	/* Filter manipulation */
 	struct tcf_proto __rcu ** (*tcf_chain)(struct Qdisc *, unsigned long);
+	// tc捆绑
 	unsigned long		(*bind_tcf)(struct Qdisc *, unsigned long,
 					u32 classid);
+	// tc解除
 	void			(*unbind_tcf)(struct Qdisc *, unsigned long);
 
 	/* rtnetlink specific */
+	// 输出
 	int			(*dump)(struct Qdisc *, unsigned long,
 					struct sk_buff *skb, struct tcmsg*);
 	int			(*dump_stats)(struct Qdisc *, unsigned long,
@@ -180,22 +197,31 @@ struct Qdisc_class_ops {
 };
 
 struct Qdisc_ops {
+	// 链表中的下一个
 	struct Qdisc_ops	*next;
+	// 类别操作结构
 	const struct Qdisc_class_ops	*cl_ops;
+	// Qdisc的名称, 从数组大小看应该就是网卡名称
 	char			id[IFNAMSIZ];
+	// 私有数据大小
 	int			priv_size;
-
+	// 入队
 	int 			(*enqueue)(struct sk_buff *, struct Qdisc *);
+	// 出队  
 	struct sk_buff *	(*dequeue)(struct Qdisc *);
 	struct sk_buff *	(*peek)(struct Qdisc *);
+	// 丢弃
 	unsigned int		(*drop)(struct Qdisc *);
-
+	// 初始化  
 	int			(*init)(struct Qdisc *, struct nlattr *arg);
+	// 复位为初始状态,释放缓冲,删除定时器,清空计数器
 	void			(*reset)(struct Qdisc *);
+	// 释放
 	void			(*destroy)(struct Qdisc *);
+	// 更改Qdisc参数
 	int			(*change)(struct Qdisc *, struct nlattr *arg);
 	void			(*attach)(struct Qdisc *);
-
+	// 输出  
 	int			(*dump)(struct Qdisc *, struct sk_buff *);
 	int			(*dump_stats)(struct Qdisc *, struct gnet_dump *);
 

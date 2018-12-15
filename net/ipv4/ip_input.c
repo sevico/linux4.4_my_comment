@@ -205,6 +205,7 @@ static int ip_local_deliver_finish(struct net *net, struct sock *sk, struct sk_b
 
 	resubmit:
 		/* 将数据包传递给对应的原始套接字 */
+		/* 如果有RAW socket传递给RAW socket处理 */
 		raw = raw_local_deliver(skb, protocol);
 		/* 得到注册协议 */
 		/* 根据传输协议确定对应的inet协议 */

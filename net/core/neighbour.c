@@ -285,13 +285,13 @@ static struct neighbour *neigh_alloc(struct neigh_table *tbl, struct net_device 
 	n = kzalloc(tbl->entry_size + dev->neigh_priv_len, GFP_ATOMIC);
 	if (!n)
 		goto out_entries;
-
+	//初始化arp_queue队列
 	__skb_queue_head_init(&n->arp_queue);
 	rwlock_init(&n->lock);
 	seqlock_init(&n->ha_lock);
 	n->updated	  = n->used = now;
-	n->nud_state	  = NUD_NONE;
-	n->output	  = neigh_blackhole;
+	n->nud_state	  = NUD_NONE; //状态为不可用
+	n->output	  = neigh_blackhole; //直接丢弃报文
 	seqlock_init(&n->hh.hh_lock);
 	n->parms	  = neigh_parms_clone(&tbl->parms);
 	setup_timer(&n->timer, neigh_timer_handler, (unsigned long)n);
@@ -454,7 +454,7 @@ struct neighbour *__neigh_create(struct neigh_table *tbl, const void *pkey,
 	u32 hash_val;
 	int key_len = tbl->key_len;
 	int error;
-	struct neighbour *n1, *rc, *n = neigh_alloc(tbl, dev);
+	struct neighbour *n1, *rc, *n = neigh_alloc(tbl, dev); //创建邻居表项对象
 	struct neigh_hash_table *nht;
 
 	if (!n) {
@@ -467,11 +467,12 @@ struct neighbour *__neigh_create(struct neigh_table *tbl, const void *pkey,
 	dev_hold(dev);
 
 	/* Protocol specific setup. */
+	//IPV4实际调用arp_constructor函数，设置output函数
 	if (tbl->constructor &&	(error = tbl->constructor(n)) < 0) {
 		rc = ERR_PTR(error);
 		goto out_neigh_release;
 	}
-
+	//一般设备不设置该变量
 	if (dev->netdev_ops->ndo_neigh_construct) {
 		error = dev->netdev_ops->ndo_neigh_construct(n);
 		if (error < 0) {
@@ -482,7 +483,7 @@ struct neighbour *__neigh_create(struct neigh_table *tbl, const void *pkey,
 
 	/* Device specific setup. */
 	if (n->parms->neigh_setup &&
-	    (error = n->parms->neigh_setup(n)) < 0) {
+	    (error = n->parms->neigh_setup(n)) < 0) { //IPV4未定义该函数
 		rc = ERR_PTR(error);
 		goto out_neigh_release;
 	}
@@ -495,14 +496,14 @@ struct neighbour *__neigh_create(struct neigh_table *tbl, const void *pkey,
 
 	if (atomic_read(&tbl->entries) > (1 << nht->hash_shift))
 		nht = neigh_hash_grow(tbl, nht->hash_shift + 1);
-
+	//计算hash值，计算方式由邻居表定义
 	hash_val = tbl->hash(n->primary_key, dev, nht->hash_rnd) >> (32 - nht->hash_shift);
 
 	if (n->parms->dead) {
 		rc = ERR_PTR(-EINVAL);
 		goto out_tbl_unlock;
 	}
-
+	//找到有相同hash值得neighbour链表
 	for (n1 = rcu_dereference_protected(nht->hash_buckets[hash_val],
 					    lockdep_is_held(&tbl->lock));
 	     n1 != NULL;
@@ -519,6 +520,7 @@ struct neighbour *__neigh_create(struct neigh_table *tbl, const void *pkey,
 	n->dead = 0;
 	if (want_ref)
 		neigh_hold(n);
+	//插入到链表中
 	rcu_assign_pointer(n->next,
 			   rcu_dereference_protected(nht->hash_buckets[hash_val],
 						     lockdep_is_held(&tbl->lock)));

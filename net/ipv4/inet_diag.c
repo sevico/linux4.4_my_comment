@@ -361,6 +361,7 @@ int inet_diag_dump_one_icsk(struct inet_hashinfo *hashinfo,
 	int err;
 
 	err = -EINVAL;
+	//此处根据req信息中的，dport/dst sport/src if 来找到对应的socket
 	if (req->sdiag_family == AF_INET)
 		sk = inet_lookup(net, hashinfo, req->id.idiag_dst[0],
 				 req->id.idiag_dport, req->id.idiag_src[0],
@@ -384,13 +385,13 @@ int inet_diag_dump_one_icsk(struct inet_hashinfo *hashinfo,
 	err = sock_diag_check_cookie(sk, req->id.idiag_cookie);
 	if (err)
 		goto out;
-
+	//create一个skb
 	rep = nlmsg_new(inet_sk_attr_size(), GFP_KERNEL);
 	if (!rep) {
 		err = -ENOMEM;
 		goto out;
 	}
-
+	//填写相关的req信息
 	err = sk_diag_fill(sk, rep, req,
 			   sk_user_ns(NETLINK_CB(in_skb).sk),
 			   NETLINK_CB(in_skb).portid,
@@ -400,6 +401,7 @@ int inet_diag_dump_one_icsk(struct inet_hashinfo *hashinfo,
 		nlmsg_free(rep);
 		goto out;
 	}
+	//将dump出的信息，传入
 	err = netlink_unicast(net->diag_nlsk, rep, NETLINK_CB(in_skb).portid,
 			      MSG_DONTWAIT);
 	if (err > 0)

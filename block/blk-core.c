@@ -2026,7 +2026,7 @@ blk_qc_t generic_make_request(struct bio *bio)
 	 */
 	struct bio_list bio_list_on_stack[2];
 	blk_qc_t ret = BLK_QC_T_NONE;
-
+	//判断当前bio是否有效
 	if (!generic_make_request_checks(bio))
 		goto out;
 
@@ -2059,19 +2059,26 @@ blk_qc_t generic_make_request(struct bio *bio)
 	 * of the top of the list (no pretending) and so remove it from
 	 * bio_list, and call into ->make_request() again.
 	 */
+	 //上述过程要求当前的make_request_fn每次只能被触发一次，因此，通过current->bio_list判断当前是否有bio在其中，若有则将当前这个加入到尾部等待被处理，若没有则可直接处理该bio   gaocm
+    //还有一个值得注意的地方是，通常情况下，current->bio_list是为NULL的，因此，
+    //上述if语句将会在进行递归调用generic_make_request时候会执行。而该递归调用的地方即后面的q->make_request_fn函数里面，该函数会判断当前的bio是否超过了最大能处理能力范围，若是则将其拆分，拆分后的剩余bio将会再次被加入到generic_make_request函数中，而此时，current->bio_list中已经包含了原始的超过最大处理能力的bio,为了避免再次出发q->make_request_fn函数，则在上述if语句中先退出，完成拆分后满足处理能力大小的bio。
 	BUG_ON(bio->bi_next);
-	bio_list_init(&bio_list_on_stack[0]);
-	current->bio_list = bio_list_on_stack;
+	bio_list_init(&bio_list_on_stack[0]); //初始化该双向链表
+	current->bio_list = bio_list_on_stack; //当前为NULL
 	do {
-		struct request_queue *q = bdev_get_queue(bio->bi_bdev);
-
+		struct request_queue *q = bdev_get_queue(bio->bi_bdev); //获得bio对应的设备队列
+		//判断当前的设备队列是否有效能够响应该请求
 		if (likely(blk_queue_enter(q, __GFP_DIRECT_RECLAIM) == 0)) {
 			struct bio_list lower, same;
 
 			/* Create a fresh bio_list for all subordinate requests */
 			bio_list_on_stack[1] = bio_list_on_stack[0];
 			bio_list_init(&bio_list_on_stack[0]);
-
+			//将bio进行进一步处理，放入块设备层的处理队列中
+			/*
+			q->make_request_fn函数在一开始在blk_queue_make_request函数中被注册为blk_mq_make_request函数或者blk_sq_make_request，
+			其判断标准是当前块设备层支持多个hardware queue还是单个hardware queue
+			*/
 			ret = q->make_request_fn(q, bio);
 
 			blk_queue_exit(q);

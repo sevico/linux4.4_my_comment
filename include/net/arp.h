@@ -21,7 +21,7 @@ static inline struct neighbour *__ipv4_neigh_lookup_noref(struct net_device *dev
 {
 	if (dev->flags & (IFF_LOOPBACK | IFF_POINTOPOINT))
 		key = INADDR_ANY;
-
+	//ipv4从arp_tbl中查找
 	return ___neigh_lookup_noref(&arp_tbl, neigh_key_eq32, arp_hashfn, &key, dev);
 }
 

@@ -64,24 +64,28 @@ struct kobject {
 	/*name，该Kobject的名称，同时也是sysfs中的目录名称。由于Kobject添加到Kernel时，需要根据名字注册到sysfs中，之后就不能再直接修改该字段。如果需要修改Kobject的名字，需要调用kobject_rename接口，该接口会主动处理sysfs的相关事宜。*/
 	const char		*name;
 	struct list_head	entry; //用于将Kobject加入到Kset中的list_head。
-	struct kobject		*parent; //指向parent kobject，以此形成层次结构（在sysfs就表现为目录结构）。
-	struct kset		*kset;
+	struct kobject		*parent; //指向parent kobject，以此形成层次结构（在sysfs就表现为目录结构）。	
 	//kobject属于的Kset。可以为NULL。如果存在，且没有指定parent，则会把Kset作为parent（别忘了Kset是一个特殊的Kobject）。
-	struct kobj_type	*ktype;
+	struct kset		*kset;	
 	//该Kobject属于的kobj_type。每个Kobject必须有一个ktype，或者Kernel会提示错误。
+	struct kobj_type	*ktype;
+	//对应sysfs对象。在3.14以后的内核中，sysfs基于kernfs来实现
 	struct kernfs_node	*sd; /* sysfs directory entry */
 	//该Kobject在sysfs中的表示。
 	struct kref		kref;  //一个可用于原子操作的引用计数。
 #ifdef CONFIG_DEBUG_KOBJECT_RELEASE
 	struct delayed_work	release;
 #endif
+//记录初始化与否。调用kobject_init()后，会置位。
 	unsigned int state_initialized:1;  //示该Kobject是否已经初始化，以在Kobject的Init，Put，Add等操作时进行异常校验。
+	//记录kobj是否注册到sysfs，在kobject_add_internal()中置位
 	unsigned int state_in_sysfs:1;  //指示该Kobject是否已在sysfs中呈现，以便在自动注销时从sysfs中移除。
+	//当发送KOBJ_ADD消息时，置位。提示已经向用户空间发送ADD消息
 	unsigned int state_add_uevent_sent:1;
+	//当发送KOBJ_REMOVE消息时，置位。提示已经向用户空间发送REMOVE消息
 	unsigned int state_remove_uevent_sent:1;
-	//记录是否已经向用户空间发送ADD uevent，如果有，且没有发送remove uevent，则在自动注销时，补发REMOVE uevent，以便让用户空间正确处理。
-	unsigned int uevent_suppress:1;
 	// 如果该字段为1，则表示忽略所有上报的uevent事件。
+	unsigned int uevent_suppress:1;
 };
 
 extern __printf(2, 3)
@@ -120,6 +124,7 @@ extern const void *kobject_namespace(struct kobject *kobj);
 extern char *kobject_get_path(struct kobject *kobj, gfp_t flag);
 
 struct kobj_type {
+	//处理对象终结的回调函数。该接口应该由具体对象负责填充
 	void (*release)(struct kobject *kobj);  //通过该回调函数，可以将包含该种类型kobject的数据结构的内存空间释放掉。
 	const struct sysfs_ops *sysfs_ops;  //该种类型的Kobject的sysfs文件系统接口。
 	struct attribute **default_attrs;  //该种类型的Kobject的atrribute列表（所谓attribute，就是sysfs文件系统中的一个文件）。将会在Kobject添加到内核时，一并注册到sysfs中。
@@ -180,6 +185,7 @@ struct sock;
  //kobj_type 的关联，kobject 会利用成员 kset 找到自已所属的 kset，设置自身的 ktype 为 kset.kobj.ktype 。当没有指定 kset 成员时，才会用 ktype 来建立关系
 struct kset {
 	// kobject 链表头
+	//与kobj->entry对应，用来组织本kset管理的kobj
 	struct list_head list;
 	// 自旋锁，保障操作安全
 	spinlock_t list_lock;

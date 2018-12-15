@@ -727,13 +727,13 @@ static void __blk_mq_run_hw_queue(struct blk_mq_hw_ctx *hctx)
 {
 	struct request_queue *q = hctx->queue;
 	struct request *rq;
-	LIST_HEAD(rq_list);
+	LIST_HEAD(rq_list); //初始化请求list的双向链表
 	LIST_HEAD(driver_list);
 	struct list_head *dptr;
 	int queued;
 
 	WARN_ON(!cpumask_test_cpu(raw_smp_processor_id(), hctx->cpumask));
-
+	//hardware queue状态判断
 	if (unlikely(test_bit(BLK_MQ_S_STOPPED, &hctx->state)))
 		return;
 
@@ -742,15 +742,18 @@ static void __blk_mq_run_hw_queue(struct blk_mq_hw_ctx *hctx)
 	/*
 	 * Touch any software queue that has pending entries.
 	 */
+	 //将所有标记了有请求将被该hardware queue处理的software queue的请求数据加入到rq_list中
 	flush_busy_ctxs(hctx, &rq_list);
 
 	/*
 	 * If we have previous entries on our dispatch list, grab them
 	 * and stuff them at the front for more fair dispatch.
 	 */
+	 //若当前的hardware queue不空，即还有先前的请求待处理
 	if (!list_empty_careful(&hctx->dispatch)) {
 		spin_lock(&hctx->lock);
 		if (!list_empty(&hctx->dispatch))
+			//将hardware queue中先前未处理完地请求加入到rq_list前部(更公平)
 			list_splice_init(&hctx->dispatch, &rq_list);
 		spin_unlock(&hctx->lock);
 	}
@@ -768,21 +771,28 @@ static void __blk_mq_run_hw_queue(struct blk_mq_hw_ctx *hctx)
 	while (!list_empty(&rq_list)) {
 		struct blk_mq_queue_data bd;
 		int ret;
-
+		//获得请求
 		rq = list_first_entry(&rq_list, struct request, queuelist);
+		 //删除该请求 
 		list_del_init(&rq->queuelist);
 
 		bd.rq = rq;
+		//初始化一个链表
 		bd.list = dptr;
 		bd.last = list_empty(&rq_list);
+		//初始化mq data，并判断是否还有请求待处理
 
+		//将当前请求请求数据加入到scsi queue中并返回相关结果
+		//scsi_queue_rq
 		ret = q->mq_ops->queue_rq(hctx, &bd);
 		switch (ret) {
 		case BLK_MQ_RQ_QUEUE_OK:
 			queued++;
 			break;
 		case BLK_MQ_RQ_QUEUE_BUSY:
+			//当前无法加入到hardware queue中则重新放回rq_list
 			list_add(&rq->queuelist, &rq_list);
+			//重新设定该请求的某些参数等
 			__blk_mq_requeue_request(rq);
 			break;
 		default:
@@ -792,7 +802,7 @@ static void __blk_mq_run_hw_queue(struct blk_mq_hw_ctx *hctx)
 			blk_mq_end_request(rq, rq->errors);
 			break;
 		}
-
+		//说明当前hardware queue正忙，则不再加入请求
 		if (ret == BLK_MQ_RQ_QUEUE_BUSY)
 			break;
 
@@ -803,7 +813,7 @@ static void __blk_mq_run_hw_queue(struct blk_mq_hw_ctx *hctx)
 		if (!dptr && rq_list.next != rq_list.prev)
 			dptr = &driver_list;
 	}
-
+	//没有请求加入hardware queue
 	if (!queued)
 		hctx->dispatched[0]++;
 	else if (queued < (1 << (BLK_MQ_MAX_DISPATCH_ORDER - 1)))
@@ -815,6 +825,7 @@ static void __blk_mq_run_hw_queue(struct blk_mq_hw_ctx *hctx)
 	 */
 	if (!list_empty(&rq_list)) {
 		spin_lock(&hctx->lock);
+		//若当前还有请求在rq_list中，则将这些请求重新放回dispatch queue中，等待下次处理并且避免丢失
 		list_splice(&rq_list, &hctx->dispatch);
 		spin_unlock(&hctx->lock);
 		/*
@@ -826,6 +837,7 @@ static void __blk_mq_run_hw_queue(struct blk_mq_hw_ctx *hctx)
 		 *
 		 * blk_mq_run_hw_queue() already checks the STOPPED bit
 		 **/
+		 //说明当前hardware queue正忙，则调用该函数进行异步处理，交由kblocked处理
 		blk_mq_run_hw_queue(hctx, true);
 	}
 }
@@ -863,7 +875,9 @@ void blk_mq_run_hw_queue(struct blk_mq_hw_ctx *hctx, bool async)
 
 	if (!async) {
 		int cpu = get_cpu();
+		//若async为flash则说明该处理是同步的，需要马上处理，若是异步则将该操作交由kblocked进行处理
 		if (cpumask_test_cpu(cpu, hctx->cpumask)) {
+			 //运行hardware queue
 			__blk_mq_run_hw_queue(hctx);
 			put_cpu();
 			return;
@@ -989,8 +1003,9 @@ static void __blk_mq_insert_request(struct blk_mq_hw_ctx *hctx,
 				    struct request *rq, bool at_head)
 {
 	struct blk_mq_ctx *ctx = rq->mq_ctx;
-
+	//加入到software queue
 	__blk_mq_insert_req_list(hctx, ctx, rq, at_head);
+	//标记该software queue中有请求需要被该hardware queue处理
 	blk_mq_hctx_mark_pending(hctx, ctx);
 }
 
@@ -1000,18 +1015,20 @@ void blk_mq_insert_request(struct request *rq, bool at_head, bool run_queue,
 	struct request_queue *q = rq->q;
 	struct blk_mq_hw_ctx *hctx;
 	struct blk_mq_ctx *ctx = rq->mq_ctx, *current_ctx;
-
+	//获得software queue环境
 	current_ctx = blk_mq_get_ctx(q);
 	if (!cpu_online(ctx->cpu))
 		rq->mq_ctx = ctx = current_ctx;
-
+	//找到对应的hardware queue上下文环境
 	hctx = q->mq_ops->map_queue(q, ctx->cpu);
 
 	spin_lock(&ctx->lock);
+	//通过rq找到ctx，加入到software queue中
 	__blk_mq_insert_request(hctx, rq, at_head);
 	spin_unlock(&ctx->lock);
 
 	if (run_queue)
+		//运行hardware queue，用异步方式执行 
 		blk_mq_run_hw_queue(hctx, async);
 
 	blk_mq_put_ctx(current_ctx);
@@ -1130,10 +1147,13 @@ static inline bool blk_mq_merge_queue_io(struct blk_mq_hw_ctx *hctx,
 					 struct blk_mq_ctx *ctx,
 					 struct request *rq, struct bio *bio)
 {
+	//不允许merge
+
 	if (!hctx_allow_merges(hctx) || !bio_mergeable(bio)) {
 		blk_mq_bio_to_request(rq, bio);
 		spin_lock(&ctx->lock);
 insert_rq:
+	 //加入到software queue中
 		__blk_mq_insert_request(hctx, rq, false);
 		spin_unlock(&ctx->lock);
 		return false;
@@ -1141,12 +1161,15 @@ insert_rq:
 		struct request_queue *q = hctx->queue;
 
 		spin_lock(&ctx->lock);
+		//进行合并尝试
 		if (!blk_mq_attempt_merge(q, ctx, bio)) {
+			//无法合并则转向加入software queue中
 			blk_mq_bio_to_request(rq, bio);
 			goto insert_rq;
 		}
 
 		spin_unlock(&ctx->lock);
+		//将刚刚在software queue和hardware queue中注册的request去除，因为请求已经加入到software queue中
 		__blk_mq_free_request(hctx, ctx, rq);
 		return true;
 	}
@@ -1166,20 +1189,25 @@ static struct request *blk_mq_map_request(struct request_queue *q,
 	struct request *rq;
 	int rw = bio_data_dir(bio);
 	struct blk_mq_alloc_data alloc_data;
-
+	//判断设备队列是否有效，对该队列增加一个CPU副本访问
 	blk_queue_enter_live(q);
+	//根据CPU获得定义的software queue环境 
 	ctx = blk_mq_get_ctx(q);
+	//在映射关系中根据software queue的cpu号确定hardware queue的上下文环境
 	hctx = q->mq_ops->map_queue(q, ctx->cpu);
-
+	//每个CPU对应一个software queue和hardware queue
 	if (rw_is_sync(bio->bi_rw))
 		rw |= REQ_SYNC;
 
 	trace_block_getrq(q, bio, rw);
+	//得到关于当前software/hardware queue的相关信息数据 
 	blk_mq_set_alloc_data(&alloc_data, q, GFP_ATOMIC, false, ctx,
 			hctx);
+	//分配一个request，该request与当前的software queue和hardware queue相关
 	rq = __blk_mq_alloc_request(&alloc_data, rw);
+	//注册该request失败
 	if (unlikely(!rq)) {
-		__blk_mq_run_hw_queue(hctx);
+		__blk_mq_run_hw_queue(hctx); //执行hardware queue，腾出空间
 		blk_mq_put_ctx(ctx);
 		trace_block_sleeprq(q, bio, rw);
 
@@ -1191,7 +1219,7 @@ static struct request *blk_mq_map_request(struct request_queue *q,
 		ctx = alloc_data.ctx;
 		hctx = alloc_data.hctx;
 	}
-
+	//hardware queue中排队等待的请求加1
 	hctx->queued++;
 	data->hctx = hctx;
 	data->ctx = ctx;
@@ -1216,12 +1244,13 @@ static int blk_mq_direct_issue_request(struct request *rq, blk_qc_t *cookie)
 	 * error (busy), just add it to our list as we previously
 	 * would have done
 	 */
+	 //直接放入scsi队列中，返回是否能够被处理
 	ret = q->mq_ops->queue_rq(hctx, &bd);
 	if (ret == BLK_MQ_RQ_QUEUE_OK) {
 		*cookie = new_cookie;
 		return 0;
 	}
-
+	//标记该request的nr_phys_segments减1
 	__blk_mq_requeue_request(rq);
 
 	if (ret == BLK_MQ_RQ_QUEUE_ERROR) {
@@ -1241,7 +1270,10 @@ static int blk_mq_direct_issue_request(struct request *rq, blk_qc_t *cookie)
  */
 static blk_qc_t blk_mq_make_request(struct request_queue *q, struct bio *bio)
 {
+	//多hardware queue的情况下不采用plug queue
+	//判断是否为同步
 	const int is_sync = rw_is_sync(bio->bi_rw);
+	//判断是否为屏障IO
 	const int is_flush_fua = bio->bi_rw & (REQ_FLUSH | REQ_FUA);
 	struct blk_map_ctx data;
 	struct request *rq;
@@ -1249,20 +1281,20 @@ static blk_qc_t blk_mq_make_request(struct request_queue *q, struct bio *bio)
 	struct blk_plug *plug;
 	struct request *same_queue_rq = NULL;
 	blk_qc_t cookie;
-
+	//做DMA时的相关地址限制，可能该bio只能访问低端内存，因此需要将高端内存中的bio数据拷贝到低端内存中
 	blk_queue_bounce(q, &bio);
-
+	//判断当前的bio是否超过了预设最大处理大小，若是则进行拆分，拆分后会进行generic_make_request函数调用
 	blk_queue_split(q, &bio, q->bio_split);
-
+	 //bio完整性判断
 	if (bio_integrity_enabled(bio) && bio_integrity_prep(bio)) {
 		bio_io_error(bio);
 		return BLK_QC_T_NONE;
 	}
-
+	//若非屏障IO并且设备队列支持合并且plug队列中可进行合并则进行合并工作
 	if (!is_flush_fua && !blk_queue_nomerges(q) &&
 	    blk_attempt_plug_merge(q, bio, &request_count, &same_queue_rq))
 		return BLK_QC_T_NONE;
-
+	//在mq中注册一个request
 	rq = blk_mq_map_request(q, bio, &data);
 	if (unlikely(!rq))
 		return BLK_QC_T_NONE;
@@ -1270,7 +1302,9 @@ static blk_qc_t blk_mq_make_request(struct request_queue *q, struct bio *bio)
 	cookie = blk_tag_to_qc_t(rq->tag, data.hctx->queue_num);
 
 	if (unlikely(is_flush_fua)) {
+		//将bio转换为request
 		blk_mq_bio_to_request(rq, bio);
+		//若是屏障IO则将其加入到flush队列中，该队列直接发送至driver
 		blk_insert_flush(rq);
 		goto run_queue;
 	}
@@ -1281,10 +1315,11 @@ static blk_qc_t blk_mq_make_request(struct request_queue *q, struct bio *bio)
 	 * queue it up like normal since we can potentially save some
 	 * CPU this way.
 	 */
+	 //有plug队列，且设备队列支持合并或者改请求是同步请求
 	if (((plug && !blk_queue_nomerges(q)) || is_sync) &&
-	    !(data.hctx->flags & BLK_MQ_F_DEFER_ISSUE)) {
+	    !(data.hctx->flags & BLK_MQ_F_DEFER_ISSUE)) { //延迟发送
 		struct request *old_rq = NULL;
-
+		//转化为request
 		blk_mq_bio_to_request(rq, bio);
 
 		/*
@@ -1300,20 +1335,25 @@ static blk_qc_t blk_mq_make_request(struct request_queue *q, struct bio *bio)
 			 */
 			if (same_queue_rq && !list_empty(&plug->mq_list)) {
 				old_rq = same_queue_rq;
+				//判断之前是否有能合并或者一样的请求，若有则删除之前的请求
 				list_del_init(&old_rq->queuelist);
 			}
+			//将该请求加入到plug队列中
 			list_add_tail(&rq->queuelist, &plug->mq_list);
 		} else /* is_sync */
 			old_rq = rq;
 		blk_mq_put_ctx(data.ctx);
+		//无未处理请求
 		if (!old_rq)
 			goto done;
+		//直接加入到底层scsi层队列中，并发往driver
 		if (test_bit(BLK_MQ_S_STOPPED, &data.hctx->state) ||
 		    blk_mq_direct_issue_request(old_rq, &cookie) != 0)
+		    //加入到software queue中 
 			blk_mq_insert_request(old_rq, false, true, true);
 		goto done;
 	}
-
+	//底层driver支持延迟发送或者为async请求
 	if (!blk_mq_merge_queue_io(data.hctx, data.ctx, rq, bio)) {
 		/*
 		 * For a SYNC request, send it to the hardware immediately. For
@@ -1321,6 +1361,7 @@ static blk_qc_t blk_mq_make_request(struct request_queue *q, struct bio *bio)
 		 * latter allows for merging opportunities and more efficient
 		 * dispatching.
 		 */
+		 //能合并则进行合并，否则加入到software queue中
 run_queue:
 		blk_mq_run_hw_queue(data.hctx, !is_sync || is_flush_fua);
 	}
@@ -1993,12 +2034,12 @@ struct request_queue *blk_mq_init_allocated_queue(struct blk_mq_tag_set *set,
 		return ERR_PTR(-ENOMEM);
 
 	hctxs = kmalloc_node(set->nr_hw_queues * sizeof(*hctxs), GFP_KERNEL,
-			set->numa_node);
+			set->numa_node); //获得hardware queue上下文环境
 
 	if (!hctxs)
 		goto err_percpu;
 
-	map = blk_mq_make_queue_map(set);
+	map = blk_mq_make_queue_map(set);  // 建立software queue和hardware queue之间的映射关系
 	if (!map)
 		goto err_map;
 
@@ -2026,10 +2067,10 @@ struct request_queue *blk_mq_init_allocated_queue(struct blk_mq_tag_set *set,
 	q->nr_hw_queues = set->nr_hw_queues;
 	q->mq_map = map;
 
-	q->queue_ctx = ctx;
+	q->queue_ctx = ctx; ////获得percpu的地址 建立software queue环境
 	q->queue_hw_ctx = hctxs;
 
-	q->mq_ops = set->ops;
+	q->mq_ops = set->ops; //标记为MQ队列
 	q->queue_flags |= QUEUE_FLAG_MQ_DEFAULT;
 
 	if (!(set->flags & BLK_MQ_F_SG_MERGE))
@@ -2042,6 +2083,7 @@ struct request_queue *blk_mq_init_allocated_queue(struct blk_mq_tag_set *set,
 	spin_lock_init(&q->requeue_lock);
 
 	if (q->nr_hw_queues > 1)
+		//注册q->make_request_fn函数
 		blk_queue_make_request(q, blk_mq_make_request);
 	else
 		blk_queue_make_request(q, blk_sq_make_request);

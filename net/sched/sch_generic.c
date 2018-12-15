@@ -82,6 +82,8 @@ static void try_bulk_dequeue_skb(struct Qdisc *q,
 static struct sk_buff *dequeue_skb(struct Qdisc *q, bool *validate,
 				   int *packets)
 {
+	//这里先看Q中有没有requeue的skb，一般情况下存在发送失败的状况就会被requeue
+
 	struct sk_buff *skb = q->gso_skb;
 	const struct netdev_queue *txq = q->dev_queue;
 
@@ -90,14 +92,17 @@ static struct sk_buff *dequeue_skb(struct Qdisc *q, bool *validate,
 	if (unlikely(skb)) {
 		/* check the reason of requeuing without tx lock first */
 		txq = skb_get_tx_queue(txq->dev, skb);
+		//如果gso_skb有，并且没有TXQ stop，那么就dequeu这个gso skb，发送失败的优先.
 		if (!netif_xmit_frozen_or_stopped(txq)) {
 			q->gso_skb = NULL;
 			q->q.qlen--;
 		} else
+			//如果TXQ被stop了，那么无法dequeue出skb 就返回空
 			skb = NULL;
 		/* skb in gso_skb were already validated */
 		*validate = false;
 	} else {
+		//如果是多Q或者txq没有被stop 就dequeue skb
 		if (!(q->flags & TCQ_F_ONETXQUEUE) ||
 		    !netif_xmit_frozen_or_stopped(txq)) {
 			skb = q->dequeue(q);
@@ -157,12 +162,15 @@ int sch_direct_xmit(struct sk_buff *skb, struct Qdisc *q,
 
 	/* Note that we validate skb (GSO, checksum, ...) outside of locks */
 	if (validate)
+		//报文校验，gso分段、csum计算
 		skb = validate_xmit_skb_list(skb, dev);
 
 	if (likely(skb)) {
 		HARD_TX_LOCK(dev, txq, smp_processor_id());
+		/*如果说txq被stop，即置位QUEUE_STATE_ANY_XOFF_OR_FROZEN，就直接ret = NETDEV_TX_BUSY
+		 *如果说txq 正常运行，那么直接调用dev_hard_start_xmit发送数据包*/
 		if (!netif_xmit_frozen_or_stopped(txq))
-			skb = dev_hard_start_xmit(skb, dev, txq, &ret);
+			skb = dev_hard_start_xmit(skb, dev, txq, &ret);//调用驱动发送报文
 
 		HARD_TX_UNLOCK(dev, txq);
 	} else {
@@ -170,10 +178,11 @@ int sch_direct_xmit(struct sk_buff *skb, struct Qdisc *q,
 		return qdisc_qlen(q);
 	}
 	spin_lock(root_lock);
-
+	/*进行返回值处理！ 如果ret < NET_XMIT_MASK 为true 否则 flase*/
 	if (dev_xmit_complete(ret)) {
 		/* Driver sent out skb successfully or skb was consumed */
-		ret = qdisc_qlen(q);
+	/*这个地方需要注意可能有driver的负数的case，也意味着这个skb被drop了*/
+		ret = qdisc_qlen(q);//成功发送报文，如果缓存区中还有报文，则尝试继续发送报文
 	} else if (ret == NETDEV_TX_LOCKED) {
 		/* Driver try lock failed */
 		ret = handle_dev_cpu_collision(skb, txq, q);
@@ -182,8 +191,8 @@ int sch_direct_xmit(struct sk_buff *skb, struct Qdisc *q,
 		if (unlikely(ret != NETDEV_TX_BUSY))
 			net_warn_ratelimited("BUG %s code %d qlen %d\n",
 					     dev->name, ret, q->q.qlen);
-
-		ret = dev_requeue_skb(skb, q);
+		/*发生Tx Busy的时候，重新进行requeue*/
+		ret = dev_requeue_skb(skb, q);//发送失败，则重新进行发送
 	}
 
 	if (ret && netif_xmit_frozen_or_stopped(txq))
@@ -220,6 +229,7 @@ static inline int qdisc_restart(struct Qdisc *q, int *packets)
 	bool validate;
 
 	/* Dequeue packet */
+	/*从队列中取出skb*/
 	skb = dequeue_skb(q, &validate, packets);
 	if (unlikely(!skb))
 		return 0;
@@ -227,7 +237,9 @@ static inline int qdisc_restart(struct Qdisc *q, int *packets)
 	root_lock = qdisc_lock(q);
 	dev = qdisc_dev(q);
 	txq = skb_get_tx_queue(dev, skb);
-
+	/*这个函数之前在将第一种状况的时候讲过，在Qdisc的状况下 也有通过这个函数直接发送的情况
+         *实际上这个函数是在直接去发送，这个可以直接发送之前留存下来的包，所以函数的解释是
+         *可以发送若干个封包*/
 	return sch_direct_xmit(skb, q, dev, txq, root_lock, validate);
 }
 
@@ -235,20 +247,23 @@ void __qdisc_run(struct Qdisc *q)
 {
 	int quota = weight_p;
 	int packets;
-
+	 /*这个函数是调用qdisc_restart去发送Q中的数据包，packet记录这次发送了多少...*/
 	while (qdisc_restart(q, &packets)) {
 		/*
 		 * Ordered by possible occurrence: Postpone processing if
 		 * 1. we've exceeded packet quota
 		 * 2. another process needs the CPU;
 		 */
+		 
+		/* 这边会有限定额度64个封包，如果超过64个就不能再次连续发了，
+				 *	需要以后执行softirq去发送了*/
 		quota -= packets;
 		if (quota <= 0 || need_resched()) {
 			__netif_schedule(q);
 			break;
 		}
 	}
-
+	 /*关闭Qdisc*/
 	qdisc_run_end(q);
 }
 
@@ -474,6 +489,8 @@ static inline struct sk_buff_head *band2list(struct pfifo_fast_priv *priv,
 
 static int pfifo_fast_enqueue(struct sk_buff *skb, struct Qdisc *qdisc)
 {
+	/*先是要判断一下在Q中的数据包的数量，是否超过了tx_queue_len的值*/
+
 	if (skb_queue_len(&qdisc->q) < qdisc_dev(qdisc)->tx_queue_len) {
 		int band = prio2band[skb->priority & TC_PRIO_MAX];
 		struct pfifo_fast_priv *priv = qdisc_priv(qdisc);
@@ -481,9 +498,10 @@ static int pfifo_fast_enqueue(struct sk_buff *skb, struct Qdisc *qdisc)
 
 		priv->bitmap |= (1 << band);
 		qdisc->q.qlen++;
+		/*将数据包enqueue到队列中*/
 		return __qdisc_enqueue_tail(skb, qdisc, list);
 	}
-
+	/*如果超出了tx_queue_len的最大值，说明已经积累到了最大，网络通信出现了问题，这个包被DROP*/
 	return qdisc_drop(skb, qdisc);
 }
 
@@ -549,6 +567,7 @@ nla_put_failure:
 static int pfifo_fast_init(struct Qdisc *qdisc, struct nlattr *opt)
 {
 	int prio;
+	// qdisc私有数据指针, 数据包链表头
 	struct pfifo_fast_priv *priv = qdisc_priv(qdisc);
 
 	for (prio = 0; prio < PFIFO_FAST_BANDS; prio++)
@@ -572,12 +591,13 @@ struct Qdisc_ops pfifo_fast_ops __read_mostly = {
 };
 
 static struct lock_class_key qdisc_tx_busylock;
-
+// 分配新的Qdisc结构, Qdisc的操作结构由函数参数指定 
 struct Qdisc *qdisc_alloc(struct netdev_queue *dev_queue,
 			  const struct Qdisc_ops *ops)
 {
 	void *p;
 	struct Qdisc *sch;
+	// Qdisc空间按32字节对齐
 	unsigned int size = QDISC_ALIGN(sizeof(*sch)) + ops->priv_size;
 	int err = -ENOBUFS;
 	struct net_device *dev = dev_queue->dev;
@@ -598,17 +618,20 @@ struct Qdisc *qdisc_alloc(struct netdev_queue *dev_queue,
 		sch = (struct Qdisc *) QDISC_ALIGN((unsigned long) p);
 		sch->padded = (char *) sch - (char *) p;
 	}
+	// 初始化链表, 将用于挂接到dev的Qdisc链表  
 	INIT_LIST_HEAD(&sch->list);
+	// 初始化数据包链表
 	skb_queue_head_init(&sch->q);
 
 	spin_lock_init(&sch->busylock);
 	lockdep_set_class(&sch->busylock,
 			  dev->qdisc_tx_busylock ?: &qdisc_tx_busylock);
-
+	// Qdisc结构参数
 	sch->ops = ops;
 	sch->enqueue = ops->enqueue;
 	sch->dequeue = ops->dequeue;
 	sch->dev_queue = dev_queue;
+	// 网卡使用计数增加  
 	dev_hold(dev);
 	atomic_set(&sch->refcnt, 1);
 
@@ -752,13 +775,16 @@ static void attach_default_qdiscs(struct net_device *dev)
 	struct Qdisc *qdisc;
 
 	txq = netdev_get_tx_queue(dev, 0);
-
+	/*这个地方判断dev是否是多Q的设备，如果是不是多Q的设备，或者tx_queue_len为0 就会进入if判断
+			 *这个地方比较疑惑，if内部使用的是一个循环去遍历tx_queue 感觉是要处理multiqueue的状况，现在
+			 *却用来处理一个的...*/
 	if (!netif_is_multiqueue(dev) ||
 	    dev->priv_flags & IFF_NO_QUEUE) {
 		netdev_for_each_tx_queue(dev, attach_one_default_qdisc, NULL);
 		dev->qdisc = txq->qdisc_sleeping;
 		atomic_inc(&dev->qdisc->refcnt);
 	} else {
+		/*如果不满足上述条件，就创建一个默认的，mq_qdisc_ops，从他的注释来看 mq 的Qdisc只使用与多Q状况*/
 		qdisc = qdisc_create_dflt(txq, &mq_qdisc_ops, TC_H_ROOT);
 		if (qdisc) {
 			dev->qdisc = qdisc;
@@ -792,7 +818,7 @@ void dev_activate(struct net_device *dev)
 	 * create default one for devices, which need queueing
 	 * and noqueue_qdisc for virtual interfaces
 	 */
-
+	/*如果没有Qdisc的规则设置到device，就给设备create一个默认的规则*/
 	if (dev->qdisc == &noop_qdisc)
 		attach_default_qdiscs(dev);
 

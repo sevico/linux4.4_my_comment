@@ -91,8 +91,8 @@ ip_fragment(struct net *net, struct sock *sk, struct sk_buff *skb,
 /* Generate a checksum for an outgoing IP datagram. */
 void ip_send_check(struct iphdr *iph)
 {
-	iph->check = 0;
-	iph->check = ip_fast_csum((unsigned char *)iph, iph->ihl);
+	iph->check = 0; //设置check为0
+	iph->check = ip_fast_csum((unsigned char *)iph, iph->ihl); //把计算csum的值保存到check字段
 }
 EXPORT_SYMBOL(ip_send_check);
 
@@ -119,7 +119,7 @@ int ip_local_out(struct net *net, struct sock *sk, struct sk_buff *skb)
 	err = __ip_local_out(net, sk, skb);
 	//接下来调用dst_output函数。该函数基于确定路由期间找到的skb->dst->output函数
 	//通常指向ip_output
-	if (likely(err == 1))
+	if (likely(err == 1)) //返回值为1，说明netfilter允许报文通过
 		err = dst_output(net, sk, skb);
 
 	return err;
@@ -183,7 +183,7 @@ static int ip_finish_output2(struct net *net, struct sock *sk, struct sk_buff *s
 {
 	struct dst_entry *dst = skb_dst(skb);
 	struct rtable *rt = (struct rtable *)dst;
-	struct net_device *dev = dst->dev;
+	struct net_device *dev = dst->dev; //出口设备
 	unsigned int hh_len = LL_RESERVED_SPACE(dev);
 	struct neighbour *neigh;
 	u32 nexthop;
@@ -214,12 +214,14 @@ static int ip_finish_output2(struct net *net, struct sock *sk, struct sk_buff *s
 
 	rcu_read_lock_bh();
 	 /* 获得路由的neighbour信息 */
-	nexthop = (__force u32) rt_nexthop(rt, ip_hdr(skb)->daddr);
-	neigh = __ipv4_neigh_lookup_noref(dev, nexthop);
+	nexthop = (__force u32) rt_nexthop(rt, ip_hdr(skb)->daddr); //目的IP地址
+	neigh = __ipv4_neigh_lookup_noref(dev, nexthop); //根据目的IP查找邻居项是否存在
 	if (unlikely(!neigh))
+		//如果不存在，则创建neigh项
 		neigh = __neigh_create(&arp_tbl, &nexthop, dev, false);
 	if (!IS_ERR(neigh)) {
 		/* 调用neighbour层的输出接口。是否能够立刻发送，依赖于neighbour的状态 */
+	//调用邻居子系统封装MAC头，并且调用二层发包函数完成报文发送
 		int res = dst_neigh_output(dst, neigh, skb);
 
 		rcu_read_unlock_bh();
@@ -242,6 +244,7 @@ static int ip_finish_output_gso(struct net *net, struct sock *sk,
 
 	/* common case: locally created skb or seglen is <= mtu */
 	//不大于传输介质MTU、无须分片的情况
+	//只有ip forward流程该条件才会不成立，否则该条件成立
 	if (((IPCB(skb)->flags & IPSKB_FORWARDED) == 0) ||
 	      skb_gso_network_seglen(skb) <= mtu)
 		return ip_finish_output2(net, sk, skb);
@@ -253,8 +256,10 @@ static int ip_finish_output_gso(struct net *net, struct sock *sk,
 	 * 2) skb arrived via virtio-net, we thus get TSO/GSO skbs directly
 	 * from host network stack.
 	 */
+	 //获取dev的offload feature
 	features = netif_skb_features(skb);
 	BUILD_BUG_ON(sizeof(*IPCB(skb)) > SKB_SGO_CB_OFFSET);
+	//skb gso报文分段
 	segs = skb_gso_segment(skb, features & ~NETIF_F_GSO_MASK);
 	if (IS_ERR_OR_NULL(segs)) {
 		kfree_skb(skb);
@@ -269,6 +274,7 @@ static int ip_finish_output_gso(struct net *net, struct sock *sk,
 
 		segs->next = NULL;
 		//分片发送
+		//分段报文经过ip分片后通过ip_finish_output2发送
 		err = ip_fragment(net, sk, segs, mtu, ip_finish_output2);
 
 		if (err && ret == 0)
@@ -373,6 +379,7 @@ int ip_output(struct net *net, struct sock *sk, struct sk_buff *skb)
 	IP_UPD_PO_STATS(net, IPSTATS_MIB_OUT, skb->len);
 	/* 设置数据包的出口设备 */
 	skb->dev = dev;
+	//设置报文协议为IPV4
 	skb->protocol = htons(ETH_P_IP);
 	/* 进行Netfilter在POST ROUTING上的检查 */
 	return NF_HOOK_COND(NFPROTO_IPV4, NF_INET_POST_ROUTING,

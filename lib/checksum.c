@@ -55,7 +55,7 @@ static unsigned int do_csum(const unsigned char *buff, int len)
 	if (len <= 0)
 		goto out;
 	odd = 1 & (unsigned long) buff;
-	if (odd) {
+	if (odd) { //如果地址未按照2对其，则需要按2对齐以提升性能
 #ifdef __LITTLE_ENDIAN
 		result += (*buff << 8);
 #else
@@ -65,38 +65,42 @@ static unsigned int do_csum(const unsigned char *buff, int len)
 		buff++;
 	}
 	if (len >= 2) {
-		if (2 & (unsigned long) buff) {
+		if (2 & (unsigned long) buff) { //除4余2场景，先累加该16位的值，剩下4字节的整数倍了
 			result += *(unsigned short *) buff;
 			len -= 2;
 			buff += 2;
 		}
 		if (len >= 4) {
+			//计算出按照4字节的结尾
 			const unsigned char *end = buff + ((unsigned)len & ~3);
 			unsigned int carry = 0;
 			do {
 				unsigned int w = *(unsigned int *) buff;
 				buff += 4;
-				result += carry;
-				result += w;
-				carry = (w > result);
+				//值加进位
+				result += carry; //值加进位
+				result += w; //值累加
+				carry = (w > result); //w值超过累加值，则进位为1，为什么用大于来判断
 			} while (buff < end);
 			result += carry;
+			//32位转化为16位，此时可能有进位
 			result = (result & 0xffff) + (result >> 16);
 		}
 		if (len & 2) {
+			//剩余2字节的值，再累加
 			result += *(unsigned short *) buff;
 			buff += 2;
 		}
 	}
-	if (len & 1)
+	if (len & 1) //如果还有1字节，继续累加
 #ifdef __LITTLE_ENDIAN
 		result += *buff;
 #else
 		result += (*buff << 8);
 #endif
-	result = from32to16(result);
+	result = from32to16(result); //转化为16位值
 	if (odd)
-		result = ((result >> 8) & 0xff) | ((result & 0xff) << 8);
+		result = ((result >> 8) & 0xff) | ((result & 0xff) << 8); //16位两个字节值互换
 out:
 	return result;
 }

@@ -47,6 +47,22 @@ void __switch_to_xtra(struct task_struct *prev_p, struct task_struct *next_p,
  * Saving eflags is important. It switches not only IOPL between tasks,
  * it also protects other tasks from NT leaking through sysenter etc.
  */
+ /*
+进程切换一般都涉及三个进程，如进程a切换成进程b，b开始执行，但是当
+a恢复执行的时候往往是通过一个进程c，而不是进程b。
+注意switch_to的调用: switch_to(prev,next,prev), 可以看到last就是prev
+调用方法如下：进程A->进程B switch_to(A,B,A)主要有三个参数：
+输入参数两个：prev:切换前的进程 next：切换后的进程 
+输出参数一个：last：切换前进程  注意这三个变量都是局部变量，
+在系统栈中，所以切换到另一进程后变量的值不会改变。
+进程a切换b之前，eax的值为prev，也就是a，edx的值为next，也就是b
+ebx的值为prev，也就是a
+当不考虑第三个参数时，从c切换成a，内核栈切换成a的栈，这时a中的prev和nexxt
+分别指向a和b，进程c的引用丢失了。
+这时第三个参数就派上用场了。
+c切换进程a后，将c存入eax中(第一个参数)，切换到a后，由于输出部"=a" (last)会将eax的值
+写入last中，也就是prev中，所以此时prev和next的值就是c和b了。
+*/
 #define switch_to(prev, next, last)					\
 do {									\
 	/*								\

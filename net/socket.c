@@ -1179,7 +1179,7 @@ int __sock_create(struct net *net, int family, int type, int protocol,
 				   closest posix thing */
 	}
 
-	sock->type = type;
+	sock->type = type; //设置socket的type
 
 #ifdef CONFIG_MODULES
 	/* Attempt to load a protocol module if the find failed.
@@ -1188,7 +1188,7 @@ int __sock_create(struct net *net, int family, int type, int protocol,
 	 * requested real, full-featured networking support upon configuration.
 	 * Otherwise module support will break!
 	 */
-	if (rcu_access_pointer(net_families[family]) == NULL)
+	if (rcu_access_pointer(net_families[family]) == NULL) //得到family对应的net_proto_family
 		request_module("net-pf-%d", family);
 #endif
 
@@ -1223,7 +1223,7 @@ int __sock_create(struct net *net, int family, int type, int protocol,
 	// and have been loaded).
 	// 如果是应用程序创建的是netlink类型的套接字，则会执行netlink_family_ops中的netlink_create 
 	//IPV4 PF_INET协议族为inet_create
-
+	//调用net_proto_family的create，实现收包，AF_PACKET对应的是packet_family_ops
 	err = pf->create(net, sock, protocol, kern);
 	if (err < 0)
 		goto out_module_put;

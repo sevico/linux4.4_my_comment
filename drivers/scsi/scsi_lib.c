@@ -1963,6 +1963,7 @@ static void scsi_mq_done(struct scsi_cmnd *cmd)
 	trace_scsi_dispatch_cmd_done(cmd);
 	blk_mq_complete_request(cmd->request, cmd->request->errors);
 }
+//在scsi这层中进行处理来自于hardware queue中的请求
 
 static int scsi_queue_rq(struct blk_mq_hw_ctx *hctx,
 			 const struct blk_mq_queue_data *bd)
@@ -2004,10 +2005,10 @@ static int scsi_queue_rq(struct blk_mq_hw_ctx *hctx,
 		cmd->flags |= SCMD_TAGGED;
 	else
 		cmd->flags &= ~SCMD_TAGGED;
-
+	//错误处理
 	scsi_init_cmd_errh(cmd);
 	cmd->scsi_done = scsi_mq_done;
-
+	 //发送cmd到底层driver
 	reason = scsi_dispatch_cmd(cmd);
 	if (reason) {
 		scsi_set_blocked(cmd, reason);
@@ -2029,6 +2030,7 @@ out_put_device:
 out:
 	switch (ret) {
 	case BLK_MQ_RQ_QUEUE_BUSY:
+		//若当前设备正忙，则停止hardware queue的下发工作
 		blk_mq_stop_hw_queue(hctx);
 		if (atomic_read(&sdev->device_busy) == 0 &&
 		    !scsi_device_blocked(sdev))

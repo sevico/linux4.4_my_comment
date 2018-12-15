@@ -2336,10 +2336,10 @@ int netlink_rcv_skb(struct sk_buff *skb, int (*cb)(struct sk_buff *,
 
 	while (skb->len >= nlmsg_total_size(0)) {
 		int msglen;
-
+		 //先取出header nlh
 		nlh = nlmsg_hdr(skb);
 		err = 0;
-
+		//合法性的检查，如果小于HDRLEN或者skb->len异常 就退出不处理
 		if (nlh->nlmsg_len < NLMSG_HDRLEN || skb->len < nlh->nlmsg_len)
 			return 0;
 
@@ -2350,12 +2350,14 @@ int netlink_rcv_skb(struct sk_buff *skb, int (*cb)(struct sk_buff *,
 		/* Skip control messages */
 		if (nlh->nlmsg_type < NLMSG_MIN_TYPE)
 			goto ack;
-
+		//这个地方调用协议相关的函数
+		//sock_diag_rcv_msg
 		err = cb(skb, nlh);
 		if (err == -EINTR)
 			goto skip;
 
 ack:
+		//如果user需要有回复，那么这个地方调用netlink_ack进行答复动作
 		if (nlh->nlmsg_flags & NLM_F_ACK || err)
 			netlink_ack(skb, nlh, err);
 

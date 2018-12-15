@@ -1226,8 +1226,13 @@ struct load_weight {
  * 2) for entity, support any load.weight always runnable
  */
 struct sched_avg {
+//上一次负载更新时间。用于计算时间间隔。
+//基于可运行（runnable）时间的负载贡献总和。runnable时间包含两部分：一是在rq中等待cpu调度运行的时间，二是正在cpu上运行的时间。
 	u64 last_update_time, load_sum;
+//基于正在运行（running）时间的负载贡献总和。running时间是指调度实体se正在cpu上执行时间
 	u32 util_sum, period_contrib;
+//基于可运行（runnable）时间的平均负载贡献
+//基于正在运行（running）时间的平均负载贡献
 	unsigned long load_avg, util_avg;
 };
 

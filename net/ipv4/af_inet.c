@@ -1386,15 +1386,17 @@ static struct sk_buff *inet_gso_segment(struct sk_buff *skb,
 		goto out;
 
 	skb_reset_network_header(skb);
-	nhoff = skb_network_header(skb) - skb_mac_header(skb);
+	nhoff = skb_network_header(skb) - skb_mac_header(skb); //根据network header和mac header得到IP头相对MAC的偏移
 		/*
 	 * 待分段数据包长度至少大于IP首部长度，
 	 * 否则必定是无效IP数据包。
 	 */
+	 //检测skb是否可以移动到L4头？
 	if (unlikely(!pskb_may_pull(skb, sizeof(*iph))))
 		goto out;
 
 	iph = ip_hdr(skb);
+	//得到IP包头的实际长度，基于此可以得到L4的首地址
 	ihl = iph->ihl * 4;
 		/*
 	 * 检测IP首部中长度字段是否有效。
@@ -1403,23 +1405,26 @@ static struct sk_buff *inet_gso_segment(struct sk_buff *skb,
 		goto out;
 
 	id = ntohs(iph->id);
-	proto = iph->protocol;
+	proto = iph->protocol; //L4层协议类型
 
 	/* Warning: after this point, iph might be no longer valid */
 		/*
 	 * 再次通过IP首部中长度字段检测
 	 * IP数据包长度是否有效。
 	 */
-	if (unlikely(!pskb_may_pull(skb, ihl)))
+	//检测skb是否可以移动到L4头？
+	if (unlikely(!pskb_may_pull(skb, ihl))) 
 		goto out;
+	//报文data指针移动到传输层
 	__skb_pull(skb, ihl);
 
 	encap = SKB_GSO_CB(skb)->encap_level > 0;
+	//如果encap(非最外层gso包)，那么feature与hw_enc_features取交集
 	if (encap)
 		features &= skb->dev->hw_enc_features;
-	SKB_GSO_CB(skb)->encap_level += ihl;
+	SKB_GSO_CB(skb)->encap_level += ihl; //用来标示是否为内层报文
 
-	skb_reset_transport_header(skb);
+	skb_reset_transport_header(skb); //设置transport header值
 
 	segs = ERR_PTR(-EPROTONOSUPPORT);
 
@@ -1427,10 +1432,12 @@ static struct sk_buff *inet_gso_segment(struct sk_buff *skb,
 	    skb_shinfo(skb)->gso_type & (SKB_GSO_SIT|SKB_GSO_IPIP))
 		udpfrag = proto == IPPROTO_UDP && encap;
 	else
-		udpfrag = proto == IPPROTO_UDP && !skb->encapsulation;
+		//vxlan封装报文走此分支，此时udpfrag为false
+		udpfrag = proto == IPPROTO_UDP && !skb->encapsulation; 
 
 	ops = rcu_dereference(inet_offloads[proto]);
 	if (likely(ops && ops->callbacks.gso_segment))
+		//UDP或TCP的分段函数
 		segs = ops->callbacks.gso_segment(skb, features);
 
 	if (IS_ERR_OR_NULL(segs))
@@ -1440,21 +1447,22 @@ static struct sk_buff *inet_gso_segment(struct sk_buff *skb,
 	 */
 	skb = segs;
 	do {
+		//根据分段报文的mac header 和 IP偏移
 		iph = (struct iphdr *)(skb_mac_header(skb) + nhoff);
-		if (udpfrag) {
+		if (udpfrag) { //ip分片报文
 			iph->id = htons(id);
-			iph->frag_off = htons(offset >> 3);
-			if (skb->next)
+			iph->frag_off = htons(offset >> 3); //设置ip头的frag_off值
+			if (skb->next) //后面还有报文，需要设置more frag标记
 				iph->frag_off |= htons(IP_MF);
-			offset += skb->len - nhoff - ihl;
+			offset += skb->len - nhoff - ihl; //计算offset值，下一个报文需要使用
 		} else {
-			iph->id = htons(id++);
+			iph->id = htons(id++); //每个报文为完整的IP报文
 		}
 		iph->tot_len = htons(skb->len - nhoff);
-		ip_send_check(iph);
-		if (encap)
+		ip_send_check(iph); //计算ip头 csum值
+		if (encap) //如果encap值非空，说明当前处于内层报文中，所以需要设置inner heaer值
 			skb_reset_inner_headers(skb);
-		skb->network_header = (u8 *)iph - skb->head;
+		skb->network_header = (u8 *)iph - skb->head;  //设置network header
 	} while ((skb = skb->next));
 
 out:

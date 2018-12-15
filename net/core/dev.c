@@ -2275,8 +2275,10 @@ static inline void __netif_reschedule(struct Qdisc *q)
 	unsigned long flags;
 
 	local_irq_save(flags);
+	/*每一个CPU都有个softnet_data结构体，可以通过这个函数get到*/
 	sd = this_cpu_ptr(&softnet_data);
 	q->next_sched = NULL;
+	/*将这个Q放到CPU的softnet_data的output_queue_tailp*/
 	*sd->output_queue_tailp = q;
 	sd->output_queue_tailp = &q->next_sched;
 	raise_softirq_irqoff(NET_TX_SOFTIRQ);
@@ -2536,23 +2538,25 @@ struct sk_buff *skb_mac_gso_segment(struct sk_buff *skb,
 {
 	struct sk_buff *segs = ERR_PTR(-EPROTONOSUPPORT);
 	struct packet_offload *ptype;
-	int vlan_depth = skb->mac_len;
-	__be16 type = skb_network_protocol(skb, &vlan_depth);
+	int vlan_depth = skb->mac_len;  //__skb_gso_segment函数中计算得到
+	__be16 type = skb_network_protocol(skb, &vlan_depth); //得到skb协议
 
 	if (unlikely(!type))
 		return ERR_PTR(-EINVAL);
-
+	//skb data指针移动到IP头
 	__skb_pull(skb, vlan_depth);
 
 	rcu_read_lock();
 	list_for_each_entry_rcu(ptype, &offload_base, list) {
 		if (ptype->type == type && ptype->callbacks.gso_segment) {
+			//调用IP层的GSO segment函数
+			//->inet_gso_segment
 			segs = ptype->callbacks.gso_segment(skb, features);
 			break;
 		}
 	}
 	rcu_read_unlock();
-
+	//skb data指针移动到MAC头
 	__skb_push(skb, skb->data - skb_mac_header(skb));
 
 	return segs;
@@ -2588,11 +2592,13 @@ struct sk_buff *__skb_gso_segment(struct sk_buff *skb,
 				  netdev_features_t features, bool tx_path)
 {
 	struct sk_buff *segs;
+	// 判断等于 skb->ip_summed != CHECKSUM_PARTIAL
 
 	if (unlikely(skb_needs_check(skb, tx_path))) {
 		int err;
 
 		/* We're going to init ->check field in TCP or UDP header */
+		//如果skb是克隆，则需要重新分配线性区
 		err = skb_cow_head(skb, 0);
 		if (err < 0)
 			return ERR_PTR(err);
@@ -2600,11 +2606,13 @@ struct sk_buff *__skb_gso_segment(struct sk_buff *skb,
 
 	BUILD_BUG_ON(SKB_SGO_CB_OFFSET +
 		     sizeof(*SKB_GSO_CB(skb)) > sizeof(skb->cb));
-
+	//设置mac_offset， 用于skb_segment分段拷贝外层报文
 	SKB_GSO_CB(skb)->mac_offset = skb_headroom(skb);
+	//encap_level为零，说明是最外层的报文
 	SKB_GSO_CB(skb)->encap_level = 0;
-
+	//重置mac header
 	skb_reset_mac_header(skb);
+	//重置mac len
 	skb_reset_mac_len(skb);
 
 	segs = skb_mac_gso_segment(skb, features);
@@ -2754,13 +2762,14 @@ static int xmit_one(struct sk_buff *skb, struct net_device *dev,
 {
 	unsigned int len;
 	int rc;
-
+	/*如果有抓包的工具的话，这个地方会进行抓包，such as Tcpdump*/
 	if (!list_empty(&ptype_all) || !list_empty(&dev->ptype_all))
-		dev_queue_xmit_nit(skb, dev);
+		dev_queue_xmit_nit(skb, dev);//报文处理，根据packet_type中的func进行处理
 
 	len = skb->len;
 	trace_net_dev_start_xmit(skb, dev);
-	rc = netdev_start_xmit(skb, dev, txq, more);
+	/*调用netdev_start_xmit，快到driver的tx函数了*/
+	rc = netdev_start_xmit(skb, dev, txq, more); //发送报文
 	trace_net_dev_xmit(skb, rc, dev, len);
 
 	return rc;
@@ -2773,16 +2782,20 @@ struct sk_buff *dev_hard_start_xmit(struct sk_buff *first, struct net_device *de
 	int rc = NETDEV_TX_OK;
 
 	while (skb) {
+		/*取出skb的下一个数据单元*/
 		struct sk_buff *next = skb->next;
-
+		 /*置空待发送数据包的next*/
 		skb->next = NULL;
-		rc = xmit_one(skb, dev, txq, next != NULL);
+	/*将此数据包送到driver Tx函数，因为dequeue的数据也会从这里发送，所以会有netx！*/
+		rc = xmit_one(skb, dev, txq, next != NULL);//发送一个skb报文
+		/*如果发送不成功，next还原到skb->next 退出*/
 		if (unlikely(!dev_xmit_complete(rc))) {
 			skb->next = next;
 			goto out;
 		}
-
+	/*如果发送成功，把next置给skb，一般的next为空 这样就返回，如果不为空就继续发！*/
 		skb = next;
+		/*如果txq被stop，并且skb需要发送，就产生TX Busy的问题！*/
 		if (netif_xmit_stopped(txq) && skb) {
 			rc = NETDEV_TX_BUSY;
 			break;
@@ -2806,18 +2819,18 @@ static struct sk_buff *validate_xmit_vlan(struct sk_buff *skb,
 static struct sk_buff *validate_xmit_skb(struct sk_buff *skb, struct net_device *dev)
 {
 	netdev_features_t features;
-
+	//validate_xmit_skb_list调用的场景，此条件不成立
 	if (skb->next)
 		return skb;
-
+	//获取设备的feature
 	features = netif_skb_features(skb);
 	skb = validate_xmit_vlan(skb, features);
 	if (unlikely(!skb))
 		goto out_null;
-
+	//判断features是否包含skb->gso_type
 	if (netif_needs_gso(skb, features)) {
 		struct sk_buff *segs;
-
+	//报文GSO分段
 		segs = skb_gso_segment(skb, features);
 		if (IS_ERR(segs)) {
 			goto out_kfree_skb;
@@ -2866,7 +2879,7 @@ struct sk_buff *validate_xmit_skb_list(struct sk_buff *skb, struct net_device *d
 		/* in case skb wont be segmented, point to itself */
 		skb->prev = skb;
 
-		skb = validate_xmit_skb(skb, dev);
+		skb = validate_xmit_skb(skb, dev); //校验每一个skb报文
 		if (!skb)
 			continue;
 
@@ -2940,14 +2953,18 @@ static inline int __dev_xmit_skb(struct sk_buff *skb, struct Qdisc *q,
 	 * This permits __QDISC___STATE_RUNNING owner to get the lock more
 	 * often and dequeue packets faster.
 	 */
+	 //判断qdisc是否运行
 	contended = qdisc_is_running(q);
 	if (unlikely(contended))
 		spin_lock(&q->busylock);
 
 	spin_lock(root_lock);
+	/*这个地方主要是判定Qdisc的state: __QDISC_STATE_DEACTIVATED,如果处于非活动的状态，就DROP这个包，返回NET_XMIT_DROP
+	 *一般情况下带有Qdisc策略的interface，在被close的时候才会打上这个flag */
 	if (unlikely(test_bit(__QDISC_STATE_DEACTIVATED, &q->state))) {
 		kfree_skb(skb);
 		rc = NET_XMIT_DROP;
+	//qisc没有运行，且没有缓存报文，则直接可以发送报文
 	} else if ((q->flags & TCQ_F_CAN_BYPASS) && !qdisc_qlen(q) &&
 		   qdisc_run_begin(q)) {
 		/*
@@ -2955,27 +2972,34 @@ static inline int __dev_xmit_skb(struct sk_buff *skb, struct Qdisc *q,
 		 * waiting to be sent out; and the qdisc is not running -
 		 * xmit the skb directly.
 		 */
-
+		/* 结合注释以及code来看，此处必须满足3个条件才可以进来，
+		* 1.flag必须有TCQ_F_CAN_BYPASS，默认条件下是有的，表明可以By PASS Qdisc规则
+		* 2.q的len为0，也就是说Qdisc中一个包也没有
+		* 3.Qdisc 起初并没有处于running的状态，然后置位Running！
+		* 满足上述3个条件调用sch_direct_xmit
+		*/
 		qdisc_bstats_update(q, skb);
-
+		/*这个函数*/
 		if (sch_direct_xmit(skb, q, dev, txq, root_lock, true)) {
 			if (unlikely(contended)) {
 				spin_unlock(&q->busylock);
 				contended = false;
 			}
-			__qdisc_run(q);
+			__qdisc_run(q); //发送qdisc缓冲队列中的报文，发送报文过程中进的队列
 		} else
 			qdisc_run_end(q);
 
 		rc = NET_XMIT_SUCCESS;
 	} else {
-		rc = q->enqueue(skb, q) & NET_XMIT_MASK;
-		if (qdisc_run_begin(q)) {
+		 /*如果上述3个条件其中任何一个或者多个不满足，就要进行enqueue操作了，这个地方其实就是表明通讯出现拥塞，需要进行管理了
+		*如果q不是运行状态，就设置成运行状况，如果一直是运行状态，那么就不用管了！*/
+		rc = q->enqueue(skb, q) & NET_XMIT_MASK; //qdisc running或者有缓存报文， 则把报文发动qdisc队列中
+		if (qdisc_run_begin(q)) {//如果qisc未运行，则尝试发送报文，否则不处理
 			if (unlikely(contended)) {
 				spin_unlock(&q->busylock);
 				contended = false;
 			}
-			__qdisc_run(q);
+			__qdisc_run(q); //发送qdisc缓冲队列中的报文
 		}
 	}
 	spin_unlock(root_lock);
@@ -3133,11 +3157,12 @@ struct netdev_queue *netdev_pick_tx(struct net_device *dev,
  */
 static int __dev_queue_xmit(struct sk_buff *skb, void *accel_priv)
 {
+	/*得到网络设备*/
 	struct net_device *dev = skb->dev;
 	struct netdev_queue *txq;
 	struct Qdisc *q;
 	int rc = -ENOMEM;
-
+	//设置mac header偏移
 	skb_reset_mac_header(skb);
 
 	if (unlikely(skb_shinfo(skb)->tx_flags & SKBTX_SCHED_TSTAMP))
@@ -3147,11 +3172,17 @@ static int __dev_queue_xmit(struct sk_buff *skb, void *accel_priv)
 	 * stops preemption for RCU.
 	 */
 	rcu_read_lock_bh();
-
+	////设置skb->priority值
 	skb_update_prio(skb);
 
 	/* If device/qdisc don't need skb->dst, release it right now while
 	 * its hot in this cpu cache.
+	 */
+	 //释放dst对象
+	 
+	/*这个地方看netdevcie的flag是否要去掉skb DST相关的信息，一般情况下这个flag是默认被设置的
+	 *在alloc_netdev_mqs的时候，已经默认给设置了，其实个人认为这个路由信息也没有太大作用了...
+	 *dev->priv_flags = IFF_XMIT_DST_RELEASE | IFF_XMIT_DST_RELEASE_PERM;
 	 */
 	if (dev->priv_flags & IFF_XMIT_DST_RELEASE)
 		skb_dst_drop(skb);
@@ -3167,7 +3198,9 @@ static int __dev_queue_xmit(struct sk_buff *skb, void *accel_priv)
 		goto out;
 	}
 #endif
-
+	//获取发送队列，根据报文计算出队列
+	/*此处主要是取出此netdevice的txq和txq的Qdisc,Qdisc主要用于进行拥塞处理，一般的情况下，直接将
+    *数据包发送给driver了，如果遇到Busy的状况，就需要进行拥塞处理了，就会用到Qdisc*/
 	txq = netdev_pick_tx(dev, skb, accel_priv);
 	q = rcu_dereference_bh(txq->qdisc);
 
@@ -3175,7 +3208,11 @@ static int __dev_queue_xmit(struct sk_buff *skb, void *accel_priv)
 	skb->tc_verd = SET_TC_AT(skb->tc_verd, AT_EGRESS);
 #endif
 	trace_net_dev_queue(skb);
+	/*如果Qdisc有对应的enqueue规则，就会调用__dev_xmit_skb，进入带有拥塞的控制的Flow，注意这个地方，虽然是走拥塞控制的
+	*Flow但是并不一定非得进行enqueue操作啦，只有Busy的状况下，才会走Qdisc的enqueue/dequeue操作进行
+	*/
 	if (q->enqueue) {
+		//发送报文，基本进此分支
 		rc = __dev_xmit_skb(skb, q, dev, txq);
 		goto out;
 	}
@@ -3192,6 +3229,9 @@ static int __dev_queue_xmit(struct sk_buff *skb, void *accel_priv)
 	   Check this and shot the lock. It is not prone from deadlocks.
 	   Either shot noqueue qdisc, it is even simpler 8)
 	 */
+	 
+	/*此处是设备没有Qdisc的，实际上没有enqueue/dequeue的规则，无法进行拥塞控制的操作，
+	*对于一些loopback/tunnel interface比较常见，判断下设备是否处于UP状态*/
 	if (dev->flags & IFF_UP) {
 		int cpu = smp_processor_id(); /* ok because BHs are off */
 
@@ -3205,10 +3245,10 @@ static int __dev_queue_xmit(struct sk_buff *skb, void *accel_priv)
 				goto drop;
 
 			HARD_TX_LOCK(dev, txq, cpu);
-
+/*这个地方判断一下txq不是stop状态，那么就直接调用dev_hard_start_xmit函数来发送数据*/
 			if (!netif_xmit_stopped(txq)) {
 				__this_cpu_inc(xmit_recursion);
-				skb = dev_hard_start_xmit(skb, dev, txq, &rc);
+				skb = dev_hard_start_xmit(skb, dev, txq, &rc);//调用驱动发送报文
 				__this_cpu_dec(xmit_recursion);
 				if (dev_xmit_complete(rc)) {
 					HARD_TX_UNLOCK(dev, txq);
@@ -3674,7 +3714,11 @@ EXPORT_SYMBOL(netif_rx_ni);
 static void net_tx_action(struct softirq_action *h)
 {
 	struct softnet_data *sd = this_cpu_ptr(&softnet_data);
-
+	//如果当前CPU的softnet_data中存在已完成输出待释放的数据包，则遍历completion_queue，释放其中所有数据包
+	 /*首先判断softnet_data里的completion_queue是否为空，对于发送而言，
+          *硬中断只是通过网卡把包发走，但是回收内存的事情是通过软中断来做的，
+          *设备驱动发送完数据之后，会调用dev_kfree_skb_irq，不过也有的设备比较个别
+          *自己去free，这个其实也没有什么问题的...省掉了软中断的处理*/
 	if (sd->completion_queue) {
 		struct sk_buff *clist;
 
@@ -3695,6 +3739,9 @@ static void net_tx_action(struct softirq_action *h)
 			__kfree_skb(skb);
 		}
 	}
+//如果当前CPU的softnet_data中存在待处理的输出网络设备，则遍历output_queue队列
+//调用qdisc_run来发送数据包或者再次调度包输出软中断，在合适的时机发送数据包
+	/*这个是output_queue，主要是没有发送完成的包了，就会调用qdisc_run去发送*/
 
 	if (sd->output_queue) {
 		struct Qdisc *head;
@@ -3940,6 +3987,13 @@ another_round:
 	if (pfmemalloc)
 		goto skip_taps;
 	/* 遍历注册在ptype_all上的所有节点。ptype_all上的节点需要处理收到的所有以太网数据包 */
+	   /*如果内核注册了协议嗅探器，把skb 拷贝一份传给它进行处理。
+      注意：
+      经过这轮循环，最后一个协议嗅探器的执行函数是没有被调用的，
+      放在下面进行调用，因为报文处理的最后一个处理函数被调用时
+      不需要进行skb  user 引用计数的加 1，所以，下一个处理函数会把
+      最后一个ptype 传递进去，如果该函数要处理掉该skb时，应该先执行
+      该ptype 处理函数后再执行自己的处理程序*/
 	list_for_each_entry_rcu(ptype, &ptype_all, list) {
 	 	/* 将数据包传递给对应的处理函数 */
 		if (pt_prev)
@@ -4032,6 +4086,8 @@ ncls:
 	遍历 ptype_base 散列表，通过接收到报文的传输层协议类型得到与之对应的报文接收例程，
 	然后调用该例程接收报文。
 	*/
+	    /*经过以上处理，报文没被消化掉，就在 ptype_base hash 表中
+      找到该报文的协议接收函数，送给相应协议处理*/
 	type = skb->protocol;
 
 	/* deliver only exact match when indicated */

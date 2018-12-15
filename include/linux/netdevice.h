@@ -562,7 +562,9 @@ struct netdev_queue {
  * read mostly part
  */
 	struct net_device	*dev;
+	// 这是发送数据时的队列处理
 	struct Qdisc __rcu	*qdisc;
+	// 网卡停止时保存网卡活动时的队列处理方法
 	struct Qdisc		*qdisc_sleeping;
 #ifdef CONFIG_SYSFS
 	struct kobject		kobj;
@@ -1710,6 +1712,8 @@ struct net_device {
 #ifdef CONFIG_NET_CLS_ACT
 	struct tcf_proto __rcu  *ingress_cl_list;
 #endif
+	// 这是对于接收数据时的队列处理
+
 	struct netdev_queue __rcu *ingress_queue;
 #ifdef CONFIG_NETFILTER_INGRESS
 	struct list_head	nf_hooks_ingress;
@@ -3770,7 +3774,7 @@ static inline netdev_tx_t __netdev_start_xmit(const struct net_device_ops *ops,
 					      bool more)
 {
 	skb->xmit_more = more ? 1 : 0;
-	return ops->ndo_start_xmit(skb, dev);
+	return ops->ndo_start_xmit(skb, dev); //调用设备驱动的发送函数
 }
 
 static inline netdev_tx_t netdev_start_xmit(struct sk_buff *skb, struct net_device *dev,
@@ -3778,8 +3782,10 @@ static inline netdev_tx_t netdev_start_xmit(struct sk_buff *skb, struct net_devi
 {
 	const struct net_device_ops *ops = dev->netdev_ops;
 	int rc;
-
-	rc = __netdev_start_xmit(ops, skb, dev, more);
+	/*__netdev_start_xmit 里面就完全是使用driver 的ops去发包了，其实到此为止，一个skb已经从netdevice
+	*这个层面送到driver层了，接下来会等待driver的返回*/
+	rc = __netdev_start_xmit(ops, skb, dev, more); //发送报文
+	/*如果返回NETDEV_TX_OK，那么会更新下Txq的trans时间戳，txq->trans_start = jiffies;*/
 	if (rc == NETDEV_TX_OK)
 		txq_trans_update(txq);
 
