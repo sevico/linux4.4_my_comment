@@ -199,14 +199,18 @@ struct gendisk {
 	struct hd_struct part0;
 
 	const struct block_device_operations *fops;
+	//内核使用该结构为设备管理I/O请求
 	struct request_queue *queue;
 	void *private_data;
 
 	int flags;
+	//指向磁盘物理设备的device目标
 	struct device *driverfs_dev;  // FIXME: remove
+	//嵌入在kobject中
 	struct kobject *slave_dir;
-
+	//指向记录磁盘中断时间的数据结构；由内核随机数产生器使用
 	struct timer_rand_state *random;
+	//仅由RAID使用，记录写到磁盘的扇区数
 	atomic_t sync_io;		/* RAID */
 	struct disk_events *ev;
 #ifdef  CONFIG_BLK_DEV_INTEGRITY

@@ -3010,6 +3010,8 @@ static int submit_bh_wbc(int rw, struct buffer_head *bh,
 	/*
 	 * Only clear out a write error when rewriting
 	 */
+	 //将缓冲区头的标志设置为BH_Req，这样表明该块至少提
+	 //交了一次。除此之外，若数据传输的方向是WRITE，则清除BH_Write_EIO标志
 	if (test_set_buffer_req(bh) && (rw & WRITE))
 		clear_buffer_write_io_error(bh);
 
@@ -3017,13 +3019,14 @@ static int submit_bh_wbc(int rw, struct buffer_head *bh,
 	 * from here on down, it's all bio -- do the initial mapping,
 	 * submit_bio -> generic_make_request may further map this bio around
 	 */
+	 //调用bio_alloc（）分配一个bio描述符
 	bio = bio_alloc(GFP_NOIO, 1);
 
 	if (wbc) {
 		wbc_init_bio(wbc, bio);
 		wbc_account_io(wbc, bh->b_page, bh->b_size);
 	}
-
+	//根据缓冲区头的内容来初始化bio描述符
 	bio->bi_iter.bi_sector = bh->b_blocknr * (bh->b_size >> 9);
 	bio->bi_bdev = bh->b_bdev;
 
