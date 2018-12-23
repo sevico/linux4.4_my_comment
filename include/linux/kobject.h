@@ -53,8 +53,10 @@ extern u64 uevent_seqnum;
 enum kobject_action {
 	KOBJ_ADD,// 添加
 	KOBJ_REMOVE,// 移除
+	//Kobject（或上层数据结构）的状态或者内容发生改变
 	KOBJ_CHANGE,// 状态变化
 	KOBJ_MOVE,// 更改名称或者更改 Parent
+	//ONLINE/OFFLINE，Kobject（或上层数据结构）的上线/下线事件，其实是是否使能。
 	KOBJ_ONLINE,// 上线
 	KOBJ_OFFLINE,// 下线
 	KOBJ_MAX
@@ -144,8 +146,9 @@ struct kobj_uevent_env {
 	// 当前 buf 长度
 	int buflen;
 };
-
+//kset_uevent_ops是为kset量身订做的一个数据结构，里面包含filter和uevent两个回调函数
 struct kset_uevent_ops {
+//当任何Kobject需要上报uevent时，它所属的kset可以通过该接口过滤，阻止不希望上报的event，从而达到从整体上管理的目的。
 	int (* const filter)(struct kset *kset, struct kobject *kobj);
 	const char *(* const name)(struct kset *kset, struct kobject *kobj);
 	int (* const uevent)(struct kset *kset, struct kobject *kobj,

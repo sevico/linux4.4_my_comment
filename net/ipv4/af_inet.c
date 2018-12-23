@@ -287,6 +287,7 @@ static int inet_create(struct net *net, struct socket *sock, int protocol,
 lookup_protocol:
 	err = -ESOCKTNOSUPPORT;
 	rcu_read_lock();
+	//从inetsw找到匹配的inet_protosw对象
 	list_for_each_entry_rcu(answer, &inetsw[sock->type], list) {
 
 		err = 0;
@@ -337,7 +338,7 @@ lookup_protocol:
 	if (sock->type == SOCK_RAW && !kern &&
 	    !ns_capable(net->user_ns, CAP_NET_RAW))
 		goto out_rcu_unlock;
-
+	//raw socket，对象为raw_prot
 	sock->ops = answer->ops;
 	answer_prot = answer->prot;
 	answer_flags = answer->flags;
@@ -363,8 +364,9 @@ lookup_protocol:
 	inet->is_icsk = (INET_PROTOSW_ICSK & answer_flags) != 0;
 
 	inet->nodefrag = 0;
-
+	//raw socket
 	if (SOCK_RAW == sock->type) {
+		//如果是raw socket，则inet_num设置为protocol值
 		inet->inet_num = protocol;
 		if (IPPROTO_RAW == protocol)
 			inet->hdrincl = 1;
@@ -376,7 +378,7 @@ lookup_protocol:
 		inet->pmtudisc = IP_PMTUDISC_WANT;
 
 	inet->inet_id = 0;
-
+	//sock对象初始化
 	sock_init_data(sock, sk);
 
 	sk->sk_destruct	   = inet_sock_destruct;
@@ -392,7 +394,7 @@ lookup_protocol:
 	inet->rcv_tos	= 0;
 
 	sk_refcnt_debug_inc(sk);
-
+	//raw socket该值等于protocol，条件成立
 	if (inet->inet_num) {
 		/* It assumes that any protocol which allows
 		 * the user to assign a number at socket
@@ -402,10 +404,12 @@ lookup_protocol:
 		inet->inet_sport = htons(inet->inet_num);
 		/* Add to protocol hash chains. */
 		//插入内核哈希表
+		//sock放到hash表中，raw socket对应raw_hash_sk函数
 		sk->sk_prot->hash(sk);
 	}
 
 	if (sk->sk_prot->init) {
+		//raw socket对应raw_init函数
 		err = sk->sk_prot->init(sk);
 		if (err)
 			sk_common_release(sk);

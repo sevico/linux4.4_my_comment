@@ -1288,7 +1288,7 @@ static inline struct kmem_cache *slab_pre_alloc_hook(struct kmem_cache *s,
 
 	if (should_failslab(s->object_size, flags, s->flags))
 		return NULL;
-
+	//将kmem_cache结构指针转换为mcgroup组的kmem_cache指针
 	return memcg_kmem_get_cache(s, flags);
 }
 
@@ -2526,6 +2526,7 @@ redo:
 
 	object = c->freelist;
 	page = c->page;
+	//判断当前CPU的slab空闲列表是否为空或者当前slab使用内存页面与管理节点是否不匹配
 	if (unlikely(!object || !node_match(page, node))) {
 		object = __slab_alloc(s, gfpflags, node, addr, c);
 		stat(s, ALLOC_SLOWPATH);
@@ -3022,6 +3023,7 @@ static inline int slab_order(int size, int min_objects,
 {
 	int order;
 	int rem;
+	//表示slab的内存未使用率
 	int min_order = slub_min_order;
 
 	if (order_objects(min_order, size, reserved) > MAX_OBJS_PER_PAGE)
@@ -3231,6 +3233,7 @@ static int calculate_sizes(struct kmem_cache *s, int forced_order)
 	 * place the free pointer at word boundaries and this determines
 	 * the possible location of the free pointer.
 	 */
+	 //将slab对象的大小舍入对与sizeof(void *)指针大小对齐
 	size = ALIGN(size, sizeof(void *));
 
 #ifdef CONFIG_SLUB_DEBUG
@@ -3239,6 +3242,7 @@ static int calculate_sizes(struct kmem_cache *s, int forced_order)
 	 * the slab may touch the object after free or before allocation
 	 * then we should never poison the object itself.
 	 */
+	 //判断用户是否会在对象释放后或者申请前访问
 	if ((flags & SLAB_POISON) && !(flags & SLAB_DESTROY_BY_RCU) &&
 			!s->ctor)
 		s->flags |= __OBJECT_POISON;
@@ -3251,6 +3255,7 @@ static int calculate_sizes(struct kmem_cache *s, int forced_order)
 	 * end of the object and the free pointer. If not then add an
 	 * additional word to have some bytes to store Redzone information.
 	 */
+	 //对象前后设置RedZone信息，通过检查该信息以扑捉Buffer溢出的问题
 	if ((flags & SLAB_RED_ZONE) && size == s->object_size)
 		size += sizeof(void *);
 #endif
@@ -3259,8 +3264,9 @@ static int calculate_sizes(struct kmem_cache *s, int forced_order)
 	 * With that we have determined the number of bytes in actual use
 	 * by the object. This is the potential offset to the free pointer.
 	 */
+	 //设置kmem_cache的inuse成员以表示元数据的偏移量
 	s->inuse = size;
-
+	//判断是否允许对象写越界，如果不允许则重定位空闲对象指针到对象的末尾，并设置kmem_cache结构的offset（即对象指针的偏移），同时调整size为包含空闲对象指针
 	if (((flags & (SLAB_DESTROY_BY_RCU | SLAB_POISON)) ||
 		s->ctor)) {
 		/*
@@ -3332,6 +3338,7 @@ static int calculate_sizes(struct kmem_cache *s, int forced_order)
 
 static int kmem_cache_open(struct kmem_cache *s, unsigned long flags)
 {
+	//获取设置缓存描述的标识，用于区分slub是否开启了调试
 	s->flags = kmem_cache_flags(s->size, flags, s->name, s->ctor);
 	s->reserved = 0;
 
@@ -3938,6 +3945,7 @@ __kmem_cache_alias(const char *name, size_t size, size_t align,
 	struct kmem_cache *s, *c;
 
 	s = find_mergeable(size, align, flags, name, ctor);
+	//如果这样的kmem_cache对象存在
 	if (s) {
 		s->refcount++;
 
@@ -3966,7 +3974,7 @@ __kmem_cache_alias(const char *name, size_t size, size_t align,
 int __kmem_cache_create(struct kmem_cache *s, unsigned long flags)
 {
 	int err;
-
+	//初始化slub结构
 	err = kmem_cache_open(s, flags);
 	if (err)
 		return err;

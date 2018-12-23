@@ -362,8 +362,11 @@ static long timerfd_ioctl(struct file *file, unsigned int cmd, unsigned long arg
 #endif
 
 static const struct file_operations timerfd_fops = {
+//函数释放timerfd_create函数中申请的资源，删除已分配的定时器
 	.release	= timerfd_release,
+	//timerfd的等待队列登记到一个poll_table，从而在定时器超时时能唤醒select系统调用
 	.poll		= timerfd_poll,
+	//读到的是定时器的超时次数。该函数在阻塞模式下会把自身挂到timerfd的等待队列中，等待定时器超时时被唤醒
 	.read		= timerfd_read,
 	.llseek		= noop_llseek,
 	.show_fdinfo	= timerfd_show,
@@ -417,7 +420,7 @@ SYSCALL_DEFINE2(timerfd_create, int, clockid, int, flags)
 		hrtimer_init(&ctx->t.tmr, clockid, HRTIMER_MODE_ABS);
 
 	ctx->moffs = ktime_mono_to_real((ktime_t){ .tv64 = 0 });
-
+	//配一个dentry，并得到一个文件号fd，同时传入timerfd的文件操作指针struct file_operations timerfd_fops
 	ufd = anon_inode_getfd("[timerfd]", &timerfd_fops, ctx,
 			       O_RDWR | (flags & TFD_SHARED_FCNTL_FLAGS));
 	if (ufd < 0)

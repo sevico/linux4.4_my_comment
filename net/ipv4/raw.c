@@ -95,12 +95,14 @@ static struct raw_hashinfo raw_v4_hashinfo = {
 
 void raw_hash_sk(struct sock *sk)
 {
+	//h.raw_hash即为raw_v4_hashinfo，和收包中的全局对象对上了
 	struct raw_hashinfo *h = sk->sk_prot->h.raw_hash;
 	struct hlist_head *head;
-
+	//通过inet_num（即protocol）计算出链表的header
 	head = &h->ht[inet_sk(sk)->inet_num & (RAW_HTABLE_SIZE - 1)];
 
 	write_lock_bh(&h->lock);
+	//sock添加到head中
 	sk_add_node(sk, head);
 	sock_prot_inuse_add(sock_net(sk), sk->sk_prot, 1);
 	write_unlock_bh(&h->lock);
@@ -182,6 +184,7 @@ static int raw_v4_input(struct sk_buff *skb, const struct iphdr *iph, int hash)
 	struct net *net;
 	 /* 与raw_local_deliver不同，因为需要使用到头结点中的内容，所以需要对这个桶上锁，才能保证
  在处理这个桶的过程中，所有节点都是有效的。*/
+ //得到相同hash的sock链表
 	read_lock(&raw_v4_hashinfo.lock);
 	  /* 再次检查头结点 */
 	head = &raw_v4_hashinfo.ht[hash];
@@ -190,6 +193,7 @@ static int raw_v4_input(struct sk_buff *skb, const struct iphdr *iph, int hash)
 	 /* 获得网络名称空间 */
 	net = dev_net(skb->dev);
 	 /* 查询匹配的原始套接字 */
+	//sock是否能够接收报文，匹配ip源地址、ip目的地址等
 	sk = __raw_v4_lookup(net, __sk_head(head), iph->protocol,
 			     iph->saddr, iph->daddr,
 			     skb->dev->ifindex);
@@ -197,6 +201,7 @@ static int raw_v4_input(struct sk_buff *skb, const struct iphdr *iph, int hash)
 	while (sk) {
 		delivered = 1;
 		 /* 如果数据包不是ICMP数据包，或者不是被指定要过滤的ICMP类型 */
+		//非组播报文，或者组播报文允许通过
 		if ((iph->protocol != IPPROTO_ICMP || !icmp_filter(sk, skb)) &&
 		    ip_mc_sf_allow(sk, iph->daddr, iph->saddr,
 				   skb->dev->ifindex)) {
@@ -331,6 +336,7 @@ static int raw_rcv_skb(struct sock *sk, struct sk_buff *skb)
 	/* Charge it to the socket. */
 
 	ipv4_pktinfo_prepare(sk, skb);
+	//放入sock的收包队列，并唤醒等待进程
 	if (sock_queue_rcv_skb(sk, skb) < 0) {
 		kfree_skb(skb);
 		return NET_RX_DROP;
@@ -341,15 +347,16 @@ static int raw_rcv_skb(struct sock *sk, struct sk_buff *skb)
 
 int raw_rcv(struct sock *sk, struct sk_buff *skb)
 {
+	//提交报文到sock
 	if (!xfrm4_policy_check(sk, XFRM_POLICY_IN, skb)) {
 		atomic_inc(&sk->sk_drops);
 		kfree_skb(skb);
 		return NET_RX_DROP;
 	}
 	nf_reset(skb);
-
+	//报文移动到ip头，用户看到报文时候包含了IP头
 	skb_push(skb, skb->data - skb_network_header(skb));
-
+	//sock接收报文
 	raw_rcv_skb(sk, skb);
 	return 0;
 }
@@ -804,6 +811,7 @@ static int raw_init(struct sock *sk)
 	struct raw_sock *rp = raw_sk(sk);
 
 	if (inet_sk(sk)->inet_num == IPPROTO_ICMP)
+		//如果是icmp协议，那么初始化filter为0
 		memset(&rp->filter, 0, sizeof(rp->filter));
 	return 0;
 }

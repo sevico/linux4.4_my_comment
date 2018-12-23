@@ -265,21 +265,23 @@ struct kmem_cache *find_mergeable(size_t size, size_t align,
 		return NULL;
 
 	list_for_each_entry_reverse(s, &slab_caches, list) {
+	//判断缓冲区属性的标识及slab的对象是否有特定的初始化构造函数，如果不允许合并则跳过
 		if (slab_unmergeable(s))
 			continue;
 
 		if (size > s->size)
 			continue;
-
+//判断当前的kmem_cache与查找的标识类型是否一致，不是则跳过
 		if ((flags & SLAB_MERGE_SAME) != (s->flags & SLAB_MERGE_SAME))
 			continue;
 		/*
 		 * Check if alignment is compatible.
 		 * Courtesy of Adrian Drzewiecki
 		 */
+		 //判断对齐量是否匹配
 		if ((s->size & ~(align - 1)) != s->size)
 			continue;
-
+		//判断大小相差是否超过指针类型大小
 		if (s->size - size >= sizeof(void *))
 			continue;
 
@@ -341,7 +343,7 @@ static struct kmem_cache *create_cache(const char *name,
 	err = init_memcg_params(s, memcg, root_cache);
 	if (err)
 		goto out_free_cache;
-
+	//申请并创建slub的管理结构及kmem_cache其他数据的初始化
 	err = __kmem_cache_create(s, flags);
 	if (err)
 		goto out_free_cache;
@@ -394,9 +396,9 @@ kmem_cache_create(const char *name, size_t size, size_t align,
 	get_online_cpus();
 	get_online_mems();
 	memcg_get_cache_ids();
-
+	//该锁保护全局kmem_cache链表
 	mutex_lock(&slab_mutex);
-
+	//检查参数
 	err = kmem_cache_sanity_check(name, size);
 	if (err) {
 		goto out_unlock;
@@ -409,7 +411,7 @@ kmem_cache_create(const char *name, size_t size, size_t align,
 	 * passed flags.
 	 */
 	flags &= CACHE_CREATE_MASK;
-
+	//查找与当前创建参数匹配的，可以合并的kmem_cache对象
 	s = __kmem_cache_alias(name, size, align, flags, ctor);
 	if (s)
 		goto out_unlock;
@@ -774,7 +776,7 @@ void __init create_boot_cache(struct kmem_cache *s, const char *name, size_t siz
 	s->align = calculate_alignment(flags, ARCH_KMALLOC_MINALIGN, size);
 
 	slab_init_memcg_params(s);
-
+	//kmem_cache结构初始化
 	err = __kmem_cache_create(s, flags);
 
 	if (err)
