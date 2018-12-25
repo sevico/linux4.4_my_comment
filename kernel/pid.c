@@ -400,13 +400,15 @@ static void __change_pid(struct task_struct *task, enum pid_type type,
 	struct pid_link *link;
 	struct pid *pid;
 	int tmp;
-
+	//取得了link为指定程序对应到的pid_link
 	link = &task->pids[type];
+	//原本的pid结构存在局部变量	中
 	pid = link->pid;
-
+	//通过hlist相关的宏将该pid从链表上卸下(在上一层的attach_pid中重新加入)
 	hlist_del_rcu(&link->node);
+	//将list的pid成员指定为新的、使用者传入的程序群组对应到的pid
 	link->pid = new;
-
+	//循环是为了判断是否这个pid结构仍然有其他的程序在使用，如果还有的话就不需要执行到412行的free
 	for (tmp = PIDTYPE_MAX; --tmp >= 0; )
 		if (!hlist_empty(&pid->tasks[tmp]))
 			return;
@@ -423,6 +425,7 @@ void change_pid(struct task_struct *task, enum pid_type type,
 		struct pid *pid)
 {
 	__change_pid(task, type, pid);
+	//将pid_link加回hlist
 	attach_pid(task, type);
 }
 

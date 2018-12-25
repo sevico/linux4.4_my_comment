@@ -924,9 +924,10 @@ SYSCALL_DEFINE2(setpgid, pid_t, pid, pid_t, pgid)
 	struct task_struct *group_leader = current->group_leader;
 	struct pid *pgrp;
 	int err;
-
+	//如果pid为0，则设置当前进程的pgid
 	if (!pid)
 		pid = task_pid_vnr(group_leader);
+	//如果pgid为0，则将pid的pgid设置为他自身的pid
 	if (!pgid)
 		pgid = pid;
 	if (pgid < 0)
@@ -939,16 +940,19 @@ SYSCALL_DEFINE2(setpgid, pid_t, pid, pid_t, pgid)
 	write_lock_irq(&tasklist_lock);
 
 	err = -ESRCH;
+	//用pid编号找到对应的task_struct(被设置的进程)
 	p = find_task_by_vpid(pid);
 	if (!p)
 		goto out;
 
 	err = -EINVAL;
+	//该task_struct必须为进程中的主线程
 	if (!thread_group_leader(p))
 		goto out;
-
+	//被设置进程的父进程要与当前进程的父进程在同一个线程组
 	if (same_thread_group(p->real_parent, group_leader)) {
 		err = -EPERM;
+		//并且在同一个会话
 		if (task_session(p) != task_session(group_leader))
 			goto out;
 		err = -EACCES;
@@ -965,11 +969,13 @@ SYSCALL_DEFINE2(setpgid, pid_t, pid, pid_t, pgid)
 		goto out;
 
 	pgrp = task_pid(p);
+	//如果要被设置的新 process group ID不是自身(pgid传入非0)
 	if (pgid != pid) {
 		struct task_struct *g;
 
 		pgrp = find_vpid(pgid);
 		g = pid_task(pgrp, PIDTYPE_PGID);
+		//新的进程组leader应与原进程组leader在同一session
 		if (!g || task_session(g) != task_session(group_leader))
 			goto out;
 	}

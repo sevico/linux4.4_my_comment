@@ -135,7 +135,7 @@ int copy_thread_tls(unsigned long clone_flags, unsigned long sp,
 	struct pt_regs *childregs = task_pt_regs(p);
 	struct task_struct *tsk;
 	int err;
-
+	 //获取寄存器信息记录到thread_struct结构体
 	p->thread.sp = (unsigned long) childregs;
 	p->thread.sp0 = (unsigned long) (childregs+1);
 	memset(p->thread.ptrace_bps, 0, sizeof(p->thread.ptrace_bps));
@@ -156,7 +156,9 @@ int copy_thread_tls(unsigned long clone_flags, unsigned long sp,
 		p->thread.io_bitmap_ptr = NULL;
 		return 0;
 	}
+	 //当前寄存器数据复制给新创建的子进程
 	*childregs = *current_pt_regs();
+	//子进程eax设置为0，故fork在子进程返回值为0
 	childregs->ax = 0;
 	if (sp)
 		childregs->sp = sp;
@@ -183,6 +185,7 @@ int copy_thread_tls(unsigned long clone_flags, unsigned long sp,
 	/*
 	 * Set a new TLS for the child thread?
 	 */
+	 //设置新的TLS
 	if (clone_flags & CLONE_SETTLS)
 		err = do_set_thread_area(p, -1,
 			(struct user_desc __user *)tls, 0);

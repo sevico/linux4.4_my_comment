@@ -468,6 +468,7 @@ struct mm_struct {
 	struct vm_area_struct *mmap;		/* list of VMAs */
 	/* 指向线性区对象的红黑树的根，一个内存描述符的线性区会用两种方法组织，链表和红黑树，红黑树适合内存描述符有非常多线性区的情况 */
 	struct rb_root mm_rb;
+	//每个线程的vma缓存
 	u32 vmacache_seqnum;                   /* per-thread vmacache */
 #ifdef CONFIG_MMU
 	/* 在进程地址空间中找一个可以使用的线性地址空间，查找一个空闲的地址区间
@@ -500,6 +501,7 @@ struct mm_struct {
 
 	int map_count;				/* number of VMAs */
 	/* 线性区的自旋锁和页表的自旋锁 */
+	//用于保活页表和一些计数
 	spinlock_t page_table_lock;		/* Protects page tables and some counters */
 	/* 线性区的读写信号量，当需要对某个线性区进行操作时，会获取 */
 

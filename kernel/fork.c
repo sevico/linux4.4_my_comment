@@ -998,16 +998,16 @@ static struct mm_struct *dup_mm(struct task_struct *tsk)
 {
 	struct mm_struct *mm, *oldmm = current->mm;
 	int err;
-
+	//分配内存
 	mm = allocate_mm();
 	if (!mm)
 		goto fail_nomem;
 
 	memcpy(mm, oldmm, sizeof(*mm));
-
+	//初始化mm
 	if (!mm_init(mm, tsk, mm->user_ns))
 		goto fail_nomem;
-
+	//拷贝内存信息
 	err = dup_mmap(mm, oldmm);
 	if (err)
 		goto free_pt;
@@ -1675,7 +1675,7 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 	INIT_LIST_HEAD(&p->thread_group);
 	p->task_works = NULL;
 
-	 (current);
+	cgroup_threadgroup_change_begin(current);
 	/*
 	 * Ensure that the cgroup subsystem policies allow the new process to be
 	 * forked. It should be noted the the new process's css_set can be changed

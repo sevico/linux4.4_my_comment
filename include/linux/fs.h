@@ -690,6 +690,7 @@ struct inode {
 
 #ifdef CONFIG_FSNOTIFY
 	__u32			i_fsnotify_mask; /* all events this inode cares about */
+//它集合了所有监控它的group
 	struct hlist_head	i_fsnotify_marks;
 #endif
 
