@@ -132,9 +132,12 @@ int fsnotify_add_inode_mark(struct fsnotify_mark *mark,
 	assert_spin_locked(&mark->lock);
 
 	spin_lock(&inode->i_lock);
+	//在mark中记录下inode的信息
 	mark->inode = inode;
+	//mark挂到inode存放所有监视该inode的所有mark实例的链表
 	ret = fsnotify_add_mark_list(&inode->i_fsnotify_marks, mark,
 				     allow_dups);
+	//重新计算当前inode节点被关注的事件
 	inode->i_fsnotify_mask = fsnotify_recalc_mask(&inode->i_fsnotify_marks);
 	spin_unlock(&inode->i_lock);
 

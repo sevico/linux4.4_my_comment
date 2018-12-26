@@ -1073,6 +1073,7 @@ static void set_special_pids(struct pid *pid)
 
 SYSCALL_DEFINE0(setsid)
 {
+	//group leader : 线程组领头线程指针
 	struct task_struct *group_leader = current->group_leader;
 	struct pid *sid = task_pid(group_leader);
 	pid_t session = pid_vnr(sid);

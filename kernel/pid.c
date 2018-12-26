@@ -404,7 +404,7 @@ static void __change_pid(struct task_struct *task, enum pid_type type,
 	link = &task->pids[type];
 	//原本的pid结构存在局部变量	中
 	pid = link->pid;
-	//通过hlist相关的宏将该pid从链表上卸下(在上一层的attach_pid中重新加入)
+	//通过hlist相关的宏将该pid从哈希链表上卸下(在上一层的attach_pid中重新加入)
 	hlist_del_rcu(&link->node);
 	//将list的pid成员指定为新的、使用者传入的程序群组对应到的pid
 	link->pid = new;

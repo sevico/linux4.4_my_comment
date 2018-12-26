@@ -130,8 +130,9 @@ struct fsnotify_group {
 	 * inotify_init() and the refcnt will hit 0 only when that fd has been
 	 * closed.
 	 */
+	 /* 引用数 */
 	atomic_t refcnt;		/* things with interest in this group */
-
+	/* 用于事件处理的函数*/
 	const struct fsnotify_ops *ops;	/* how this group handles things */
 
 	/* needed to send notification to userspace */
@@ -139,6 +140,7 @@ struct fsnotify_group {
 	struct list_head notification_list;	/* list of event_holder this group needs to send to userspace */
 	wait_queue_head_t notification_waitq;	/* read() on the notification file blocks on this waitq */
 	unsigned int q_len;			/* events on the queue */
+	/* 允许在列表的最大事件数 */
 	unsigned int max_events;		/* maximum events allowed on the list */
 	/*
 	 * Valid fsnotify group priorities.  Events are send in order from highest
@@ -155,6 +157,7 @@ struct fsnotify_group {
 	atomic_t num_marks;		/* 1 for each mark and 1 for not being
 					 * past the point of no return when freeing
 					 * a group */
+	/*由该group处理的所有mark */
 	struct list_head marks_list;	/* all inode marks for this group */
 
 	struct fasync_struct *fsn_fa;    /* async notification */
@@ -210,20 +213,24 @@ struct fsnotify_group {
  */
 struct fsnotify_mark {
 	/* Mask this mark is for [mark->lock, group->mark_mutex] */
+	/* 事件掩码，表示要监视哪些事件 */
 	__u32 mask;
 	/* We hold one for presence in g_list. Also one ref for each 'thing'
 	 * in kernel that found and may be using this mark. */
 	atomic_t refcnt;
 	/* Group this mark is for. Set on mark creation, stable until last ref
 	 * is dropped */
+	 /*为监视指定的group,用于处理监视到的事件*/
 	struct fsnotify_group *group;
 	/* List of marks by group->i_fsnotify_marks. Also reused for queueing
 	 * mark into destroy_list when it's waiting for the end of SRCU period
 	 * before it can be freed. [group->mark_mutex] */
+	 //同一fsnotify_group下的fsnotify_mark通过该字段挂载在fsnotify_group->marks_list
 	struct list_head g_list;
 	/* Protects inode / mnt pointers, flags, masks */
 	spinlock_t lock;
 	/* List of marks for inode / vfsmount [obj_lock] */
+	/*用于链接同一个目录下的所有监视实例*/
 	struct hlist_node obj_list;
 	union {	/* Object pointer [mark->lock, group->mark_mutex] */
 		struct inode *inode;	/* inode this mark is associated with */
@@ -237,7 +244,9 @@ struct fsnotify_mark {
 #define FSNOTIFY_MARK_FLAG_IGNORED_SURV_MODIFY	0x08
 #define FSNOTIFY_MARK_FLAG_ALIVE		0x10
 #define FSNOTIFY_MARK_FLAG_ATTACHED		0x20
+	/* 监视的时inode还是vfsmount? */
 	unsigned int flags;		/* flags [mark->lock] */
+	/*释放函数*/
 	void (*free_mark)(struct fsnotify_mark *mark); /* called on final put+free */
 };
 

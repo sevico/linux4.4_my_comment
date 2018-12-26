@@ -32,6 +32,7 @@ void __ptrace_link(struct task_struct *child, struct task_struct *new_parent,
 		   const struct cred *ptracer_cred)
 {
 	BUG_ON(!list_empty(&child->ptrace_entry));
+	//把当前进程 ptrace_entry 表添加到真实 parent的 ptraced 链表中----From : PTREACEME
 	list_add(&child->ptrace_entry, &new_parent->ptraced);
 	child->parent = new_parent;
 	child->ptracer_cred = get_cred(ptracer_cred);
@@ -324,10 +325,11 @@ static int ptrace_attach(struct task_struct *task, long request,
 	} else {
 		flags = PT_PTRACED;
 	}
-
+	//audit_ptrace，把 tracee线程的进程信息保存在当前进程 current->audit_context信息中，以做统计
 	audit_ptrace(task);
 
 	retval = -EPERM;
+	//不允许 attach kernel thread，不允许 attach当前线程组内的线程
 	if (unlikely(task->flags & PF_KTHREAD))
 		goto out;
 	if (same_thread_group(task, current))
@@ -341,7 +343,7 @@ static int ptrace_attach(struct task_struct *task, long request,
 	retval = -ERESTARTNOINTR;
 	if (mutex_lock_interruptible(&task->signal->cred_guard_mutex))
 		goto out;
-
+	//检查是否具有调试 tracee的权限 (uid，gid等检测，tracee是否是 dumpable的)
 	task_lock(task);
 	retval = __ptrace_may_access(task, PTRACE_MODE_ATTACH_REALCREDS);
 	task_unlock(task);
@@ -350,18 +352,22 @@ static int ptrace_attach(struct task_struct *task, long request,
 
 	write_lock_irq(&tasklist_lock);
 	retval = -EPERM;
+	//tracee 处于退出状态时不能被调试
 	if (unlikely(task->exit_state))
 		goto unlock_tasklist;
+	//tracee 线程是否已经被其他进程调试
 	if (task->ptrace)
 		goto unlock_tasklist;
 
 	if (seize)
 		flags |= PT_SEIZED;
+	//设置 tracee->ptrace 为被调试状态
 	task->ptrace = flags;
-
+	//ptrace_link 把 tracee进程的 parent设置为当前进程，并把 tracee 添加到当前进程的 ptraced表中
 	ptrace_link(task, current);
 
 	/* SEIZE doesn't trap tracee on attach */
+	//如果不是 PTRACE_SEIZE，而是 PTRACE_ATTACH，则给 tracee 进程发送 SIGSTOP 信号
 	if (!seize)
 		send_sig_info(SIGSTOP, SEND_SIG_FORCED, task);
 
@@ -384,12 +390,13 @@ static int ptrace_attach(struct task_struct *task, long request,
 	 * The following task_is_stopped() test is safe as both transitions
 	 * in and out of STOPPED are protected by siglock.
 	 */
+	 //如果 tracee已经是 STOPPED状态，则将其切换为 TRACED状态(在函数返回时保证已经切换成功);
 	if (task_is_stopped(task) &&
 	    task_set_jobctl_pending(task, JOBCTL_TRAP_STOP | JOBCTL_TRAPPING))
 		signal_wake_up_state(task, __TASK_STOPPED);
 
 	spin_unlock(&task->sighand->siglock);
-
+	//如果还没有称为 STOPPED状态，则不用做第9步处理，且在该函数返回时，也不必保证状态已经是 STOPPED 状态
 	retval = 0;
 unlock_tasklist:
 	write_unlock_irq(&tasklist_lock);
@@ -399,6 +406,7 @@ out:
 	if (!retval) {
 		wait_on_bit(&task->jobctl, JOBCTL_TRAPPING_BIT,
 			    TASK_UNINTERRUPTIBLE);
+		//最后调用 proc_ptrace_connector设置 cn_proc_event_id信息，包括 timestamp，process_pid，process_tgid等
 		proc_ptrace_connector(task, PTRACE_ATTACH);
 	}
 
@@ -493,7 +501,9 @@ static int ptrace_detach(struct task_struct *child, unsigned int data)
 		return -EIO;
 
 	/* Architecture-specific hardware disable .. */
+	//依次 disbale tracee的 attach能力
 	ptrace_disable(child);
+	//清空 tracee进程的 TIF_SYSCALL_TRACE标志
 	clear_tsk_thread_flag(child, TIF_SYSCALL_TRACE);
 
 	write_lock_irq(&tasklist_lock);
@@ -506,10 +516,12 @@ static int ptrace_detach(struct task_struct *child, unsigned int data)
 	 * tasklist_lock avoids the race with wait_task_stopped(), see
 	 * the comment in ptrace_resume().
 	 */
+	 //置 tracee的 exit_code 为 ptrace调用中的有效信号 data
 	child->exit_code = data;
+	//调用 __ptrace_detach，__ptrace_unlink(tracer/tracee task_struct还原)，
 	__ptrace_detach(current, child);
 	write_unlock_irq(&tasklist_lock);
-
+	//用 proc_ptrace_connector 清空 cn_proc_event_id信息，包括 timestamp，process_pid，process_tgid等
 	proc_ptrace_connector(child, PTRACE_DETACH);
 
 	return 0;
@@ -746,7 +758,7 @@ static int ptrace_resume(struct task_struct *child, long request,
 
 	if (!valid_signal(data))
 		return -EIO;
-
+	//如果 request是 PTRACE_SYSCALL，则给 tracee进程设置 TIF_SYSCALL_TRACE标志，否则清除这个标志
 	if (request == PTRACE_SYSCALL)
 		set_tsk_thread_flag(child, TIF_SYSCALL_TRACE);
 	else
@@ -1109,7 +1121,8 @@ SYSCALL_DEFINE4(ptrace, long, request, long, pid, unsigned long, addr,
 			arch_ptrace_attach(child);
 		goto out_put_task_struct;
 	}
-
+	//如果当前的 ptrace request不是，PTRACE_KILL 或者 PTRACE_INTERRUPT，那么要先保证 tracee是 TASK_TRACED 状态，才能执行能request
+	//如果是这两个 request，则当前 tracee 在任何状态下都可以执行这两个 request
 	ret = ptrace_check_attach(child, request == PTRACE_KILL ||
 				  request == PTRACE_INTERRUPT);
 	if (ret < 0)
