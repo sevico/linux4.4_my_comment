@@ -322,6 +322,7 @@ SYSCALL_DEFINE1(brk, unsigned long, brk)
 
 	newbrk = PAGE_ALIGN(brk);
 	oldbrk = PAGE_ALIGN(mm->brk);
+	//这一次的呼叫的差距在一个page之内，直接前往设定的部份
 	if (oldbrk == newbrk)
 		goto set_brk;
 
@@ -334,6 +335,10 @@ SYSCALL_DEFINE1(brk, unsigned long, brk)
 
 	/* Check against existing mmap mappings. */
 	/* 检查是否与现存的mmap映射冲突。 */
+	/*
+	要在给定的起始值（传入的oldbrk）和结束值（传入的newbrk+1页）之间找找看有没有既有的页面的意思，有就回传，
+	这会导致brk呼叫的224行的判断失败，前往out出口
+	*/
 	next = find_vma(mm, oldbrk);
 	if (next && newbrk + PAGE_SIZE > vm_start_gap(next))
 		goto out;
@@ -1350,6 +1355,7 @@ unsigned long do_mmap(struct file *file, unsigned long addr,
 	 * that it represents a valid section of the address space.
 	 */
 	addr = get_unmapped_area(file, addr, len, pgoff, flags);
+	//判断get_iunmapped_area是否出错(正常情况业内偏移应为0)
 	if (offset_in_page(addr))
 		return addr;
 
@@ -1464,7 +1470,7 @@ SYSCALL_DEFINE6(mmap_pgoff, unsigned long, addr, unsigned long, len,
 {
 	struct file *file = NULL;
 	unsigned long retval;
-
+	//确定不是匿名页请求
 	if (!(flags & MAP_ANONYMOUS)) {
 		audit_mmap_fd(fd, flags);
 		file = fget(fd);
@@ -1595,6 +1601,7 @@ unsigned long mmap_region(struct file *file, unsigned long addr,
 	unsigned long charged = 0;
 
 	/* Check against address space limit. */
+	//检查当前total_vm+len是否查过RLIMIT_AS，确保虚拟映射可以进行
 	if (!may_expand_vm(mm, len >> PAGE_SHIFT)) {
 		unsigned long nr_pages;
 
@@ -1612,8 +1619,10 @@ unsigned long mmap_region(struct file *file, unsigned long addr,
 	}
 
 	/* Clear old maps */
+	//遍历该进程已有的vma红黑树，如果找到vma覆盖[addr, end]区域，那么返回0，表示找到。如果覆盖已有的vma区域，返回ENOMEM
 	while (find_vma_links(mm, addr, addr + len, &prev, &rb_link,
 			      &rb_parent)) {
+//存在覆盖已有区域的情况，那么尝试取munmap这块区域。如果munmap成功返回0，不成功则mmap_region()失败
 		if (do_munmap(mm, addr, len))
 			return -ENOMEM;
 	}
@@ -1631,6 +1640,7 @@ unsigned long mmap_region(struct file *file, unsigned long addr,
 	/*
 	 * Can we just expand an old mapping?
 	 */
+	 //至此表示已经可以找到合适的vma区域，原有映射是否可以被新的映射复用，减少因为vma导致的slab消耗和虚拟内存的空洞
 	vma = vma_merge(mm, prev, addr, addr + len, vm_flags,
 			NULL, file, pgoff, NULL, NULL_VM_UFFD_CTX);
 	if (vma)
@@ -1641,20 +1651,21 @@ unsigned long mmap_region(struct file *file, unsigned long addr,
 	 * specific mapper. the address has already been validated, but
 	 * not unmapped, but the maps are removed from the list.
 	 */
+	 //在没有找到的情况下，新建一个vma
 	vma = kmem_cache_zalloc(vm_area_cachep, GFP_KERNEL);
 	if (!vma) {
 		error = -ENOMEM;
 		goto unacct_error;
 	}
-
+	//初始化vma数据
 	vma->vm_mm = mm;
 	vma->vm_start = addr;
 	vma->vm_end = addr + len;
 	vma->vm_flags = vm_flags;
 	vma->vm_page_prot = vm_get_page_prot(vm_flags);
-	vma->vm_pgoff = pgoff;
+	vma->vm_pgoff = pgoff;;//所映射内容在文件中的起点，有了这个起点，发生缺页异常时，就可以根据虚拟地址计算出相应页面在文件中的位置
 	INIT_LIST_HEAD(&vma->anon_vma_chain);
-
+	//如果是文件映射
 	if (file) {
 		if (vm_flags & VM_DENYWRITE) {
 			error = deny_write_access(file);
@@ -1673,6 +1684,8 @@ unsigned long mmap_region(struct file *file, unsigned long addr,
 		 * new file must not have been exposed to user-space, yet.
 		 */
 		vma->vm_file = get_file(file);
+		//调用文件操作函数集的mmap成员
+		//指向了generic_file_mmap
 		error = file->f_op->mmap(file, vma);
 		if (error)
 			goto unmap_and_free_vma;
@@ -1689,11 +1702,12 @@ unsigned long mmap_region(struct file *file, unsigned long addr,
 		addr = vma->vm_start;
 		vm_flags = vma->vm_flags;
 	} else if (vm_flags & VM_SHARED) {
+		//共享匿名区
 		error = shmem_zero_setup(vma);
 		if (error)
 			goto free_vma;
 	}
-
+	//将新建的vma插入到进程地址空间的vma红黑树中，已经做一些计数更新等
 	vma_link(mm, vma, prev, rb_link, rb_parent);
 	/* Once vma denies write, undo our temporary denial count */
 	if (file) {
@@ -1788,7 +1802,7 @@ unsigned long unmapped_area(struct vm_unmapped_area_info *info)
 
 	while (true) {
 		/* Visit left subtree if it looks promising */
-		gap_end = vm_start_gap(vma);
+		gap_end = vm_start_gap(vma); //先从低地址开始查询
 		if (gap_end >= low_limit && vma->vm_rb.rb_left) {
 			struct vm_area_struct *left =
 				rb_entry(vma->vm_rb.rb_left,
@@ -1798,7 +1812,7 @@ unsigned long unmapped_area(struct vm_unmapped_area_info *info)
 				continue;
 			}
 		}
-
+		//当前结点rb_subtree_gap已经是最后一个可能满足这次分配
 		gap_start = vma->vm_prev ? vm_end_gap(vma->vm_prev) : 0;
 check_current:
 		/* Check if current node has a suitable gap */
@@ -2070,12 +2084,14 @@ get_unmapped_area(struct file *file, unsigned long addr, unsigned long len,
 		return -ENOMEM;
 
 	get_area = current->mm->get_unmapped_area;
+	//如果是文件映射，并且该文件的file_operations定义了get_unmapped_area方法，那么使用它实现定位虚拟区间
 	if (file && file->f_op->get_unmapped_area)
 		get_area = file->f_op->get_unmapped_area;
+	//使用前面已经指定的分配函数来在未映射的虚拟空间中映射的空间中申请
 	addr = get_area(file, addr, len, pgoff, flags);
 	if (IS_ERR_VALUE(addr))
 		return addr;
-
+	//addr +len 不能大于TASK_SIZE
 	if (addr > TASK_SIZE - len)
 		return -ENOMEM;
 	if (offset_in_page(addr))
@@ -2474,11 +2490,19 @@ static void unmap_region(struct mm_struct *mm,
 	struct mmu_gather tlb;
 
 	lru_add_drain();
+	/*
+	调用tlb_gather_mmu()函数初始化每CPU变量mmu_gathers。mmu_gathers的值依赖于CPU体系结构：通常该变量应该存放成功更新进程页表项所需要的所有信息。在80x86体系结构中，
+	tlb_gather_mmu()函数只是简单地把内存描述符指针mm的值赋给本地CPU的mmu_gathers变量
+	*/
 	tlb_gather_mmu(&tlb, mm, start, end);
 	update_hiwater_rss(mm);
+	//扫描线性地址空间的所有页表项
+	//调用unmap_vmas()扫描线性地址空间的所有页表项：如果只有一个有效CPU，函数就调用free_swap_and_cache()反复释放相应的页（页面回收中会提到）；否则，函数就把相应页描述符的指针保存在局部变量mmu_gathers中
 	unmap_vmas(&tlb, vma, start, end);
+	//回收上一步已经清空的进程页表。
 	free_pgtables(&tlb, vma, prev ? prev->vm_end : FIRST_USER_ADDRESS,
 				 next ? next->vm_start : USER_PGTABLES_CEILING);
+	//刷新TLB，在多处理器系统中，调用freepages_and_swap_cache()释放页框
 	tlb_finish_mmu(&tlb, start, end);
 }
 
@@ -2532,13 +2556,23 @@ static int __split_vma(struct mm_struct *mm, struct vm_area_struct *vma,
 		return -ENOMEM;
 
 	/* most fields are the same, copy all, and then fixup */
+	/*用vma描述符的字段值初始化新描述符的字段。*/
 	*new = *vma;
 
 	INIT_LIST_HEAD(&new->anon_vma_chain);
+	/* 如果new_below标志等于1，说明线性地址区间的结束地址在vma线性区的内部，
+	 * 因此必须把新线性区放在vma线性区的前面，
+	 * 所以函数把字段new->vm_end和vma->vm_start都赋值为addr。
+	 new->vm_start在上一步(*new = *vma;)中已赋值
+	 */
 
 	if (new_below)
 		new->vm_end = addr;
 	else {
+		  /* 相反，new_below为0，说明线性地址区间的起始地址在vma线性区的内部，
+   * 因此必须把新线性区放在vma线性区之后，
+   * 所以函数把new->vm_start和vma->vm_end字段都赋值为addr。
+   */
 		new->vm_start = addr;
 		new->vm_pgoff += ((addr - vma->vm_start) >> PAGE_SHIFT);
 	}
@@ -2555,7 +2589,10 @@ static int __split_vma(struct mm_struct *mm, struct vm_area_struct *vma,
 		get_file(new->vm_file);
 
 	if (new->vm_ops && new->vm_ops->open)
+		/* 5.如果定义了新线性区的open方法，函数就执行它。 */
 		new->vm_ops->open(new);
+	/* 6.根据new_below的值调用vma_adjust函数把新线性区描述符链接到线性区链表mm->mmap和红-黑树mm->mm_rb。
+	  * 此外，vma_adjust函数还要根据线性区vma的最新大小对红-黑树进行调整。 */
 
 	if (new_below)
 		err = vma_adjust(vma, addr, vma->vm_end, vma->vm_pgoff +
@@ -2602,6 +2639,9 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 {
 	unsigned long end;
 	struct vm_area_struct *vma, *prev, *last;
+	/* 1.参数值进行一些初步检查：如果线性地址区间所含的地址大于TASK_SIZE，
+	  * 如start不是4096的倍数，或者如果线性地址区间的长度为0，则函数返回一个错误代码-EINVAL。
+	  */
 
 	if ((offset_in_page(start)) || start > TASK_SIZE || len > TASK_SIZE-start)
 		return -EINVAL;
@@ -2611,13 +2651,16 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 		return -EINVAL;
 
 	/* Find the first overlapping VMA */
+	//找到起始地址落在哪个vma内
 	vma = find_vma(mm, start);
+	//如果没有找到的话，直接返回0
 	if (!vma)
 		return 0;
 	prev = vma->vm_prev;
 	/* we have  start < vma->vm_end  */
 
 	/* if it doesn't overlap, we have nothing.. */
+	//如果要释放空间的结束地址都小于vma起始地址，说明这两者没有重叠，直接退出
 	end = start + len;
 	if (vma->vm_start >= end)
 		return 0;
@@ -2639,7 +2682,7 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 		 */
 		if (end < vma->vm_end && mm->map_count >= sysctl_max_map_count)
 			return -ENOMEM;
-
+		//由于start>vma->vm_start，说明要释放空间和vm_start有一段空隙。这里就是分离这段gap
 		error = __split_vma(mm, vma, start, 0);
 		if (error)
 			return error;
@@ -2647,8 +2690,10 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 	}
 
 	/* Does it split the last one? */
+	//找到要释放空间结束地址的vma。
 	last = find_vma(mm, end);
 	if (last && end > last->vm_start) {
+		//如果if成立，说明要释放空间end和vm_start之间有gap，就需要分离这段gap。
 		int error = __split_vma(mm, last, end, 1);
 		if (error)
 			return error;
@@ -2663,6 +2708,7 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 		while (tmp && tmp->vm_start < end) {
 			if (tmp->vm_flags & VM_LOCKED) {
 				mm->locked_vm -= vma_pages(tmp);
+				//如果这段空间是VM_LOCKED，就需要unlock。
 				munlock_vma_pages_all(tmp);
 			}
 			tmp = tmp->vm_next;
@@ -2673,11 +2719,13 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 	 * Remove the vma's, and unmap the actual pages
 	 */
 	detach_vmas_to_be_unmapped(mm, vma, prev, end);
+	//释放实际占用的页面
 	unmap_region(mm, vma, prev, start, end);
 
 	arch_unmap(mm, vma, start, end);
 
 	/* Fix up all other VM information */
+	//删除mm_struct结构中的vma信息
 	remove_vma_list(mm, vma);
 
 	return 0;

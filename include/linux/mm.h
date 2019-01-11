@@ -1949,9 +1949,9 @@ static inline unsigned long
 vm_unmapped_area(struct vm_unmapped_area_info *info)
 {
 	if (info->flags & VM_UNMAPPED_AREA_TOPDOWN)
-		return unmapped_area_topdown(info);
+		return unmapped_area_topdown(info);  //从高地址到低地址创建映射
 	else
-		return unmapped_area(info);
+		return unmapped_area(info); //从低地址到高地址创建映射
 }
 
 /* truncate.c */

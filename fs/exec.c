@@ -1127,6 +1127,7 @@ int flush_old_exec(struct linux_binprm * bprm)
 	 * Release all of the old mmap stuff
 	 */
 	acct_arg_size(bprm, 0);
+	//卸载旧mm,加载新的mm(bprm->mm)
 	retval = exec_mmap(bprm->mm);
 	if (retval)
 		goto out;
@@ -1572,7 +1573,7 @@ static int do_execveat_common(int fd, struct filename *filename,
 	retval = prepare_bprm_creds(bprm);
 	if (retval)
 		goto out_free;
-
+//回传值是void，因为相关的结果都存在bprm->unsafe这个成员变量之内
 	check_unsafe_exec(bprm);
 	//表明当前进程正在执行新程序，这个在进程调度中有意义
 	current->in_execve = 1;
@@ -1583,9 +1584,9 @@ static int do_execveat_common(int fd, struct filename *filename,
 	if (IS_ERR(file))
 		goto out_unmark;
 	/*选择负载最小的CPU来执行新程序*/
-	//  4、调用sched_exec()找到最小负载的CPU，用来执行该二进制文件；
+	//  4、调用sched_exec()找到最小负载的CPU，用来执行该二进制文件；此时程序加载进内存的数量最少，负载最小
 	sched_exec();
-	//  5、根据获取的信息，填充structlinux_binprm结构体中的file、filename、interp成员；
+	//  5、根据获取的信息，填充struct linux_binprm结构体中的file、filename、interp成员；
 	bprm->file = file;
 	if (fd == AT_FDCWD || filename->name[0] == '/') {
 		bprm->filename = filename->name;
@@ -1655,6 +1656,7 @@ static int do_execveat_common(int fd, struct filename *filename,
 
         下面需要识别该二进制文件的格式并最终运行该文件
     */
+    //注：此处不是新程序真正开始执行所在
 	retval = exec_binprm(bprm);
 	if (retval < 0)
 		goto out;

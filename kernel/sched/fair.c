@@ -767,7 +767,7 @@ static void update_curr(struct cfs_rq *cfs_rq)
 		cpuacct_charge(curtask, delta_exec);
 		account_group_exec_runtime(curtask, delta_exec);
 	}
-
+	//统计cfs_rq剩余可运行时间
 	account_cfs_rq_runtime(cfs_rq, delta_exec);
 }
 
@@ -3581,24 +3581,26 @@ static int assign_cfs_rq_runtime(struct cfs_rq *cfs_rq)
 	u64 amount = 0, min_amount, expires;
 
 	/* note: this is a positive sum as runtime_remaining <= 0 */
+	//从全局时间池申请的时间片默认是5ms
 	min_amount = sched_cfs_bandwidth_slice() - cfs_rq->runtime_remaining;
-
+	//如果该cfs_rq不限制带宽，那么quota的值为RUNTIME_INF，既然不限制带宽，自然时间池的时间是取之不尽用之不竭的，所以申请时间片一定成功。
 	raw_spin_lock(&cfs_b->lock);
 	if (cfs_b->quota == RUNTIME_INF)
 		amount = min_amount;
 	else {
+		//确保定时器是打开的，如果关闭状态，就打开定时器。该定时器会在定时时间到达后，重置全局时间池可用剩余时间。
 		start_cfs_bandwidth(cfs_b);
 
 		if (cfs_b->runtime > 0) {
 			amount = min(cfs_b->runtime, min_amount);
-			cfs_b->runtime -= amount;
+			cfs_b->runtime -= amount; //申请时间片成功，全局时间池剩余可用时间更新。
 			cfs_b->idle = 0;
 		}
 	}
 	expires = cfs_b->runtime_expires;
 	raw_spin_unlock(&cfs_b->lock);
 
-	cfs_rq->runtime_remaining += amount;
+	cfs_rq->runtime_remaining += amount;  //cfs_rq剩余可用时间增加
 	/*
 	 * we may have advanced our local expiration to account for allowed
 	 * spread between our sched_clock and the one on which runtime was
@@ -3606,7 +3608,7 @@ static int assign_cfs_rq_runtime(struct cfs_rq *cfs_rq)
 	 */
 	if ((s64)(expires - cfs_rq->runtime_expires) > 0)
 		cfs_rq->runtime_expires = expires;
-
+//如果cfs_rq向全局时间池申请不到时间片，那么该函数返回0，否则返回1，代表申请时间片成功，不需要throttle。
 	return cfs_rq->runtime_remaining > 0;
 }
 
@@ -3648,9 +3650,10 @@ static void expire_cfs_rq_runtime(struct cfs_rq *cfs_rq)
 static void __account_cfs_rq_runtime(struct cfs_rq *cfs_rq, u64 delta_exec)
 {
 	/* dock delta_exec before expiring quota (as it could span periods) */
+	//进程已经运行delta_exec时间，因此cfs_rq剩余可运行时间减少
 	cfs_rq->runtime_remaining -= delta_exec;
 	expire_cfs_rq_runtime(cfs_rq);
-
+	//如果cfs_rq剩余运行时间还有，那么没必要向全局时间池申请时间片
 	if (likely(cfs_rq->runtime_remaining > 0))
 		return;
 
@@ -3658,7 +3661,9 @@ static void __account_cfs_rq_runtime(struct cfs_rq *cfs_rq, u64 delta_exec)
 	 * if we're unable to extend our runtime we resched so that the active
 	 * hierarchy can be throttled
 	 */
+	 //如果cfs_rq可运行时间不足，assign_cfs_rq_runtime()负责从全局时间池中申请时间片。
 	if (!assign_cfs_rq_runtime(cfs_rq) && likely(cfs_rq->curr))
+		//如果全局时间片时间不够，就需要throttle当前cfs_rq。当然这里是设置TIF_NEED_RESCHED flag。在后面throttle
 		resched_curr(rq_of(cfs_rq));
 }
 
@@ -4104,7 +4109,7 @@ static bool check_cfs_rq_runtime(struct cfs_rq *cfs_rq)
 {
 	if (!cfs_bandwidth_used())
 		return false;
-
+	//检查cfs_rq是否满足被throttle的条件，可用运行时间小于0
 	if (likely(!cfs_rq->runtime_enabled || cfs_rq->runtime_remaining > 0))
 		return false;
 
@@ -4112,9 +4117,10 @@ static bool check_cfs_rq_runtime(struct cfs_rq *cfs_rq)
 	 * it's possible for a throttled entity to be forced into a running
 	 * state (e.g. set_curr_task), in this case we're finished.
 	 */
+	 //如果该cfs_rq已经被throttle，这不需要重复操作
 	if (cfs_rq_throttled(cfs_rq))
 		return true;
-
+	//throttle_cfs_rq()函数是真正throttle的操作，throttle核心函数
 	throttle_cfs_rq(cfs_rq);
 	return true;
 }

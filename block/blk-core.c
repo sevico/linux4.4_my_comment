@@ -177,13 +177,15 @@ void blk_dump_rq_flags(struct request *rq, char *msg)
 	}
 }
 EXPORT_SYMBOL(blk_dump_rq_flags);
+/*IO请求队列的delay_work，用于在kblockd中异步unplug请求队列*/
 
 static void blk_delay_work(struct work_struct *work)
 {
 	struct request_queue *q;
-
+	/*获取delay_work所在的请求队列*/
 	q = container_of(work, struct request_queue, delay_work.work);
 	spin_lock_irq(q->queue_lock);
+	/*直接run queue，最终调用request_fn对队列中的请求逐一处理*/
 	__blk_run_queue(q);
 	spin_unlock_irq(q->queue_lock);
 }
@@ -321,6 +323,7 @@ inline void __blk_run_queue_uncond(struct request_queue *q)
 	 * can wait until all these request_fn calls have finished.
 	 */
 	q->request_fn_active++;
+	//scsi_request_fn
 	q->request_fn(q);
 	q->request_fn_active--;
 }
@@ -351,9 +354,12 @@ EXPORT_SYMBOL(__blk_run_queue);
  *    Tells kblockd to perform the equivalent of @blk_run_queue on behalf
  *    of us. The caller must hold the queue lock.
  */
+ 
+/*异步unplug，即通过kblockd工作队列来处理，该工作队列定期唤醒(5s)，通过这种方式可以控制流量，提高吞吐量*/
 void blk_run_queue_async(struct request_queue *q)
 {
 	if (likely(!blk_queue_stopped(q) && !blk_queue_dead(q)))
+		/*唤醒kblockd相关的工作队列，进行unplug处理，注意:这里的delay传入0表示立刻唤醒，kblockd对应的处理接口为:blk_delay_work*/
 		mod_delayed_work(kblockd_workqueue, &q->delay_work, 0);
 }
 EXPORT_SYMBOL(blk_run_queue_async);
@@ -1614,7 +1620,7 @@ bool blk_attempt_plug_merge(struct request_queue *q, struct bio *bio,
 	struct request *rq;
 	bool ret = false;
 	struct list_head *plug_list;
-
+	// 找到该进程的plug队列
 	plug = current->plug;
 	if (!plug)
 		goto out;
@@ -1624,7 +1630,11 @@ bool blk_attempt_plug_merge(struct request_queue *q, struct bio *bio,
 		plug_list = &plug->mq_list;
 	else
 		plug_list = &plug->list;
-
+	// 遍历队列的每个request，检查bio是否可以合并至该request 
+    // 可合并条件： 
+    // 1. bio和request属于同一个设备（queue一致） 
+    // 2. io请求连续 
+    // 3. 合并后的request内IO请求大小未超过硬件限制
 	list_for_each_entry_reverse(rq, plug_list, queuelist) {
 		int el_ret;
 
@@ -1638,10 +1648,10 @@ bool blk_attempt_plug_merge(struct request_queue *q, struct bio *bio,
 			if (same_queue_rq)
 				*same_queue_rq = rq;
 		}
-
+		// 如果bio和当前req无法合并，继续遍历下一个req 
 		if (rq->q != q || !blk_rq_merge_ok(rq, bio))
 			continue;
-
+		// 尝试merge
 		el_ret = blk_try_merge(rq, bio);
 		if (el_ret == ELEVATOR_BACK_MERGE) {
 			ret = bio_attempt_back_merge(q, rq, bio);
@@ -1729,11 +1739,12 @@ static blk_qc_t blk_queue_bio(struct request_queue *q, struct bio *bio)
 	 * any locks.
 	 */
 	if (!blk_queue_nomerges(q)) {
+		// 尝试向进程的plug list插入bio请求，甚至合并 
 		if (blk_attempt_plug_merge(q, bio, &request_count, NULL))
 			return BLK_QC_T_NONE;
 	} else
 		request_count = blk_plug_queued_count(q);
-
+	// 如果无法合并至进程的plug_list,只能乖乖插入request_queue了
 	spin_lock_irq(q->queue_lock);
 
 	el_ret = elv_merge(q, &req, bio);
@@ -1794,11 +1805,14 @@ get_rq:
 		if (!request_count)
 			trace_block_plug(q);
 		else {
+			// 如果请求数量已经攒够了，flush下去
+			// 第二个参数设置为false代表的是同步plug 
 			if (request_count >= BLK_MAX_REQUEST_COUNT) {
 				blk_flush_plug_list(plug, false);
 				trace_block_plug(q);
 			}
 		}
+		 // 刷完之后将该request添加到plug_list链表的尾部
 		list_add_tail(&req->queuelist, &plug->list);
 		blk_account_io_start(req, true);
 	} else {
@@ -2079,6 +2093,7 @@ blk_qc_t generic_make_request(struct bio *bio)
 			q->make_request_fn函数在一开始在blk_queue_make_request函数中被注册为blk_mq_make_request函数或者blk_sq_make_request，
 			其判断标准是当前块设备层支持多个hardware queue还是单个hardware queue
 			*/
+			//blk_queue_bio
 			ret = q->make_request_fn(q, bio);
 
 			blk_queue_exit(q);
@@ -3215,15 +3230,21 @@ static int plug_rq_cmp(void *priv, struct list_head *a, struct list_head *b)
  * additional stack usage in driver dispatch, in places where the originally
  * plugger did not intend it.
  */
+/*unplug请求队列，plug相当于蓄水，将请求放入池子(请求队列)中，
+unplug相当于放水，即开始调用请求队列的request_fn(scsi_request_fn)来处理请求队列中的请求，将请求提交到scsi层(块设备驱动层)*/
+
 static void queue_unplugged(struct request_queue *q, unsigned int depth,
 			    bool from_schedule)
 	__releases(q->queue_lock)
 {
 	trace_block_unplug(q, depth, !from_schedule);
-
+	/*调用块设备驱动层提供的request_fn接口处理请求队列中的请求，分异步和同步两种情况。*/
 	if (from_schedule)
+		// 异步泄流
+		/*异步unplug，即通过kblockd工作队列来处理，该工作队列定期唤醒(5s)，通过这种方式可以控制流量，提高吞吐量*/
 		blk_run_queue_async(q);
-	else
+	else// 同步泄流
+	/*同步unplug，即直接调用设备驱动层提供的request_fn接口处理请求队列中的请求*/
 		__blk_run_queue(q);
 	spin_unlock(q->queue_lock);
 }
@@ -3285,9 +3306,16 @@ void blk_flush_plug_list(struct blk_plug *plug, bool from_schedule)
 
 	if (list_empty(&plug->list))
 		return;
-
+	// 为了效率考虑：将进程的plug_list请求全部拷贝到list内 
+    // 不影响新的请求插入
 	list_splice_init(&plug->list, &list);
-
+	// 对request进行排序：
+    // 因为每个进程的plug_list可能包含多个设备的request 
+    // 排序规则：
+    //   1. request_queue相同（发往同一个设备）的request放在一起 
+    //   2. request_queue按照大小排序  
+    // 排序结果：
+    //   所有属于同一个设备的request按照IO顺序组织起来
 	list_sort(NULL, &list, plug_rq_cmp);
 
 	q = NULL;
@@ -3298,14 +3326,22 @@ void blk_flush_plug_list(struct blk_plug *plug, bool from_schedule)
 	 * queue lock we have to take.
 	 */
 	local_irq_save(flags);
+	// 对每一个request，判断它与当前queue是否相同 
+    // 如果不同，将当前queue进行unplug 
+    // 如果相同，则将该request插入到调度队列 
 	while (!list_empty(&list)) {
 		rq = list_entry_rq(list.next);
 		list_del_init(&rq->queuelist);
 		BUG_ON(!rq->q);
+		// 如果当前request_queue的request已经插入完了 
+        // 那么就将当前queue进行unplug，并更新当前queue为新的 
+        // request所属的queue 
 		if (rq->q != q) {
 			/*
 			 * This drops the queue lock
 			 */
+			 // 为什么这里会触发一次unplug？ 
+            // 这里不触发的话没别的地方触发，这里触发提交的请求不一定够多 
 			if (q)
 				queue_unplugged(q, depth, from_schedule);
 			q = rq->q;

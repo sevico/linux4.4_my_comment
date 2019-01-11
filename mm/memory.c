@@ -271,12 +271,12 @@ void tlb_flush_mmu(struct mmu_gather *tlb)
 void tlb_finish_mmu(struct mmu_gather *tlb, unsigned long start, unsigned long end)
 {
 	struct mmu_gather_batch *batch, *next;
-
+	//刷新TLB
 	tlb_flush_mmu(tlb);
 
 	/* keep the page table cache within bounds */
 	check_pgt_cache();
-
+//在多处理器系统中，释放保存在mmu_gather的页框指针，这些页框的指针已经集中存放在mmu_gather数据结构中了。
 	for (batch = tlb->local.next; batch; batch = next) {
 		next = batch->next;
 		free_pages((unsigned long)batch, 0);

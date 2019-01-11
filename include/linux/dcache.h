@@ -41,6 +41,7 @@ struct vfsmount;
  * hash comes first so it snuggles against d_parent in the
  * dentry.
  */
+ /* 用来存放路径名中当前节点的杂凑值以及节点名的长度 */
 struct qstr {
 	union {
 		struct {

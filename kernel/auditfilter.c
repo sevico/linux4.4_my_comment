@@ -1094,13 +1094,14 @@ int audit_rule_change(int type, __u32 portid, int seq, void *data,
 {
 	int err = 0;
 	struct audit_entry *entry;
-
+	//对本次审计规则的操作进行审计日志缓冲区的分配和部分字段的记录
 	entry = audit_data_to_entry(data, datasz);
 	if (IS_ERR(entry))
 		return PTR_ERR(entry);
 
 	switch (type) {
 	case AUDIT_ADD_RULE:
+		//其次将当前的规则添加到对应的规则链表中
 		err = audit_add_rule(entry);
 		audit_log_rule_change("add_rule", &entry->rule, !err);
 		break;

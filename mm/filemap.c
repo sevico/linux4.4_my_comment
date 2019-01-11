@@ -1546,11 +1546,12 @@ static ssize_t do_generic_file_read(struct file *filp, loff_t *ppos,
 	unsigned long offset;      /* offset into pagecache page */
 	unsigned int prev_offset;
 	int error = 0;
-
+	
+	/* 因为读取是按照页来的，所以需要计算本次读取的第一个page*/
 	index = *ppos >> PAGE_CACHE_SHIFT;
-	prev_index = ra->prev_pos >> PAGE_CACHE_SHIFT;
-	prev_offset = ra->prev_pos & (PAGE_CACHE_SIZE-1);
-	last_index = (*ppos + iter->count + PAGE_CACHE_SIZE-1) >> PAGE_CACHE_SHIFT;
+	prev_index = ra->prev_pos >> PAGE_CACHE_SHIFT; /* 上次预读page的起始索引 */
+	prev_offset = ra->prev_pos & (PAGE_CACHE_SIZE-1); /* 上次预读的起始位置 */
+	last_index = (*ppos + iter->count + PAGE_CACHE_SIZE-1) >> PAGE_CACHE_SHIFT; /*读取最后一个页 */
 	offset = *ppos & ~PAGE_CACHE_MASK;
 
 	for (;;) {
@@ -1565,27 +1566,31 @@ find_page:
 			error = -EINTR;
 			goto out;
 		}
-
+		 /*在radix树中查找相应的page*/
 		page = find_get_page(mapping, index);
-		if (!page) {
+		if (!page) {/*在radix树中查找相应的page*/
+			/* 如果没有找到page，内存中没有将数据,先进行预读 */
 			page_cache_sync_readahead(mapping,
 					ra, filp,
 					index, last_index - index);
 			page = find_get_page(mapping, index);
+			/*在radix树中再次查找相应的page*/
 			if (unlikely(page == NULL))
 				goto no_cached_page;
 		}
-		if (PageReadahead(page)) {
+		if (PageReadahead(page)) {			
+			/* 发现找到的page已经是预读的情况了，再继续异步预读,此处是基于经验的优化 */
 			page_cache_async_readahead(mapping,
 					ra, filp, page,
 					index, last_index - index);
 		}
+		/* 数据内容不是最新，则需要更新数据内容 */
 		if (!PageUptodate(page)) {
 			/*
 			 * See comment in do_read_cache_page on why
 			 * wait_on_page_locked is used to avoid unnecessarily
 			 * serialisations and why it's safe.
-			 */
+			 */			 
 			wait_on_page_locked_killable(page);
 			if (PageUptodate(page))
 				goto page_ok;
@@ -1603,7 +1608,7 @@ find_page:
 				goto page_not_up_to_date_locked;
 			unlock_page(page);
 		}
-page_ok:
+page_ok:/* 数据内容是最新的 */
 		/*
 		 * i_size must be checked after we know the page is Uptodate.
 		 *
@@ -1612,6 +1617,8 @@ page_ok:
 		 * part of the page is not copied back to userspace (unless
 		 * another truncate extends the file - this is desired though).
 		 */
+		/*下面这段代码是在page中的内容ok的情况下将page中的内容拷贝到用户空间去，主要的逻辑分为检查参数是否合法进性拷贝操作*/ 
+		/*合法性检查*/
 
 		isize = i_size_read(inode);
 		end_index = (isize - 1) >> PAGE_CACHE_SHIFT;
@@ -1650,7 +1657,7 @@ page_ok:
 		 * Ok, we have the page, and it's up-to-date, so
 		 * now we can copy it to user space...
 		 */
-
+		/* 将数据从内核态复制到用户态 */
 		ret = copy_page_to_iter(page, offset, nr, iter);
 		offset += ret;
 		index += offset >> PAGE_CACHE_SHIFT;
@@ -1674,6 +1681,8 @@ page_not_up_to_date:
 			goto readpage_error;
 
 page_not_up_to_date_locked:
+		/* 获取到锁之后，发现这个page没有被映射了，
+		* 可能是在获取锁之前就被其它模块释放掉了，重新开始获取lock*/
 		/* Did it get truncated before we got the lock? */
 		if (!page->mapping) {
 			unlock_page(page);
@@ -1682,13 +1691,14 @@ page_not_up_to_date_locked:
 		}
 
 		/* Did somebody else fill it already? */
+		/* 获取到锁后发现page中的数据已经ok了，不需要再读取数据 */
 		if (PageUptodate(page)) {
 			unlock_page(page);
 			goto page_ok;
 		}
 
 readpage:
-		/*
+		/*数据读取操作
 		 * A previous I/O error may have been due to temporary
 		 * failures, eg. multipath errors.
 		 * PG_error will be set again if readpage fails.
@@ -1730,7 +1740,7 @@ readpage:
 		goto page_ok;
 
 readpage_error:
-		/* UHHUH! A synchronous read error occurred. Report it */
+		/* UHHUH! A synchronous read error occurred. Report it 同步读取失败*/
 		page_cache_release(page);
 		goto out;
 
@@ -1738,6 +1748,7 @@ no_cached_page:
 		/*
 		 * Ok, it wasn't cached, so we need to create a new
 		 * page..
+		 系统中没有数据，又不进行预读的情况，显示的分配page，并读取page
 		 */
 		page = page_cache_alloc_cold(mapping);
 		if (!page) {
@@ -1778,11 +1789,12 @@ out:
 ssize_t
 generic_file_read_iter(struct kiocb *iocb, struct iov_iter *iter)
 {
+	/* 解析参数*/
 	struct file *file = iocb->ki_filp;
 	ssize_t retval = 0;
 	loff_t *ppos = &iocb->ki_pos;
 	loff_t pos = *ppos;
-
+	/* 直接IO读 */
 	if (iocb->ki_flags & IOCB_DIRECT) {
 		struct address_space *mapping = file->f_mapping;
 		struct inode *inode = mapping->host;
@@ -1792,8 +1804,10 @@ generic_file_read_iter(struct kiocb *iocb, struct iov_iter *iter)
 		if (!count)
 			goto out; /* skip atime */
 		size = i_size_read(inode);
+		/* 刷mapping下的脏页,保证数据一致性 */
 		retval = filemap_write_and_wait_range(mapping, pos,
 					pos + count - 1);
+		/* 脏页回刷失败，则通过直接IO写回存储设备 */
 		if (!retval) {
 			struct iov_iter data = *iter;
 			retval = mapping->a_ops->direct_IO(iocb, &data, pos);
@@ -1819,7 +1833,7 @@ generic_file_read_iter(struct kiocb *iocb, struct iov_iter *iter)
 			goto out;
 		}
 	}
-
+	/* 缓存IO读 */
 	retval = do_generic_file_read(file, ppos, iter, retval);
 out:
 	return retval;

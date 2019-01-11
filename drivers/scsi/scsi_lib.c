@@ -1854,7 +1854,9 @@ static void scsi_request_fn(struct request_queue *q)
 		 * Dispatch the command to the low-level driver.
 		 */
 		cmd->scsi_done = scsi_done;
+		/*将scsi命令下发到底层驱动，当返回非0时，表示命令下发失败，则当前的请求队列需要被plug*/
 		rtn = scsi_dispatch_cmd(cmd);
+		/*命令下发失败，需要plug请求队列*/
 		if (rtn) {
 			scsi_queue_insert(cmd, rtn);
 			spin_lock_irq(q->queue_lock);
@@ -1867,6 +1869,7 @@ static void scsi_request_fn(struct request_queue *q)
 
  host_not_ready:
 	if (scsi_target(sdev)->can_queue > 0)
+		/*命令下发失败，需要延迟处理，需plug请求队列，设置3ms定时启动kblockd工作队列，进行请求队列的unplug*/
 		atomic_dec(&scsi_target(sdev)->target_busy);
  not_ready:
 	/*

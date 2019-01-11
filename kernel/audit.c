@@ -175,9 +175,13 @@ DEFINE_MUTEX(audit_cmd_mutex);
  * to place it on a transmit queue.  Multiple audit_buffers can be in
  * use simultaneously. */
 struct audit_buffer {
+//所有的审计日志缓冲区通过链表连接；
 	struct list_head     list;
+//套接字缓冲区；由于审计系统通过netlink机制实现用户态和内核态的数据交互，因此需求封装套接字缓冲区
 	struct sk_buff       *skb;	/* formatted skb ready to send */
+//审计上下文；当审计系统进行进程监控时，ctx将保存进程的相关信息
 	struct audit_context *ctx;	/* NULL or associated context */
+//内核申请内存时的标志；表示为audit_buffer在哪片内存区申请内存
 	gfp_t		     gfp_mask;
 };
 
@@ -531,7 +535,7 @@ static int kauditd_thread(void *dummy)
 				audit_printk_skb(skb);
 			continue;
 		}
-
+		//当在audit_skb_queue中移除节点失败时，将创建一个等待实例，将其添加到kauditd_wait等待队列中
 		wait_event_freezable(kauditd_wait, skb_queue_len(&audit_skb_queue));
 	}
 	return 0;
@@ -702,6 +706,7 @@ static int audit_netlink_ok(struct sk_buff *skb, u16 msg_type)
 
 static void audit_log_common_recv_msg(struct audit_buffer **ab, u16 msg_type)
 {
+//对本次审计规则的操作进行审计日志缓冲区的分配和部分字段的记录
 	uid_t uid = from_kuid(&init_user_ns, current_uid());
 	pid_t pid = task_tgid_nr(current);
 
@@ -817,18 +822,21 @@ static int audit_receive_msg(struct sk_buff *skb, struct nlmsghdr *nlh)
 	void			*data;
 	int			err;
 	struct audit_buffer	*ab;
+	//从netlink报文头部获取当前消息类型msg_type
 	u16			msg_type = nlh->nlmsg_type;
 	struct audit_sig_info   *sig_data;
 	char			*ctx = NULL;
 	u32			len;
-
+	//检查当前的消息类型是否合法；如不合法，则退出
 	err = audit_netlink_ok(skb, msg_type);
 	if (err)
 		return err;
 
 	/* As soon as there's any sign of userspace auditd,
 	 * start kauditd to talk to it */
+	 //检查kauditd内核线程是否已启动
 	if (!kauditd_task) {
+		//如果没有启动则通过kthread_run()启动该线程；kauditd线程用于将内核中的审计日志发送到用户态中
 		kauditd_task = kthread_run(kauditd_thread, NULL, "kauditd");
 		if (IS_ERR(kauditd_task)) {
 			err = PTR_ERR(kauditd_task);
@@ -1093,7 +1101,8 @@ static void audit_receive_skb(struct sk_buff *skb)
 	 */
 	int len;
 	int err;
-
+	//netlink套接字所发送的数据报文格式为nlmsghdr结构的包头+指定格式的净荷数据；
+	//按照协议取数据报头和整个数据报文长度，交由audit_receive_msg函数处理
 	nlh = nlmsg_hdr(skb);
 	len = skb->len;
 
@@ -1101,8 +1110,9 @@ static void audit_receive_skb(struct sk_buff *skb)
 		err = audit_receive_msg(skb, nlh);
 		/* if err or if this message says it wants a response */
 		if (err || (nlh->nlmsg_flags & NLM_F_ACK))
+			//如果数据包处理完成，通过netlink_ack函数向用户态发送响应
 			netlink_ack(skb, nlh, err);
-
+		//通过NLMSG_NEXT获取下一个数据报
 		nlh = nlmsg_next(nlh, &len);
 	}
 }
@@ -1134,7 +1144,7 @@ static int __net_init audit_net_init(struct net *net)
 	};
 
 	struct audit_net *aunet = net_generic(net, audit_net_id);
-
+	//创建netlink套接字audit_sock，并且注册了（针对用户态）数据的处理函数audit_receive，它将接收并处理用户态发送的netlink数据包
 	aunet->nlsk = netlink_kernel_create(net, NETLINK_AUDIT, &cfg);
 	if (aunet->nlsk == NULL) {
 		audit_panic("cannot initialize netlink socket in namespace");
@@ -1175,14 +1185,17 @@ static int __init audit_init(void)
 
 	pr_info("initializing netlink subsys (%s)\n",
 		audit_default ? "enabled" : "disabled");
+	//在audit_net_ops.init(audit_net_init)中通过netlink_kernel_create()创建netlink套接字audit_sock，
+	//并且注册了（针对用户态）数据的处理函数audit_receive，它将接收并处理用户态发送的netlink数据包；
+	//调用路径: register_pernet_subsys -> register_pernet_operations -> __register_pernet_operations -> ops_init -> ops->init(audit_net_init)
 	register_pernet_subsys(&audit_net_ops);
-
+	//.初始化审计系统所需的链表和变量等内容,其中audit_skb_queue链表用于保存审计套接字缓冲区；
 	skb_queue_head_init(&audit_skb_queue);
 	skb_queue_head_init(&audit_skb_hold_queue);
 	audit_initialized = AUDIT_INITIALIZED;
-
+	//通过audit_log()生成本次初始化对应的审计日志
 	audit_log(NULL, GFP_KERNEL, AUDIT_KERNEL, "initialized");
-
+	//初始化基于inode的审计规则所对应的哈希链表
 	for (i = 0; i < AUDIT_INODE_BUCKETS; i++)
 		INIT_LIST_HEAD(&audit_inode_hash[i]);
 
@@ -1330,11 +1343,11 @@ static long wait_for_auditd(long sleep_time)
 	DECLARE_WAITQUEUE(wait, current);
 	set_current_state(TASK_UNINTERRUPTIBLE);
 	add_wait_queue_exclusive(&audit_backlog_wait, &wait);
-
+	//此时，再次检查缓冲区列表中的数据是否大于所指定的audit_backlog_limit，如果是，则主动发起重新调度
 	if (audit_backlog_limit &&
 	    skb_queue_len(&audit_skb_queue) > audit_backlog_limit)
 		sleep_time = schedule_timeout(sleep_time);
-
+	//否则，将删除刚才创建的等待队列实例，并且恢复进程的状态；
 	__set_current_state(TASK_RUNNING);
 	remove_wait_queue(&audit_backlog_wait, &wait);
 
@@ -1368,7 +1381,7 @@ struct audit_buffer *audit_log_start(struct audit_context *ctx, gfp_t gfp_mask,
 
 	if (audit_initialized != AUDIT_INITIALIZED)
 		return NULL;
-
+	//检查当前日志类型是否被指定为过滤，如果是，则直接返回
 	if (unlikely(audit_filter_type(type)))
 		return NULL;
 
@@ -1378,7 +1391,7 @@ struct audit_buffer *audit_log_start(struct audit_context *ctx, gfp_t gfp_mask,
 		else
 			reserve = 0;
 	}
-
+//如果当前缓冲区列表audit_skb_queue中存在的节点数目大于指定的audit_backlog_limit大小，则当前的进程将会被阻塞；
 	while (audit_backlog_limit
 	       && skb_queue_len(&audit_skb_queue) > audit_backlog_limit + reserve) {
 		if (gfp_mask & __GFP_DIRECT_RECLAIM && audit_backlog_wait_time) {
@@ -1386,6 +1399,8 @@ struct audit_buffer *audit_log_start(struct audit_context *ctx, gfp_t gfp_mask,
 
 			sleep_time = timeout_start + audit_backlog_wait_time - jiffies;
 			if (sleep_time > 0) {
+				//如果当前缓冲区列表audit_skb_queue中存在的节点数目大于指定的audit_backlog_limit大小，则当前的进程将会被阻塞；
+				//即创建等待队列实例，改变当前进程的状态为TASK_UNINTERRUPTIBLE，并且将其加入到等待队列audit_backlog_wait中
 				sleep_time = wait_for_auditd(sleep_time);
 				if (sleep_time > 0)
 					continue;
@@ -1403,7 +1418,7 @@ struct audit_buffer *audit_log_start(struct audit_context *ctx, gfp_t gfp_mask,
 
 	if (!reserve)
 		audit_backlog_wait_time = audit_backlog_wait_time_master;
-
+	//此时，通过audit_buffer_alloc()创建审计缓冲区，并且在该缓冲区中写入审计序列号和时间戳等信息
 	ab = audit_buffer_alloc(ctx, gfp_mask, type);
 	if (!ab) {
 		audit_log_lost("out of memory in audit_log_start");
@@ -1955,6 +1970,8 @@ void audit_log_end(struct audit_buffer *ab)
 {
 	if (!ab)
 		return;
+	//通过audit_rate_check()检查当前审计日志发送的频率是否超过了设定的限制；
+	//即如果每秒从内核向用户态发送的日志数超过了制定的数值audit_rate_limit，那么将抛弃当前的日志
 	if (!audit_rate_check()) {
 		audit_log_lost("rate limit exceeded");
 	} else {
@@ -1973,15 +1990,18 @@ void audit_log_end(struct audit_buffer *ab)
 		 * userspace code.
 		 */
 		nlh->nlmsg_len -= NLMSG_HDRLEN;
-
+		//从当前审计日志缓冲区中提取所封装的套接字缓冲区，将其加入到audit_skb_queue链表中
 		if (audit_pid) {
 			skb_queue_tail(&audit_skb_queue, ab->skb);
+			//唤醒kauditd_wait等待队列中的一个进程
+			//该等待队列由内核线程kauditd控制，该线程将依次发送audit_skb_queue链表中的缓冲区，如果已经无节点可发，则阻塞当前线程；此时，由于刚向audit_skb_queue中加入了新的节点，因此唤醒kauditd线程；
 			wake_up_interruptible(&kauditd_wait);
 		} else {
 			audit_printk_skb(ab->skb);
 		}
 		ab->skb = NULL;
 	}
+	//释放在audit_log_start()中申请的audit_buffer缓冲区
 	audit_buffer_free(ab);
 }
 

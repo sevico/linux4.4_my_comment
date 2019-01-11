@@ -641,7 +641,7 @@ struct inode {
 
 	unsigned long		dirtied_when;	/* jiffies of first dirtying */
 	unsigned long		dirtied_time_when;
-
+	 /* 用于散列链表的指针 */
 	struct hlist_node	i_hash;
 	struct list_head	i_io_list;	/* backing dev IO list */
 #ifdef CONFIG_CGROUP_WRITEBACK
@@ -653,17 +653,23 @@ struct inode {
 	u16			i_wb_frn_history;
 #endif
 	struct list_head	i_lru;		/* inode LRU list */
+	/* 用于超级块的索引节点链表的指针
+	super_block->s_inodes
+	*/
 	struct list_head	i_sb_list;
 	union {
 		//同一个inode产生的不同dentry
 		//各个dentry通过d_alias链接到该链表
 		struct hlist_head	i_dentry;
+		//如果不用作目录项，则用作rcu链表
 		struct rcu_head		i_rcu;
 	};
 	// 用来记录索引节点的改变，例如我们用编辑器打开一个文件，里面的数据缓存在file中，当另外一个程序修改文件以后，
 // 编辑器就会提示我们，磁盘上的文件已经被修改，我们可以强制覆盖，也可以从磁盘重新读取。
 	u64			i_version;
+	/* 引用计数器 */
 	atomic_t		i_count;
+	//在当前inode上进行的direct IO数量
 	atomic_t		i_dio_count;
 	// 有多少个用户对该节点有写权限
 	atomic_t		i_writecount;
@@ -886,12 +892,14 @@ static inline int ra_has_index(struct file_ra_state *ra, pgoff_t index)
 
 struct file {
 	union {
+		//delayed_fput_list,用于延迟释放
 		struct llist_node	fu_llist;
 		struct rcu_head 	fu_rcuhead;
 	} f_u;
 	//文件名和inode之间的关联
 	//文件所在文件系统的有关信息
 	struct path		f_path;
+	/*指向文件索引节点的指针 */
 	struct inode		*f_inode;	/* cached value */
 	//文件操作调用的各个函数
 	const struct file_operations	*f_op;
@@ -910,22 +918,27 @@ struct file {
 	//文件位置指针的当前值
 	loff_t			f_pos;
 	//处理该文件的进程有关的信息
+	/* 通过信号进行IO事件通知的数据 */
 	struct fown_struct	f_owner;
 	//文件用户信息
 	const struct cred	*f_cred;
 	//文件预读取特性
 	struct file_ra_state	f_ra;
 	//检查一个file实例是否仍然与相关的inode内容兼容
+	/* 版本号，每次使用后，自动递增 */
 	u64			f_version;
 #ifdef CONFIG_SECURITY
+	/* 指向文件对象安全结构的指针 */
 	void			*f_security;
 #endif
 	/* needed for tty driver, and maybe others */
-	// 文件内部实现细节  
+	// 文件内部实现细节
+	 /* 指向特定文件系统或设备驱动程序所需数据的指针 */
 	void			*private_data;
 
 #ifdef CONFIG_EPOLL
 	/* Used by fs/eventpoll.c to link all the hooks to this file */
+	/* 文件的事件轮训等待者链表的头 */
 	struct list_head	f_ep_links;
 	struct list_head	f_tfile_llink;
 #endif /* #ifdef CONFIG_EPOLL */
@@ -1345,8 +1358,9 @@ struct sb_writers {
 };
 
 struct super_block {
-	//链表元素file->fu_list
-	//该链表包含该超级块表示的文件系统的所有打开文件
+	/*
+	所有super_block通过s_list链接在super_blocks(fs\super.c:40)
+	*/
 	struct list_head	s_list;		/* Keep this first */
 	/* 搜索索引，不是kdev_t */
 	dev_t			s_dev;		/* search index; _not_ kdev_t */
@@ -1359,25 +1373,34 @@ struct super_block {
 	loff_t			s_maxbytes;	/* Max file size */
 	//保存了与文件系统有关的一般类型的信息。
 	struct file_system_type	*s_type;
+	 /* 超级块方法 */
 	const struct super_operations	*s_op;
+	 /* 磁盘限额处理方法 */
 	const struct dquot_operations	*dq_op;
+	  /* 磁盘限额管理方法 */
 	const struct quotactl_ops	*s_qcop;
+	   /* 网络文件系统使用的输出操作 */
 	const struct export_operations *s_export_op;
+	   /* 安装标志 */
 	unsigned long		s_flags;
 	unsigned long		s_iflags;	/* internal SB_I_* flags */
+	 /* 文件系统的魔数 */
 	unsigned long		s_magic; // 验证磁盘信息
 	//将超级块与全局根目录的dentry项关联起来
 	struct dentry		*s_root; // root dentry
+	 /* 卸载所用的信号量 */
 	struct rw_semaphore	s_umount; // 读写期间防止umount
+	  /* 超级快引用计数器 */
 	int			s_count;
+	  /* 超级快次级引用计数器 */
 	atomic_t		s_active;
 #ifdef CONFIG_SECURITY
+	/* 指向超级块安全数据结构的指针 */
 	void                    *s_security;
 #endif
 //该结构包含了一些用于处理扩展属性的函数指针
 	const struct xattr_handler **s_xattr;
 	// 远程网络文件系统的匿名目录项链表
-
 	struct hlist_bl_head	s_anon;		/* anonymous dentries for (nfs) exporting */
 	// 所有挂载点
 	// mount->mnt_instances
@@ -1392,6 +1415,7 @@ struct super_block {
 	// sb_lock
 	struct hlist_node	s_instances;
 	unsigned int		s_quota_types;	/* Bitmask of supported quota types */
+	 /* 磁盘限额的描述符 */
 	struct quota_info	s_dquot;	/* Diskquota specific options */
 
 	struct sb_writers	s_writers;

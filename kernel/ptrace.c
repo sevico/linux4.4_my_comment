@@ -759,6 +759,7 @@ static int ptrace_resume(struct task_struct *child, long request,
 	if (!valid_signal(data))
 		return -EIO;
 	//如果 request是 PTRACE_SYSCALL，则给 tracee进程设置 TIF_SYSCALL_TRACE标志，否则清除这个标志
+	//设置这个标志的目的是使得tracee进程在下一次执行系统调用的开始和结束时中止运行
 	if (request == PTRACE_SYSCALL)
 		set_tsk_thread_flag(child, TIF_SYSCALL_TRACE);
 	else
@@ -775,11 +776,14 @@ static int ptrace_resume(struct task_struct *child, long request,
 		if (unlikely(!arch_has_block_step()))
 			return -EIO;
 		user_enable_block_step(child);
+		//如果 request是 PTRACE_SINGLESTEP，则调用 user_enable_single_step 进行enable tracee进程的 single step功能
 	} else if (is_singlestep(request) || is_sysemu_singlestep(request)) {
 		if (unlikely(!arch_has_single_step()))
 			return -EIO;
 		user_enable_single_step(child);
 	} else {
+		//能进入此处，说明不是PTRACE_SINGLESTEP，PTRACE_SYSCALL
+		//如果 request是 PTRACE_CONT，即使得 tracee进程继续执行，则需要调用 user_disable_single_step 进行disable 单步执行功能，清空 TIF_SINGLESTEP
 		user_disable_single_step(child);
 	}
 
@@ -799,6 +803,7 @@ static int ptrace_resume(struct task_struct *child, long request,
 	need_siglock = data && !thread_group_empty(current);
 	if (need_siglock)
 		spin_lock_irq(&child->sighand->siglock);
+	//如果这些 request 的 data参数设置是 valid，那么会设置给 tracee->exit_code
 	child->exit_code = data;
 	wake_up_state(child, __TASK_TRACED);
 	if (need_siglock)

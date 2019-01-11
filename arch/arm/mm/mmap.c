@@ -71,6 +71,7 @@ arch_get_unmapped_area(struct file *filp, unsigned long addr,
 	/*
 	 * We enforce the MAP_FIXED case.
 	 */
+	 //MAP_FIXED不参与选址，固定地址创建
 	if (flags & MAP_FIXED) {
 		if (aliasing && flags & MAP_SHARED &&
 		    (addr - (pgoff << PAGE_SHIFT)) & (SHMLBA - 1))
@@ -80,7 +81,7 @@ arch_get_unmapped_area(struct file *filp, unsigned long addr,
 
 	if (len > TASK_SIZE)
 		return -ENOMEM;
-
+//当addr非0，表示制定了一个特定的优先选用地址，内核会检查该区域是否与现存区域重叠，有find_vma()完成查找功能
 	if (addr) {
 		if (do_align)
 			addr = COLOUR_ALIGN(addr, pgoff);
@@ -99,6 +100,7 @@ arch_get_unmapped_area(struct file *filp, unsigned long addr,
 	info.high_limit = TASK_SIZE;
 	info.align_mask = do_align ? (PAGE_MASK & (SHMLBA - 1)) : 0;
 	info.align_offset = pgoff << PAGE_SHIFT;
+	//当addr为空或者指定的优选地址不满足分配条件时，内核必须遍历进程中可用的区域，设法找到一个大小适当的空闲区域，vm_unmapped_area()完成实际的工作
 	return vm_unmapped_area(&info);
 }
 

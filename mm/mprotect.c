@@ -355,13 +355,15 @@ SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
 	prot &= ~(PROT_GROWSDOWN|PROT_GROWSUP);
 	if (grows == (PROT_GROWSDOWN|PROT_GROWSUP)) /* can't be both */
 		return -EINVAL;
-
+	//起始地址按页对齐
 	if (start & ~PAGE_MASK)
 		return -EINVAL;
+	//长度不为0，并按页大小向上取整
 	if (!len)
 		return 0;
 	len = PAGE_ALIGN(len);
 	end = start + len;
+	//防溢出
 	if (end <= start)
 		return -ENOMEM;
 	if (!arch_validate_prot(prot))
@@ -375,7 +377,7 @@ SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
 		prot |= PROT_EXEC;
 
 	vm_flags = calc_vm_prot_bits(prot);
-
+	//操作一个task的mm时，需要获取mmap_sem
 	down_write(&current->mm->mmap_sem);
 
 	vma = find_vma(current->mm, start);

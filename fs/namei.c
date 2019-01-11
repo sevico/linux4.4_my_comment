@@ -524,7 +524,7 @@ struct nameidata {
 		const char *name;
 		struct inode *inode;
 		unsigned seq;
-	} *stack, internal[EMBEDDED_LEVELS];
+	} *stack, internal[EMBEDDED_LEVELS];/* 记录相应递归深度的符号链接的路径 */
 	struct filename	*name;
 	struct nameidata *saved;
 	unsigned	root_seq;
@@ -1435,17 +1435,24 @@ EXPORT_SYMBOL(follow_down);
  */
 static void follow_mount(struct path *path)
 {
+	/* 目录是否为安装点 */
 	while (d_mountpoint(path->dentry)) {
+		 /* 在目录项高速缓存中查找已安装的根目录 */
 		struct vfsmount *mounted = lookup_mnt(path);
 		if (!mounted)
 			break;
 		dput(path->dentry);
 		mntput(path->mnt);
-		path->mnt = mounted;
-		path->dentry = dget(mounted->mnt_root);
+		path->mnt = mounted; /* 更新path中的安装点对象地址 */
+		path->dentry = dget(mounted->mnt_root); /* 更新path的dentry信息*/
 	}
 }
-
+/*
+3.3.1 如果最近解析的目录是当前的根目录，即nd->path.dentry == nd->root.dentry && nd->path.mnt== nd->root.mnt，那么就不需要再继续往上追踪了，在最近一个分量上调用follow_mount函数，继续追踪下一个分量。
+3.3.2 如果最近的一个目录是文件系统的根目录，即nd->path.dentry == nd->path.mnt->mnt_root，并且这个文件系统没有安装在其他的文件系统之上（follow_up返回0），在最近一个分量上调用follow_mount函数，继续追踪下一个分量。
+3.3.3 如果最近的一个目录是文件系统的根目录，即nd->path.dentry == nd->path.mnt->mnt_root，并且这个文件系统安装在其他的文件系统之上，那么就需要执行文件系统交换，更新nd->path.dentry和path->mnt，继续追踪父目录。
+3.3.3 如果最近的一个目录不是文件系统的根目录，继续追踪父目录。
+*/
 static int follow_dotdot(struct nameidata *nd)
 {
 	if (!nd->root.mnt)
@@ -1453,19 +1460,27 @@ static int follow_dotdot(struct nameidata *nd)
 
 	while(1) {
 		struct dentry *old = nd->path.dentry;
-
+		/* 如果已经达到当前进程的根节点，这时不能再往上追踪了*/
 		if (nd->path.dentry == nd->root.dentry &&
 		    nd->path.mnt == nd->root.mnt) {
 			break;
 		}
+		
+/* 已经到达节点与其父节点在同一个设备上。
+* 在这种情况下既然已经到达的这个节点的dentry结构已经建立，
+* 则其父节点的dentry结构也必然已经建立在内存中，
+* 而且dentry结构中的指针d_parent就指向其父节点，所以往上跑一层是很简单的事情
+*/
 		if (nd->path.dentry != nd->path.mnt->mnt_root) {
 			/* rare case of legitimate dget_parent()... */
+		 /*往上走一层，并且对应用计数加一*/
 			nd->path.dentry = dget_parent(nd->path.dentry);
 			dput(old);
 			if (unlikely(!path_connected(&nd->path)))
 				return -ENOENT;
 			break;
 		}
+		/*是否要交换文件系统 */
 		if (!follow_up(&nd->path))
 			break;
 	}
@@ -1780,6 +1795,7 @@ static int walk_component(struct nameidata *nd, int flags)
 		return err;
 	}
 	//在内存缓冲区查找相应的目标
+	//该函数的本质是调用lookup_fast-> __d_lookup在目录项高速缓存中搜索分量的目录项对象。如果查找到，则更新nd->path.mnt和nd->path.dentry
 	err = lookup_fast(nd, &path, &inode, &seq);
 	if (unlikely(err)) {
 		if (err < 0)
@@ -1950,25 +1966,27 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 		u64 hash_len;
 		int type;
 		//例行安全检查
+		 /* 检查当前分量inode是否允许检索 */
 		err = may_lookup(nd);
  		if (err)
 			return err;
 		//hash_len:hash+len , 64位长，高32位是len，低32位是hash
+		/* 计算出一个与目录项高速缓存散列表有关的32位散列值*/
 		hash_len = hash_name(name);
 
 		type = LAST_NORM;
 		//子路径名是否是“.”或“..”并做好标记
 		if (name[0] == '.') switch (hashlen_len(hash_len)) {
 			case 2:
-				if (name[1] == '.') {
+				if (name[1] == '.') {/*分量为“..”*/
 					type = LAST_DOTDOT;
 					nd->flags |= LOOKUP_JUMPED;
 				}
 				break;
-			case 1:
+			case 1:/*分量为“.”*/
 				type = LAST_DOT;
 		}
-		if (likely(type == LAST_NORM)) {
+		if (likely(type == LAST_NORM)) {/*不是“.”也不是“..”*/
 			struct dentry *parent = nd->path.dentry;
 			nd->flags &= ~LOOKUP_JUMPED;
 			//这个当前目录项是否需要重新计算一下散列值
@@ -2008,6 +2026,8 @@ OK:
 			if (!name)
 				return 0;
 			/* last component of nested symlink */
+			/* 通过walk_component函数找到解析字符串对应的inode，并且将nd->inode改称最新inode，准备继续解析后面的字符串信息。因为目录项所管理的inode在系统中通过hash表进行维护，
+			因此，通过hash值可以很容易的找到inode。如果内存中还不存在inode对象，对于ext3文件系统会通过ext3_lookup函数从磁盘上获取inode的元数据信息，并且构造目录项中所有的inode对象。 */ 
 			err = walk_component(nd, WALK_GET | WALK_PUT);
 		} else {
 			err = walk_component(nd, WALK_GET);
@@ -2044,7 +2064,11 @@ static const char *path_init(struct nameidata *nd, unsigned flags)
 {
 	int retval = 0;
 	const char *s = nd->name->name;
-
+	/*
+* 在搜索的过程中，这个字段的值会随着路径名当前搜索结果而变； 
+     * 例如，如果成功找到目标文件，那么这个字段的值就变成了LAST_NORM 
+     * 而如果最后停留在了一个.上，则变成LAST_DOT
+    */
 	if (!*s)
 		flags &= ~LOOKUP_RCU;
 	//LAST_ROOT，意思就是在路径名中只有“/”
@@ -2052,7 +2076,10 @@ static const char *path_init(struct nameidata *nd, unsigned flags)
 	//查找目标文件的父目录
 	nd->flags = flags | LOOKUP_JUMPED | LOOKUP_PARENT;
 	nd->depth = 0;
+	//若搜索是基于根目录，即已经设置了LOOKUP_ROOT，则根据root的dentry和inode初始化nd，然后返回
 	if (flags & LOOKUP_ROOT) {
+		/*若搜索是基于根目录，即已经设置了LOOKUP_ROOT，
+		则根据root的dentry和inode初始化nd，然后返回*/
 		struct dentry *root = nd->root.dentry;
 		struct inode *inode = root->d_inode;
 		if (*s) {
@@ -2079,19 +2106,25 @@ static const char *path_init(struct nameidata *nd, unsigned flags)
 
 	nd->m_seq = read_seqbegin(&mount_lock);
 	//如果路径是绝对路径（以“/”开头）的话，就把起始路径指向进程的根目录
+	//若路径名的第一个字符为“/”，那么查找必须从根目录开始，获取相应的已安装文件系统对象（current->fs）和目录项对象（current->fs->root记录到nd->root中）；
 	if (*s == '/') {
 		if (flags & LOOKUP_RCU) {
 			rcu_read_lock();
-			set_root_rcu(nd);
+			set_root_rcu(nd); ;/*设置nd的root为当前进程fs的root*/
 			nd->seq = nd->root_seq;
 		} else {
 			set_root(nd);
 			path_get(&nd->root);
 		}
 		nd->path = nd->root;
+		//若路径名的第一个字符不为“/”但指定基于当前进程的工作目录，则根据current->fs->pwd来初始化nd->path和nd-inode。
 	} else if (nd->dfd == AT_FDCWD) {
 		//如果路径是相对路径，并且 dfd 是AT_FDCWD
 		//那就说明起始路径需要指向当前工作目录
+		/* open系统调用中基本都为AT_FDCWD
+* 若路径名的第一个字符不为“/”但指定了当前进程的工作目录，
+* 则根据current->fs->pwd来初始化nd->path和nd->inode(inode在最后统一设置)
+*/
 		if (flags & LOOKUP_RCU) {
 			struct fs_struct *fs = current->fs;
 			unsigned seq;
@@ -2107,7 +2140,9 @@ static const char *path_init(struct nameidata *nd, unsigned flags)
 			get_fs_pwd(current->fs, &nd->path);
 		}
 	} else {
+	 /* 在openat系统调用dfd基本不为AT_FDCWD*/
 		//如果给了一个有效的 dfd，那就需要把起始路径指向这个给定的目录
+		//若指定了父目录，则基于dfd进行处理
 		/* Caller must check execute permissions on the starting path component */
 		struct fd f = fdget_raw(nd->dfd);
 		struct dentry *dentry;
@@ -2209,14 +2244,20 @@ static int filename_lookup(int dfd, struct filename *name, unsigned flags,
 			   struct path *path, struct path *root)
 {
 	int retval;
+	/* 记录与节点搜索相关的数据信息 */
 	struct nameidata nd;
+	/* 检查路径名指针是否有效 */
 	if (IS_ERR(name))
 		return PTR_ERR(name);
+	/*存在传入的根目录，则将根目录记录在nd中，并设置搜索标识LOOKUP_ROOT */
 	if (unlikely(root)) {
 		nd.root = *root;
 		flags |= LOOKUP_ROOT;
 	}
+	/* 初始化nd，并与进程交互 */
 	set_nameidata(&nd, dfd, name);
+	
+/* 开始实质的搜索 */
 	retval = path_lookupat(&nd, flags | LOOKUP_RCU, path);
 	if (unlikely(retval == -ECHILD))
 		retval = path_lookupat(&nd, flags, path);
@@ -3376,8 +3417,10 @@ static struct file *path_openat(struct nameidata *nd,
 		put_filp(file);
 		return ERR_CAST(s);
 	}
+	/* 节点路径查找，结果记录在nd中*/
 	while (!(error = link_path_walk(s, nd)) &&
 		(error = do_last(nd, file, op, &opened)) > 0) {
+		/* 创建或者获取文件对应的inode对象，并且初始化file对象，至此一个表示打开文件的内存对象filp诞生 */
 		nd->flags &= ~(LOOKUP_OPEN|LOOKUP_CREATE|LOOKUP_EXCL);
 		s = trailing_symlink(nd);
 		if (IS_ERR(s)) {

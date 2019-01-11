@@ -890,7 +890,7 @@ static inline int build_open_flags(int flags, umode_t mode, struct open_flags *o
 	 * them in fcntl(F_GETFD) or similar interfaces.
 	 */
 	flags &= VALID_OPEN_FLAGS;
-
+	/* 如果需要创建文件才会判断mode */
 	if (flags & (O_CREAT | __O_TMPFILE))
 		op->mode = (mode & S_IALLUGO) | S_IFREG;
 	else
@@ -933,7 +933,7 @@ static inline int build_open_flags(int flags, umode_t mode, struct open_flags *o
 
 	/* Allow the LSM permission hook to distinguish append
 	   access from general write access. */
-	if (flags & O_APPEND)
+	if (flags & O_APPEND) //检查追加写
 		acc_mode |= MAY_APPEND;
 
 	op->acc_mode = acc_mode;
@@ -1011,6 +1011,11 @@ long do_sys_open(int dfd, const char __user *filename, int flags, umode_t mode)
 {
 	struct open_flags op;
 	//检查并包装标志
+	/*
+	* 对标识位进行预处理和封装，
+	* flags/mode为用户层传递的参数, 内核会对flags/mode进行合法性检查；
+	* 并根据flags/mode生成新的flags值赋给fd
+	*/
 	int fd = build_open_flags(flags, mode, &op);
 	struct filename *tmp;
 
