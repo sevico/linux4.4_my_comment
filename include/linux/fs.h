@@ -922,10 +922,12 @@ struct file {
 	struct fown_struct	f_owner;
 	//文件用户信息
 	const struct cred	*f_cred;
-	//文件预读取特性
+	//文件预读取状态
 	struct file_ra_state	f_ra;
 	//检查一个file实例是否仍然与相关的inode内容兼容
-	/* 版本号，每次使用后，自动递增 */
+	/* 版本号，每次使用后，自动递增	
+	版本号，当文件的f_pos改变时f_version递增
+	*/
 	u64			f_version;
 #ifdef CONFIG_SECURITY
 	/* 指向文件对象安全结构的指针 */
