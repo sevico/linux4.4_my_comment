@@ -834,7 +834,7 @@ static void set_root_rcu(struct nameidata *nd)
 
 	do {
 		seq = read_seqcount_begin(&fs->seq);
-		nd->root = fs->root;
+		nd->root = fs->root;//设置nd的root为当前进程fs的root
 		nd->root_seq = __read_seqcount_begin(&nd->root.dentry->d_seq);
 	} while (read_seqcount_retry(&fs->seq, seq));
 }
@@ -1484,6 +1484,10 @@ static int follow_dotdot(struct nameidata *nd)
 		if (!follow_up(&nd->path))
 			break;
 	}
+	/*
+	把nd->dentry和nd->mnt更新为相应已安装文件系统的安装点和安装系统对象的地址；
+	然后重复整个操作（几个文件系统可以安装在同一个安装点上）
+	*/
 	follow_mount(&nd->path);
 	nd->inode = nd->path.dentry->d_inode;
 	return 0;
@@ -1824,7 +1828,7 @@ static int walk_component(struct nameidata *nd, int flags)
 	return 0;
 
 out_path_put:
-	path_to_nameidata(&path, nd);
+	path_to_nameidata(&path, nd);//将path的内容转化到nd中
 	return err;
 }
 
@@ -2003,7 +2007,7 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 		nd->last.hash_len = hash_len;
 		nd->last.name = name;
 		nd->last_type = type;
-
+		//运行到这里，表示当前节点为中间节点
 		name += hashlen_len(hash_len);
 		//完成
 		if (!*name)
@@ -2030,7 +2034,7 @@ OK:
 			因此，通过hash值可以很容易的找到inode。如果内存中还不存在inode对象，对于ext3文件系统会通过ext3_lookup函数从磁盘上获取inode的元数据信息，并且构造目录项中所有的inode对象。 */ 
 			err = walk_component(nd, WALK_GET | WALK_PUT);
 		} else {
-			err = walk_component(nd, WALK_GET);
+			err = walk_component(nd, WALK_GET);//搜索目录项
 		}
 		if (err < 0)
 			return err;
@@ -2116,7 +2120,7 @@ static const char *path_init(struct nameidata *nd, unsigned flags)
 			set_root(nd);
 			path_get(&nd->root);
 		}
-		nd->path = nd->root;
+		nd->path = nd->root;//搜索的初始路径设为根路径
 		//若路径名的第一个字符不为“/”但指定基于当前进程的工作目录，则根据current->fs->pwd来初始化nd->path和nd-inode。
 	} else if (nd->dfd == AT_FDCWD) {
 		//如果路径是相对路径，并且 dfd 是AT_FDCWD
@@ -2172,7 +2176,7 @@ static const char *path_init(struct nameidata *nd, unsigned flags)
 		return s;
 	}
 
-	nd->inode = nd->path.dentry->d_inode;
+	nd->inode = nd->path.dentry->d_inode;//设置根目录的inode
 	if (!(flags & LOOKUP_RCU))
 		return s;
 	if (likely(!read_seqcount_retry(&nd->path.dentry->d_seq, nd->seq)))
@@ -2212,12 +2216,12 @@ static inline int lookup_last(struct nameidata *nd)
 /* Returns 0 and nd will be valid on success; Retuns error, otherwise. */
 static int path_lookupat(struct nameidata *nd, unsigned flags, struct path *path)
 {
-	const char *s = path_init(nd, flags);
+	const char *s = path_init(nd, flags);//找到搜索的起点，保存在nd中；
 	int err;
 
 	if (IS_ERR(s))
 		return PTR_ERR(s);
-	while (!(err = link_path_walk(s, nd))
+	while (!(err = link_path_walk(s, nd))//从起点开始路径的搜索，其中nd用来返回搜索结果
 		&& ((err = lookup_last(nd)) > 0)) {
 		s = trailing_symlink(nd);
 		if (IS_ERR(s)) {
@@ -3517,7 +3521,7 @@ static struct dentry *filename_create(int dfd, struct filename *name,
 	 * other flags passed in are ignored!
 	 */
 	lookup_flags &= LOOKUP_REVAL;
-
+	//路径解析
 	name = filename_parentat(dfd, name, lookup_flags, path, &last, &type);
 	if (IS_ERR(name))
 		return ERR_CAST(name);
@@ -3536,6 +3540,7 @@ static struct dentry *filename_create(int dfd, struct filename *name,
 	 */
 	lookup_flags |= LOOKUP_CREATE | LOOKUP_EXCL;
 	mutex_lock_nested(&path->dentry->d_inode->i_mutex, I_MUTEX_PARENT);
+	//缓存中查找/创建dentry
 	dentry = __lookup_hash(&last, path->dentry, lookup_flags);
 	if (IS_ERR(dentry))
 		goto unlock;
@@ -3617,7 +3622,7 @@ int vfs_mknod(struct inode *dir, struct dentry *dentry, umode_t mode, dev_t dev)
 	error = security_inode_mknod(dir, dentry, mode, dev);
 	if (error)
 		return error;
-
+	//dir->i_op->mknod()。这是父目录 /dev 的i_op->mknod 函数，这个函数指针指向的是shmem_mknod()函数
 	error = dir->i_op->mknod(dir, dentry, mode, dev);
 	if (!error)
 		fsnotify_create(dir, dentry);
@@ -3654,6 +3659,7 @@ SYSCALL_DEFINE4(mknodat, int, dfd, const char __user *, filename, umode_t, mode,
 	if (error)
 		return error;
 retry:
+	/* 这里进行路径解析并创建新的 dentry */
 	dentry = user_path_create(dfd, filename, &path, lookup_flags);
 	if (IS_ERR(dentry))
 		return PTR_ERR(dentry);
@@ -3667,6 +3673,7 @@ retry:
 		case 0: case S_IFREG:
 			error = vfs_create(path.dentry->d_inode,dentry,mode,true);
 			break;
+		/* 在这里创建 inode */ 
 		case S_IFCHR: case S_IFBLK:
 			error = vfs_mknod(path.dentry->d_inode,dentry,mode,
 					new_decode_dev(dev));
@@ -4110,7 +4117,7 @@ int vfs_link(struct dentry *old_dentry, struct inode *dir, struct dentry *new_de
 
 	if (!inode)
 		return -ENOENT;
-
+	/* 检查是否有创建文件目录项权限 */
 	error = may_create(dir, new_dentry);
 	if (error)
 		return error;
@@ -4123,6 +4130,7 @@ int vfs_link(struct dentry *old_dentry, struct inode *dir, struct dentry *new_de
 	 */
 	if (IS_APPEND(inode) || IS_IMMUTABLE(inode))
 		return -EPERM;
+	/* 调用具体文件系统的link，如ext3_link() */
 	if (!dir->i_op->link)
 		return -EPERM;
 	if (S_ISDIR(inode->i_mode))
@@ -4190,10 +4198,11 @@ SYSCALL_DEFINE5(linkat, int, olddfd, const char __user *, oldname,
 	if (flags & AT_SYMLINK_FOLLOW)
 		how |= LOOKUP_FOLLOW;
 retry:
+	/* 查找源文件的path */
 	error = user_path_at(olddfd, oldname, how, &old_path);
 	if (error)
 		return error;
-
+	/* 为链接文件创建dentry结构 *//
 	new_dentry = user_path_create(newdfd, newname, &new_path,
 					(how & LOOKUP_REVAL));
 	error = PTR_ERR(new_dentry);
@@ -4201,6 +4210,7 @@ retry:
 		goto out;
 
 	error = -EXDEV;
+	/* 如果源和目的不是同一个文件系统，则返回错误 */
 	if (old_path.mnt != new_path.mnt)
 		goto out_dput;
 	error = may_linkat(&old_path);

@@ -1240,6 +1240,8 @@ static struct ext2_inode *ext2_get_inode(struct super_block *sb, ino_t ino,
 	if ((ino != EXT2_ROOT_INO && ino < EXT2_FIRST_INO(sb)) ||
 	    ino > le32_to_cpu(EXT2_SB(sb)->s_es->s_inodes_count))
 		goto Einval;
+	//函数首先计算出inode属于哪个 块组group，算法很简单，将inode号除以这个块设备上每个 group 所包含的inode个数就可以了。
+	//这个个数由ext2_sb_info->s_inode_per_group给出。然后调用ext2_get_group_desc得到group描述符，group数据已经在mount文件系统的时候读入到内存中。
 
 	block_group = (ino - 1) / EXT2_INODES_PER_GROUP(sb);
 	gdp = ext2_get_group_desc(sb, block_group, NULL);
@@ -1251,6 +1253,7 @@ static struct ext2_inode *ext2_get_inode(struct super_block *sb, ino_t ino,
 	offset = ((ino - 1) % EXT2_INODES_PER_GROUP(sb)) * EXT2_INODE_SIZE(sb);
 	block = le32_to_cpu(gdp->bg_inode_table) +
 		(offset >> EXT2_BLOCK_SIZE_BITS(sb));
+	//调用驱动读取指定block的data
 	if (!(bh = sb_bread(sb, block)))
 		goto Eio;
 
@@ -1328,6 +1331,7 @@ struct inode *ext2_iget (struct super_block *sb, unsigned long ino)
 
 	ei = EXT2_I(inode);
 	ei->i_block_alloc_info = NULL;
+	//判断inode->I_state属性，若不是I_NEW，则不是新创建的inode，于是直接返回。若是新创建的，则调用ext2_get_inode()从物理设备中读取inode数据，填充到inode对象中去
 
 	raw_inode = ext2_get_inode(inode->i_sb, ino, &bh);
 	if (IS_ERR(raw_inode)) {

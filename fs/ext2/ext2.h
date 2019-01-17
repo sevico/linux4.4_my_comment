@@ -193,11 +193,17 @@ static inline struct ext2_sb_info *EXT2_SB(struct super_block *sb)
  */
 struct ext2_group_desc
 {
+	/* 数据块位图的块号 */
 	__le32	bg_block_bitmap;		/* Blocks bitmap block */
+	/* 索引节点位图的块号 */
 	__le32	bg_inode_bitmap;		/* Inodes bitmap block */
+	/* 第一个索引节点表的块号 */
 	__le32	bg_inode_table;		/* Inodes table block */
+	/* 该组中空闲块数 */
 	__le16	bg_free_blocks_count;	/* Free blocks count */
+	/* 该组中空闲索引节点数 */
 	__le16	bg_free_inodes_count;	/* Free inodes count */
+	/* 该组中的目录项 */
 	__le16	bg_used_dirs_count;	/* Directories count */
 	__le16	bg_pad;
 	__le32	bg_reserved[3];

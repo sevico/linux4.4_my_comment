@@ -1420,9 +1420,10 @@ static struct inode *shmem_get_inode(struct super_block *sb, const struct inode 
 
 	if (shmem_reserve_inode(sb))
 		return NULL;
-
+	/* 在内核空间创建 inode 结构体（分配内存）*/
 	inode = new_inode(sb);
 	if (inode) {
+		/* 下面是各种成员变量的初始化 */
 		inode->i_ino = get_next_ino();
 		inode_init_owner(inode, dir, mode);
 		inode->i_blocks = 0;
@@ -1440,7 +1441,7 @@ static struct inode *shmem_get_inode(struct super_block *sb, const struct inode 
 		switch (mode & S_IFMT) {
 		default:
 			inode->i_op = &shmem_special_inode_operations;
-			init_special_inode(inode, mode, dev);
+			init_special_inode(inode, mode, dev);//重点
 			break;
 		case S_IFREG:
 			inode->i_mapping->a_ops = &shmem_aops;

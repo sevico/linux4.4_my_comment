@@ -361,14 +361,15 @@ ext2_readdir(struct file *file, struct dir_context *ctx)
 struct ext2_dir_entry_2 *ext2_find_entry (struct inode * dir,
 			struct qstr *child, struct page ** res_page)
 {
+	/*目录项名*/
 	const char *name = child->name;
-	int namelen = child->len;
-	unsigned reclen = EXT2_DIR_REC_LEN(namelen);
+	int namelen = child->len;/*目录项名的长度*/
+	unsigned reclen = EXT2_DIR_REC_LEN(namelen);/*目录项的长度，这个宏前面解释过*/
 	unsigned long start, n;
-	unsigned long npages = dir_pages(dir);
+	unsigned long npages = dir_pages(dir);/*把以字节为单位的文件大小转换为物理页面数*/
 	struct page *page = NULL;
 	struct ext2_inode_info *ei = EXT2_I(dir);
-	ext2_dirent * de;
+	ext2_dirent * de;/*de为要返回的Ext2目录项结构*/
 	int dir_has_error = 0;
 
 	if (npages == 0)
@@ -377,15 +378,17 @@ struct ext2_dir_entry_2 *ext2_find_entry (struct inode * dir,
 	/* OFFSET_CACHE */
 	*res_page = NULL;
 
-	start = ei->i_dir_start_lookup;
+	start = ei->i_dir_start_lookup;/*目录项在内存的起始位置*/
 	if (start >= npages)
 		start = 0;
 	n = start;
 	do {
 		char *kaddr;
-		page = ext2_get_page(dir, n, dir_has_error);
+		page = ext2_get_page(dir, n, dir_has_error);/*从页面高速缓存中获得目录项所在的页面*/
 		if (!IS_ERR(page)) {
+			/*获得page所对应的内核虚拟地址*/
 			kaddr = page_address(page);
+			/*获得该目录项结构的起始地址*/
 			de = (ext2_dirent *) kaddr;
 			kaddr += ext2_last_byte(dir, n) - reclen;
 			while ((char *) de <= kaddr) {
@@ -395,10 +398,13 @@ struct ext2_dir_entry_2 *ext2_find_entry (struct inode * dir,
 					ext2_put_page(page);
 					goto out;
 				}
+				/*判断是否匹配*/
 				if (ext2_match (namelen, name, de))
 					goto found;
+				/*取下一个 ext2_dir_entry_2*/
 				de = ext2_next_entry(de);
 			}
+			/*释放目录项所在的页面*/
 			ext2_put_page(page);
 		} else
 			dir_has_error = 1;

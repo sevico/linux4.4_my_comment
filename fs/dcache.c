@@ -548,6 +548,7 @@ static void __dentry_kill(struct dentry *dentry)
 	}
 	/* if it was on the hash then remove it */
 	__d_drop(dentry);
+	//从parent的children list中删除
 	__list_del_entry(&dentry->d_child);
 	/*
 	 * Inform d_walk() that we are no longer attached to the
@@ -591,7 +592,7 @@ static struct dentry *dentry_kill(struct dentry *dentry)
 	if (inode && unlikely(!spin_trylock(&inode->i_lock)))
 		goto failed;
 
-	if (!IS_ROOT(dentry)) {
+	if (!IS_ROOT(dentry)) {//判断是否满足dentry->d_parent=dentry
 		parent = dentry->d_parent;
 		if (unlikely(!spin_trylock(&parent->d_lock))) {
 			if (inode)
@@ -1627,6 +1628,8 @@ struct dentry *__d_alloc(struct super_block *sb, const struct qstr *name)
 	spin_lock_init(&dentry->d_lock);
 	seqcount_init(&dentry->d_seq);
 	dentry->d_inode = NULL;
+	//将所分配的dentry对象的d_parent指针设置为指向自身。
+//NOTE！这一点是判断一个dentry对象是否是一个fs的根目录的唯一准则（include／linux／dcache.h）：＃define IS_ROOT（x）（（x）＝＝（x）－>d_parent）
 	dentry->d_parent = dentry;
 	dentry->d_sb = sb;
 	dentry->d_op = NULL;

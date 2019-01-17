@@ -53,7 +53,7 @@ struct ext2_group_desc * ext2_get_group_desc(struct super_block * sb,
 
 		return NULL;
 	}
-
+	//通过block_group>>EXT2_DESC_PER_BLOCK_BITS(sb)计算得出group_desc，也就是目标 组描述符 ext2_group_desc 在第几个逻辑磁盘块block
 	group_desc = block_group >> EXT2_DESC_PER_BLOCK_BITS(sb);
 	offset = block_group & (EXT2_DESC_PER_BLOCK(sb) - 1);
 	if (!sbi->s_group_desc[group_desc]) {

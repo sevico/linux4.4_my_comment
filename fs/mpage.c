@@ -391,6 +391,7 @@ EXPORT_SYMBOL(mpage_readpages);
 /*
  * This isn't called much at all
  */
+ //该函数是通用函数，对大多文件系统都适用，用于将块设备的数据读入到page cache中来。但是如何将page->mapping->host(inode)所表示的文件信息转换为块设备上的位置信息，这部分功能由各文件系统独立的函数完成，在ext2中，该函数是ext2_get_block()
 int mpage_readpage(struct page *page, get_block_t get_block)
 {
 	struct bio *bio = NULL;
