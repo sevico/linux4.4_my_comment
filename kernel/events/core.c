@@ -8329,7 +8329,7 @@ again:
 	if (flags & ~PERF_FLAG_ALL)
 		return -EINVAL;
 
-	err = perf_copy_attr(attr_uptr, &attr);  //拷贝用户数据 ??
+	err = perf_copy_attr(attr_uptr, &attr);  //将用户空间对性能计数器的配置参数拷贝到内核空间
 	if (err)
 		return err;
 
@@ -8411,7 +8411,7 @@ again:
 		cgroup_fd = pid;
 
 	event = perf_event_alloc(&attr, cpu, task, group_leader, NULL,
-				 NULL, NULL, cgroup_fd); //???
+				 NULL, NULL, cgroup_fd); //分配并初始化事件结构体：struct perf_event,struct hw_perf_event
 	if (IS_ERR(event)) {
 		err = PTR_ERR(event);
 		goto err_cred;
@@ -8462,10 +8462,10 @@ again:
 	/*
 	 * Get the target context (task or percpu):
 	 */
-	ctx = find_get_context(pmu, task, event);
+	ctx = find_get_context(pmu, task, event);//返回相应pid和CPU的perf_event_context，其中保存了事件上下文的各种信息
 	if (IS_ERR(ctx)) {
 		err = PTR_ERR(ctx);
-		goto err_alloc;  //?? ctx未清理？
+		goto err_alloc;
 	}
 
 	if ((pmu->capabilities & PERF_PMU_CAP_EXCLUSIVE) && group_leader) {
@@ -8525,7 +8525,7 @@ again:
 		if (err)
 			goto err_context;
 	}
-
+	//创建一个文件，该文件通过函数fd_install与进程相关联
 	event_file = anon_inode_getfile("[perf_event]", &perf_fops, event,
 					f_flags);
 	if (IS_ERR(event_file)) {
@@ -8643,7 +8643,7 @@ again:
 	 */
 	perf_event__header_size(event);
 	perf_event__id_header_size(event);
-
+	//将	性能事件与上下文绑定，并调用平台相关函数访问性能计数器 系统调用对硬件的操作都是在该函数内完成
 	perf_install_in_context(ctx, event, event->cpu);
 	perf_unpin_context(ctx);
 
