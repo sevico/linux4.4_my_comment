@@ -371,27 +371,32 @@ struct ext2_dir_entry_2 *ext2_find_entry (struct inode * dir,
 	struct ext2_inode_info *ei = EXT2_I(dir);
 	ext2_dirent * de;/*de为要返回的Ext2目录项结构*/
 	int dir_has_error = 0;
-
+	/*如果这个目录是空的，就直接返回*/
 	if (npages == 0)
 		goto out;
 
 	/* OFFSET_CACHE */
 	*res_page = NULL;
-
+	/*开始查找的页数*/
 	start = ei->i_dir_start_lookup;/*目录项在内存的起始位置*/
 	if (start >= npages)
 		start = 0;
 	n = start;
+	/*大循环，一个页一个页的查找*/
 	do {
-		char *kaddr;
+		char *kaddr;		
+		/*从缓存中寻找，由inode结构体得到对应的页的数据，如果缓存上没有，就去硬盘上读取*/
 		page = ext2_get_page(dir, n, dir_has_error);/*从页面高速缓存中获得目录项所在的页面*/
+	/*查找成功，就在这个页上寻找*/
 		if (!IS_ERR(page)) {
 			/*获得page所对应的内核虚拟地址*/
 			kaddr = page_address(page);
 			/*获得该目录项结构的起始地址*/
 			de = (ext2_dirent *) kaddr;
 			kaddr += ext2_last_byte(dir, n) - reclen;
+			/*只要没有到这个页的末尾，就继续循环*/
 			while ((char *) de <= kaddr) {
+				/*如果rec_len为0，就返回错误*/
 				if (de->rec_len == 0) {
 					ext2_error(dir->i_sb, __func__,
 						"zero-length directory entry");
@@ -408,7 +413,7 @@ struct ext2_dir_entry_2 *ext2_find_entry (struct inode * dir,
 			ext2_put_page(page);
 		} else
 			dir_has_error = 1;
-
+		/*n标记对应的开始页数*/
 		if (++n >= npages)
 			n = 0;
 		/* next page is past the blocks we've got */
@@ -424,6 +429,7 @@ out:
 	return NULL;
 
 found:
+	/*找到了，就返回inode的页和ext信息结构体*/
 	*res_page = page;
 	ei->i_dir_start_lookup = n;
 	return de;
@@ -449,6 +455,7 @@ ino_t ext2_inode_by_name(struct inode *dir, struct qstr *child)
 	
 	de = ext2_find_entry (dir, child, &page);
 	if (de) {
+		/*如果返回正确，得到inode号码，然后释放page*/
 		res = le32_to_cpu(de->inode);
 		ext2_put_page(page);
 	}

@@ -2779,6 +2779,7 @@ long do_mount(const char *dev_name, const char __user *dir_name,
 	int mnt_flags = 0;
 
 	/* Discard magic */
+	/* 不用的magic就抛弃 */
 	if ((flags & MS_MGC_MSK) == MS_MGC_VAL)
 		flags &= ~MS_MGC_MSK;
 
@@ -2805,6 +2806,7 @@ long do_mount(const char *dev_name, const char __user *dir_name,
 		mnt_flags |= MNT_RELATIME;
 
 	/* Separate the per-mountpoint flags */
+	/* 把传入的flags分解到mnt_flags上 */
 	if (flags & MS_NOSUID)
 		mnt_flags |= MNT_NOSUID;
 	if (flags & MS_NODEV)

@@ -40,11 +40,12 @@ struct ext2_group_desc * ext2_get_group_desc(struct super_block * sb,
 					     unsigned int block_group,
 					     struct buffer_head ** bh)
 {
+	/*传入的block_group是inode在第几个块组*/
 	unsigned long group_desc;
 	unsigned long offset;
 	struct ext2_group_desc * desc;
 	struct ext2_sb_info *sbi = EXT2_SB(sb);
-
+	/*检验参数是否合法*/
 	if (block_group >= sbi->s_groups_count) {
 		ext2_error (sb, "ext2_get_group_desc",
 			    "block_group >= groups_count - "
@@ -54,8 +55,13 @@ struct ext2_group_desc * ext2_get_group_desc(struct super_block * sb,
 		return NULL;
 	}
 	//通过block_group>>EXT2_DESC_PER_BLOCK_BITS(sb)计算得出group_desc，也就是目标 组描述符 ext2_group_desc 在第几个逻辑磁盘块block
+	/*首先得到块组究竟是在第几个块上，块组描述符由连续的几个块组成，EXT2_DESC_PER_BLOCK_BITS(sb)
+返回一个块含有的块组描述符个数对应的含有二进制位数。比如一个块1024字节，一个块描述符由32字节，
+所以一个块有32个块描述符，所以就是返回5，因为32变成二进制有5个1，就等于块描述符除以32，得到在第几个块*/
 	group_desc = block_group >> EXT2_DESC_PER_BLOCK_BITS(sb);
+	/*找到块组描述符在块内的偏移*/
 	offset = block_group & (EXT2_DESC_PER_BLOCK(sb) - 1);
+	/*都算好以后就直接从sbi的superblock结构体里边找*/
 	if (!sbi->s_group_desc[group_desc]) {
 		ext2_error (sb, "ext2_get_group_desc",
 			    "Group descriptor not loaded - "

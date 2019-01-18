@@ -57,13 +57,14 @@ static struct dentry *ext2_lookup(struct inode * dir, struct dentry *dentry, uns
 {
 	struct inode * inode;
 	ino_t ino;
-	
+	/*如果目录项的名字长度太长会返回错误*/
 	if (dentry->d_name.len > EXT2_NAME_LEN)
 		return ERR_PTR(-ENAMETOOLONG);
-
+	/*核心的操作，ext2文件系统通过文件名寻找inode，返回inode的编号*/
 	ino = ext2_inode_by_name(dir, &dentry->d_name);
 	inode = NULL;
 	if (ino) {
+		/*根据索引节点号来创造inode结构*/
 		inode = ext2_iget(dir->i_sb, ino);
 		if (inode == ERR_PTR(-ESTALE)) {
 			ext2_error(dir->i_sb, __func__,
@@ -72,6 +73,7 @@ static struct dentry *ext2_lookup(struct inode * dir, struct dentry *dentry, uns
 			return ERR_PTR(-EIO);
 		}
 	}
+	/*说明出现错误，inode和dentry断开连接，处理*/
 	return d_splice_alias(inode, dentry);
 }
 

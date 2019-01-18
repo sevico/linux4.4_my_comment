@@ -1237,6 +1237,7 @@ static struct ext2_inode *ext2_get_inode(struct super_block *sb, ino_t ino,
 	struct ext2_group_desc * gdp;
 
 	*p = NULL;
+	/*检验参数是不是合法*/
 	if ((ino != EXT2_ROOT_INO && ino < EXT2_FIRST_INO(sb)) ||
 	    ino > le32_to_cpu(EXT2_SB(sb)->s_es->s_inodes_count))
 		goto Einval;
@@ -1244,19 +1245,22 @@ static struct ext2_inode *ext2_get_inode(struct super_block *sb, ino_t ino,
 	//这个个数由ext2_sb_info->s_inode_per_group给出。然后调用ext2_get_group_desc得到group描述符，group数据已经在mount文件系统的时候读入到内存中。
 
 	block_group = (ino - 1) / EXT2_INODES_PER_GROUP(sb);
+	/*由块组号码得到对应的块组描述符*/
 	gdp = ext2_get_group_desc(sb, block_group, NULL);
 	if (!gdp)
 		goto Egdp;
 	/*
 	 * Figure out the offset within the block group inode table
 	 */
+	 /*块号减一取余每一个块组的块的数目再乘上一个inode的大小，就得到了在对应块内的偏移*/
 	offset = ((ino - 1) % EXT2_INODES_PER_GROUP(sb)) * EXT2_INODE_SIZE(sb);
+	/*从块组描述符得到bg_inode_table字段，也就是这个块组的第一个inode表所在的块号，然后再加上偏移，就得到了块号对应的inode结构体*/
 	block = le32_to_cpu(gdp->bg_inode_table) +
 		(offset >> EXT2_BLOCK_SIZE_BITS(sb));
 	//调用驱动读取指定block的data
 	if (!(bh = sb_bread(sb, block)))
 		goto Eio;
-
+	/*得到了对应的块，然后offset偏移后，使用(struct ext2_inode *)指针转化过后就得到了*/
 	*p = bh;
 	offset &= (EXT2_BLOCK_SIZE(sb) - 1);
 	return (struct ext2_inode *) (bh->b_data + offset);
@@ -1322,7 +1326,7 @@ struct inode *ext2_iget (struct super_block *sb, unsigned long ino)
 	int n;
 	uid_t i_uid;
 	gid_t i_gid;
-
+	/*从挂载的文件系统里寻找inode*/
 	inode = iget_locked(sb, ino);
 	if (!inode)
 		return ERR_PTR(-ENOMEM);
@@ -1332,13 +1336,13 @@ struct inode *ext2_iget (struct super_block *sb, unsigned long ino)
 	ei = EXT2_I(inode);
 	ei->i_block_alloc_info = NULL;
 	//判断inode->I_state属性，若不是I_NEW，则不是新创建的inode，于是直接返回。若是新创建的，则调用ext2_get_inode()从物理设备中读取inode数据，填充到inode对象中去
-
+	/*从挂载的文件系统里寻找inode*/
 	raw_inode = ext2_get_inode(inode->i_sb, ino, &bh);
 	if (IS_ERR(raw_inode)) {
 		ret = PTR_ERR(raw_inode);
  		goto bad_inode;
 	}
-
+	/*把得到的ext2_inode结构体变成inode结构体*/
 	inode->i_mode = le16_to_cpu(raw_inode->i_mode);
 	i_uid = (uid_t)le16_to_cpu(raw_inode->i_uid_low);
 	i_gid = (gid_t)le16_to_cpu(raw_inode->i_gid_low);
@@ -1389,7 +1393,7 @@ struct inode *ext2_iget (struct super_block *sb, unsigned long ino)
 	 */
 	for (n = 0; n < EXT2_N_BLOCKS; n++)
 		ei->i_data[n] = raw_inode->i_block[n];
-
+	/*处理特殊文件*/
 	if (S_ISREG(inode->i_mode)) {
 		inode->i_op = &ext2_file_inode_operations;
 		if (test_opt(inode->i_sb, NOBH)) {
