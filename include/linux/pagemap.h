@@ -677,9 +677,12 @@ static inline int add_to_page_cache(struct page *page,
 		__clear_page_locked(page);
 	return error;
 }
+/*返回一个文件占用的页的数目*/
 
 static inline unsigned long dir_pages(struct inode *inode)
 {
+	/*inode->i_size是文件大小的字节数，PAGE_CACHE_SIZE是缓存页的大小，PAGE_CACHE_SHIFT是缓存页大小换算成二进制位有多少位，这样的算法得到的就是inode对应的文件的占用缓存页的数目*/
+
 	return (unsigned long)(inode->i_size + PAGE_CACHE_SIZE - 1) >>
 			       PAGE_CACHE_SHIFT;
 }
