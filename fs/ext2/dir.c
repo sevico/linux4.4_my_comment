@@ -590,17 +590,23 @@ void ext2_set_link(struct inode *dir, struct ext2_dir_entry_2 *de,
 
 /*
  *	Parent is locked.
- */
+ */ 
+/*ext2增加目录对于文件的连接，就是把一个文件放到目录里，dentry是要放入的文件的dentry结构体，inode是要放的文件*/
 int ext2_add_link (struct dentry *dentry, struct inode *inode)
 {
+	/*要放入的目录的inode*/
 	struct inode *dir = d_inode(dentry->d_parent);
+	/*文件名和名字长度*/
 	const char *name = dentry->d_name.name;
 	int namelen = dentry->d_name.len;
+	/*块大小*/
 	unsigned chunk_size = ext2_chunk_size(dir);
+	/*目录项结构体大小*/
 	unsigned reclen = EXT2_DIR_REC_LEN(namelen);
 	unsigned short rec_len, name_len;
 	struct page *page = NULL;
 	ext2_dirent * de;
+	/*这个文件的页数目*/
 	unsigned long npages = dir_pages(dir);
 	unsigned long n;
 	char *kaddr;
@@ -612,19 +618,27 @@ int ext2_add_link (struct dentry *dentry, struct inode *inode)
 	 * This code plays outside i_size, so it locks the page
 	 * to protect that region.
 	 */
+	 /*遍历目录的目录项列表*/
 	for (n = 0; n <= npages; n++) {
 		char *dir_end;
-
+		/*前边讲过这个函数，获得dir目录的第n页*/
 		page = ext2_get_page(dir, n, 0);
+		/*检查返回结果*/
 		err = PTR_ERR(page);
 		if (IS_ERR(page))
-			goto out;
+			goto out;		
+		/*页转化成为虚拟地址*/
 		lock_page(page);
 		kaddr = page_address(page);
+		/*dir_end得到的值是页内的最后一合法字节在的偏移位置*/
 		dir_end = kaddr + ext2_last_byte(dir, n);
-		de = (ext2_dirent *)kaddr;
+		/*de指向开始的地址*/
+		de = (ext2_dirent *)kaddr;		
+		/*使kaddr指向最后，并且预留下足够存放要加入的目录项的空间*/
 		kaddr += PAGE_CACHE_SIZE - reclen;
+		/*遍历每一个项*/
 		while ((char *)de <= kaddr) {
+			/*已经到本页内的最后一项了，说明还有空间存放目录项，跳转到找到了*/
 			if ((char *)de == dir_end) {
 				/* We hit i_size */
 				name_len = 0;
@@ -633,6 +647,7 @@ int ext2_add_link (struct dentry *dentry, struct inode *inode)
 				de->inode = 0;
 				goto got_it;
 			}
+			/*发现了rec_len为0的目录项，说明在IO读写的时候出现错误，释放锁，跳出*/
 			if (de->rec_len == 0) {
 				ext2_error(dir->i_sb, __func__,
 					"zero-length directory entry");
@@ -640,28 +655,37 @@ int ext2_add_link (struct dentry *dentry, struct inode *inode)
 				goto out_unlock;
 			}
 			err = -EEXIST;
+			/*发现目录内已经有和要加入的目录项名字一样的，退出*/
 			if (ext2_match (namelen, name, de))
 				goto out_unlock;
+			/*name_len是当前到的目录项应该的rec_len，rec_len是当前项的记录的rec_len，因为可能后边的目录项被删除了，使得这两个字段不一样*/
 			name_len = EXT2_DIR_REC_LEN(de->name_len);
 			rec_len = ext2_rec_len_from_disk(de->rec_len);
+			/*如果当前的目录项inode号是0说明已经被删除了，并且rec_len大于reclen，说明空间也足够，跳转到找到了*/
 			if (!de->inode && rec_len >= reclen)
-				goto got_it;
+				goto got_it;			
+			/*如果rec_len比本目录项的空间加上要添加的空间还大，说明后边的空间足够插入一个我们想要插入的目录项，跳转到找到了*/
 			if (rec_len >= name_len + reclen)
 				goto got_it;
+			/*加上rec_len就是找下一项*/
 			de = (ext2_dirent *) ((char *) de + rec_len);
 		}
+		/*遍历完这一页，仍然没有找到*/
 		unlock_page(page);
 		ext2_put_page(page);
 	}
+	/*没找到就报BUG*/
 	BUG();
 	return -EINVAL;
 
-got_it:
+got_it:	
 	pos = page_offset(page) +
 		(char*)de - (char*)page_address(page);
+	//建立缓存映射
 	err = ext2_prepare_chunk(page, pos, rec_len);
 	if (err)
 		goto out_unlock;
+	/*如果inode不为0，说明当前目录项不是空的，但是这个目录项的后边有空间*/
 	if (de->inode) {
 		ext2_dirent *de1 = (ext2_dirent *) ((char *) de + name_len);
 		de1->rec_len = ext2_rec_len_to_disk(rec_len - name_len);
@@ -672,9 +696,12 @@ got_it:
 	memcpy(de->name, name, namelen);
 	de->inode = cpu_to_le32(inode->i_ino);
 	ext2_set_de_type (de, inode);
+	/*写完以后把修改提交*/
 	err = ext2_commit_chunk(page, pos, rec_len);
+	/*目录的inode修改时间更正*/
 	dir->i_mtime = dir->i_ctime = CURRENT_TIME_SEC;
 	EXT2_I(dir)->i_flags &= ~EXT2_BTREE_FL;
+	/*写后都要标记脏*/
 	mark_inode_dirty(dir);
 	/* OFFSET_CACHE */
 out_put:

@@ -1937,6 +1937,7 @@ int __block_write_begin(struct page *page, loff_t pos, unsigned len,
 		}
 		if (buffer_new(bh))
 			clear_buffer_new(bh);
+		//如果该buffer_head尚未与物理磁盘块建立映射，if (!buffer_mapped(bh))，此时需要调用文件系统特定的get_block()方法来将两者相互关联，对于ext2文件系统来说，该方法便是ext2_get_block
 		if (!buffer_mapped(bh)) {
 			WARN_ON(bh->b_size != blocksize);
 			err = get_block(inode, block, bh, 1);
@@ -1963,6 +1964,7 @@ int __block_write_begin(struct page *page, loff_t pos, unsigned len,
 				set_buffer_uptodate(bh);
 			continue; 
 		}
+		//buffer_head对应的内存缓存数据和磁盘上的不一致，那需要将数据从磁盘上读出
 		if (!buffer_uptodate(bh) && !buffer_delay(bh) &&
 		    !buffer_unwritten(bh) &&
 		     (block_start < from || block_end > to)) {
@@ -2034,6 +2036,8 @@ int block_write_begin(struct address_space *mapping, loff_t pos, unsigned len,
 	pgoff_t index = pos >> PAGE_CACHE_SHIFT;
 	struct page *page;
 	int status;
+	// 首先查找或者分配一个page
+	// 注意：这里会将page lock住
 
 	page = grab_cache_page_write_begin(mapping, index, flags);
 	if (!page)
