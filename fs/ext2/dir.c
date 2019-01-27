@@ -717,19 +717,25 @@ out_unlock:
  * ext2_delete_entry deletes a directory entry by merging it with the
  * previous entry. Page is up-to-date. Releases the page.
  */
+/*ext2删除一个目录项，dir是删除的目录项，page是目录项缓冲区的页，其实删除很简单，就是找到那个目录项，把inode号码变成0，然后把前边那一项的rec_len加上删除项的长度*/
 int ext2_delete_entry (struct ext2_dir_entry_2 * dir, struct page * page )
 {
 	struct inode *inode = page->mapping->host;
+	/*kaddr是页开始虚拟地址*/
 	char *kaddr = page_address(page);
+	/*from是dir目录项在的页对应的块的开始，文件系统的块大小和page大小不一样*/
 	unsigned from = ((char*)dir - kaddr) & ~(ext2_chunk_size(inode)-1);
+	/*to是要删除的目录项的结尾*/
 	unsigned to = ((char *)dir - kaddr) +
 				ext2_rec_len_from_disk(dir->rec_len);
 	loff_t pos;
 	ext2_dirent * pde = NULL;
+	/*de指向要删除的目录项所在块的开始*/
 	ext2_dirent * de = (ext2_dirent *) (kaddr + from);
 	int err;
-
+	/*遍历检查所在的块*/
 	while ((char*)de < (char*)dir) {
+		/*0长度的目录不合法，不能忍，直接返回错误*/
 		if (de->rec_len == 0) {
 			ext2_error(inode->i_sb, __func__,
 				"zero-length directory entry");
@@ -737,97 +743,125 @@ int ext2_delete_entry (struct ext2_dir_entry_2 * dir, struct page * page )
 			goto out;
 		}
 		pde = de;
+		/*下一项*/
 		de = ext2_next_entry(de);
 	}
+	/*pde是要删除的目录项前边的一个，from就是它的页内偏移*/
 	if (pde)
 		from = (char*)pde - (char*)page_address(page);
 	pos = page_offset(page) + from;
+	/*向页内写入之前要锁住的*/
 	lock_page(page);
+	/*预写入*/
 	err = ext2_prepare_chunk(page, pos, to - from);
 	BUG_ON(err);
+	/*依次写入rec_len和inode号码，rec_len变成原来的前边的项的rec_len加上后边要删除的那个rec_len*/
 	if (pde)
+		/*前边项的rec_len增加，就代表后边的项删除*/
 		pde->rec_len = ext2_rec_len_to_disk(to - from);
+	/*要删除的目录项inode号变成0*/
 	dir->inode = 0;
+	/*提交修改*/
 	err = ext2_commit_chunk(page, pos, to - from);
+	/*修改时间*/
 	inode->i_ctime = inode->i_mtime = CURRENT_TIME_SEC;
 	EXT2_I(inode)->i_flags &= ~EXT2_BTREE_FL;
+	/*标记脏了*/
 	mark_inode_dirty(inode);
 out:
+	/*释放对这个页的引用*/
 	ext2_put_page(page);
 	return err;
 }
 
 /*
  * Set the first fragment of directory.
- */
+ */ 
+/*把当前目录项列表设置为空，就是说列表里只有./和../两个项，inode是要修改的目录项的所在inode */
 int ext2_make_empty(struct inode *inode, struct inode *parent)
 {
 	struct page *page = grab_cache_page(inode->i_mapping, 0);
+	/*块大小*/
 	unsigned chunk_size = ext2_chunk_size(inode);
 	struct ext2_dir_entry_2 * de;
 	int err;
 	void *kaddr;
-
+	/*看看得到的页是不是有问题*/
 	if (!page)
 		return -ENOMEM;
-
+	/*预写入操作*/
 	err = ext2_prepare_chunk(page, 0, chunk_size);
 	if (err) {
 		unlock_page(page);
 		goto fail;
 	}
+	/*先修改第一个./目录，kaddr是页开始虚拟地址*/
 	kaddr = kmap_atomic(page);
+	/*把页内全部变成0*/
 	memset(kaddr, 0, chunk_size);
+	/*de指向第一个项*/
 	de = (struct ext2_dir_entry_2 *)kaddr;
+	/*设置./目录的值，依次是名称长度，rec_len，名称，inode号码，文件类型*/
 	de->name_len = 1;
 	de->rec_len = ext2_rec_len_to_disk(EXT2_DIR_REC_LEN(1));
 	memcpy (de->name, ".\0\0", 4);
 	de->inode = cpu_to_le32(inode->i_ino);
 	ext2_set_de_type (de, inode);
-
+	/*设置../的值，先把de指向第二个要写入的项*/
 	de = (struct ext2_dir_entry_2 *)(kaddr + EXT2_DIR_REC_LEN(1));
+	/*设置../目录的值，依次是名称长度，rec_len，名称，inode号码，文件类型*/
 	de->name_len = 2;
 	de->rec_len = ext2_rec_len_to_disk(chunk_size - EXT2_DIR_REC_LEN(1));
 	de->inode = cpu_to_le32(parent->i_ino);
 	memcpy (de->name, "..\0", 4);
 	ext2_set_de_type (de, inode);
+	/*释放页缓冲区*/
 	kunmap_atomic(kaddr);
+	/*提交修改*/
 	err = ext2_commit_chunk(page, 0, chunk_size);
 fail:
+	/*失败了就释放页缓存*/
 	page_cache_release(page);
 	return err;
 }
 
 /*
  * routine to check that the specified directory is empty (for rmdir)
- */
+ */ 
+/*检查一个目录是不是空的，inode是要检查的目录的inode结构体 */
 int ext2_empty_dir (struct inode * inode)
 {
 	struct page *page = NULL;
+	/*npages是inode的页数目*/
 	unsigned long i, npages = dir_pages(inode);
 	int dir_has_error = 0;
-
+	/*遍历目录的每一个页*/
 	for (i = 0; i < npages; i++) {
 		char *kaddr;
 		ext2_dirent * de;
+		/*获得遍历到的当前页*/
 		page = ext2_get_page(inode, i, dir_has_error);
-
+		/*检查获得的是不是坏的*/
 		if (IS_ERR(page)) {
 			dir_has_error = 1;
 			continue;
 		}
-
+		/*获得页的虚拟地址，转化成目录项指针类型*/
 		kaddr = page_address(page);
 		de = (ext2_dirent *)kaddr;
+		/*kaddr指向结尾边界*/
 		kaddr += ext2_last_byte(inode, i) - EXT2_DIR_REC_LEN(1);
+		/*遍历当前页*/
 
 		while ((char *)de <= kaddr) {
+			/*如果有rec_len为0的项直接返回不为空*/
 			if (de->rec_len == 0) {
 				ext2_error(inode->i_sb, __func__,
 					"zero-length directory entry");
 				printk("kaddr=%p, de=%p\n", kaddr, de);
 				goto not_empty;
 			}
+			/*如果inode编号不是0并且还不是./和../目录说明不为空*/
 			if (de->inode != 0) {
 				/* check for . and .. */
 				if (de->name[0] != '.')
@@ -841,17 +875,20 @@ int ext2_empty_dir (struct inode * inode)
 				} else if (de->name[1] != '.')
 					goto not_empty;
 			}
+			/*下一个目录项*/
 			de = ext2_next_entry(de);
 		}
+		/*检查完这个页检查下一个*/
 		ext2_put_page(page);
 	}
 	return 1;
 
 not_empty:
+	/*结束时释放当前页*/
 	ext2_put_page(page);
 	return 0;
 }
-
+/*ext2的目录节点的操作函数结构体*/
 const struct file_operations ext2_dir_operations = {
 	.llseek		= generic_file_llseek,
 	.read		= generic_read_dir,
