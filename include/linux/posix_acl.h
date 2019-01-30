@@ -43,11 +43,14 @@ struct posix_acl_entry {
 };
 
 struct posix_acl {
+	/*引用计数*/
 	union {
 		atomic_t		a_refcount;
 		struct rcu_head		a_rcu;
 	};
+	/*内部有几个acl项*/
 	unsigned int		a_count;
+	/*实际数据区*/
 	struct posix_acl_entry	a_entries[0];
 };
 

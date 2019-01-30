@@ -15,30 +15,42 @@
 /*
  * Convert from filesystem to in-memory representation.
  */
+ /*把硬盘上的ext2的acl数据转成内存上的posix标准的acl数据
+ext2文件系统的acl格式数据是开头是一个ext2_acl_header结构体的ext2头部，然后接下来是ext2_acl_entry_short或者是ext2_acl_entry结构体的acl实体
+内存存储的posix标准的acl数据是开头是一个posix_acl结构体，然后随后就是count个posix_acl_entry结构体
+*/
 static struct posix_acl *
 ext2_acl_from_disk(const void *value, size_t size)
 {
 	const char *end = (char *)value + size;
 	int n, count;
 	struct posix_acl *acl;
-
+	/*如果参数是NULL，直接返回NULL*/
 	if (!value)
 		return NULL;
+	/*如果大小小于ext2_acl_header大小，说明有错误*/
 	if (size < sizeof(ext2_acl_header))
 		 return ERR_PTR(-EINVAL);
+	/*如果数据合法的话，开头肯定是ext2_acl_header，直接转化为ext2_acl_header指针，检验当前版本是否一致*/
 	if (((ext2_acl_header *)value)->a_version !=
 	    cpu_to_le32(EXT2_ACL_VERSION))
 		return ERR_PTR(-EINVAL);
+	/*value指向头部后边的数据部分*/
 	value = (char *)value + sizeof(ext2_acl_header);
+	/*这个函数之前讲过，根据acl数据大小返回数据项数目*/
 	count = ext2_acl_count(size);
+	/*返回参数检查*/
 	if (count < 0)
 		return ERR_PTR(-EINVAL);
 	if (count == 0)
-		return NULL;
+		return NULL;	
+	/*根据返回的 项数，分配一定的posix标准结构体内存，这个函数是在fs/posix_acl.c实现，实现很简单*/
 	acl = posix_acl_alloc(count, GFP_KERNEL);
 	if (!acl)
-		return ERR_PTR(-ENOMEM);
+		return ERR_PTR(-ENOMEM);	
+	/*大循环来啦，对于每一项赋值*/
 	for (n=0; n < count; n++) {
+		/*entry指针指向第n项的ext2格式数据*/
 		ext2_acl_entry *entry =
 			(ext2_acl_entry *)value;
 		if ((char *)value + sizeof(ext2_acl_entry_short) > end)

@@ -23,8 +23,12 @@
 #define ACL_UNDEFINED_ID	(-1)
 
 typedef struct {
+//acl实体的标志
+// ACL_USER_OBJ, ACL_USER, ACL_GROUP_OBJ, ACL_GROUP, ACL_MASK, ACL_OTHER
 	__le16			e_tag;
+//代表权限，就是rwx
 	__le16			e_perm;
+//除了ACL_USER和ACL_GROUP都是空
 	__le32			e_id;
 } posix_acl_xattr_entry;
 
