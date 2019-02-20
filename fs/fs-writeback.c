@@ -2404,8 +2404,8 @@ EXPORT_SYMBOL(sync_inode);
 int sync_inode_metadata(struct inode *inode, int wait)
 {
 	struct writeback_control wbc = {
-		.sync_mode = wait ? WB_SYNC_ALL : WB_SYNC_NONE,
-		.nr_to_write = 0, /* metadata-only */
+		.sync_mode = wait ? WB_SYNC_ALL : WB_SYNC_NONE, //WB_SYNC_ALL表示数据完整性写入，一定等到同步完成才可以返回
+		.nr_to_write = 0, /* metadata-only *///要写入的页面数，因为目前文件的所有脏页面已经全部同步，因此在回写inode的时候没有必要再同步文件脏数据页面
 	};
 
 	return sync_inode(inode, &wbc);

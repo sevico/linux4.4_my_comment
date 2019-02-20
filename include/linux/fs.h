@@ -595,6 +595,9 @@ struct inode {
 	struct posix_acl	*i_acl;
 	struct posix_acl	*i_default_acl;
 #endif
+	/* 对inode操作的具体方法
+	* 不同的文件系统会注册不同的函数方法即可
+	*/
 
 	const struct inode_operations	*i_op;
 	struct super_block	*i_sb;
@@ -621,8 +624,11 @@ struct inode {
 	dev_t			i_rdev;
 	// 文件大小，字节数
 	loff_t			i_size;
+	/* 文件最后访问时间 */
 	struct timespec		i_atime;
+	/* 文件最后修改时间 */
 	struct timespec		i_mtime;
+	 /* 文件创建时间 */
 	struct timespec		i_ctime;
 	spinlock_t		i_lock;	/* i_blocks, i_bytes, maybe i_size */
 	unsigned short          i_bytes;
@@ -642,6 +648,7 @@ struct inode {
 	unsigned long		dirtied_when;	/* jiffies of first dirtying */
 	unsigned long		dirtied_time_when;
 	 /* 用于散列链表的指针 */
+	/* inode通过以下结构被加入到的各种链表 */
 	struct hlist_node	i_hash;
 	struct list_head	i_io_list;	/* backing dev IO list */
 #ifdef CONFIG_CGROUP_WRITEBACK
@@ -676,6 +683,11 @@ struct inode {
 #ifdef CONFIG_IMA
 	atomic_t		i_readcount; /* struct files open RO */
 #endif
+	/* 对文件操作(如文件读写等)的具体方法
+	* 实现虚拟文件系统的核心结构
+	* 不同的文件系统只需要注册不同的函数方法即可
+	*/
+
 	const struct file_operations	*i_fop;	/* former ->i_op->default_file_ops */
 	struct file_lock_context	*i_flctx;
 	struct address_space	i_data;

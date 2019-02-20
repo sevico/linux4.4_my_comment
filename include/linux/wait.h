@@ -19,9 +19,9 @@ int default_wake_function(wait_queue_t *wait, unsigned mode, int flags, void *ke
 // wait_queue 节点
 struct __wait_queue {
 	unsigned int		flags;
-	void			*private;
-	wait_queue_func_t	func;
-	struct list_head	task_list;
+	void			*private;//指向等待队列的进程task_struct
+	wait_queue_func_t	func;//唤醒函数
+	struct list_head	task_list;//链表元素，将wait_queue_t挂到wait_queue_head_t
 };
 
 struct wait_bit_key {
@@ -37,7 +37,7 @@ struct wait_bit_queue {
 };
 
 struct __wait_queue_head {
-	spinlock_t		lock;
+	spinlock_t		lock;//用于互斥访问的自旋锁
 	struct list_head	task_list;
 };
 // wait_queue 头节点
@@ -223,11 +223,13 @@ wait_queue_head_t *bit_waitqueue(void *, int);
 		__wait.flags = 0;					\
 									\
 	for (;;) {							\
+		//当检测进程有待处理信号则返回值__int不为0
 		long __int = prepare_to_wait_event(&wq, &__wait, state);\
 									\
 		if (condition)						\
 			break;						\
 									\
+		//当有待处理信号且进程处于可中断状态(TASK_INTERRUPTIBLE或TASK_KILLABLE))，则跳出循环
 		if (___wait_is_interruptible(state) && __int) {		\
 			__ret = __int;					\
 			if (exclusive) {				\
@@ -238,8 +240,10 @@ wait_queue_head_t *bit_waitqueue(void *, int);
 			break;						\
 		}							\
 									\
+		//schedule()，进入睡眠，从进程就绪队列选择一个高优先级进程来代替当前进程运行
 		cmd;							\
 	}								\
+	//如果__wait还位于队列wq，则将__wait从wq中移除
 	finish_wait(&wq, &__wait);					\
 __out:	__ret;								\
 })

@@ -26,7 +26,7 @@ void add_wait_queue(wait_queue_head_t *q, wait_queue_t *wait)
 
 	wait->flags &= ~WQ_FLAG_EXCLUSIVE;
 	spin_lock_irqsave(&q->lock, flags);
-	__add_wait_queue(q, wait);
+	__add_wait_queue(q, wait);//挂到队列头
 	spin_unlock_irqrestore(&q->lock, flags);
 }
 EXPORT_SYMBOL(add_wait_queue);
@@ -205,21 +205,22 @@ EXPORT_SYMBOL(prepare_to_wait_exclusive);
 long prepare_to_wait_event(wait_queue_head_t *q, wait_queue_t *wait, int state)
 {
 	unsigned long flags;
-
+	//信号检测
 	if (signal_pending_state(state, current))
 		return -ERESTARTSYS;
-
+	//设置func唤醒函数
 	wait->private = current;
 	wait->func = autoremove_wake_function;
 
 	spin_lock_irqsave(&q->lock, flags);
+	 //当wait不在队列q，则加入其中，防止无法唤醒
 	if (list_empty(&wait->task_list)) {
 		if (wait->flags & WQ_FLAG_EXCLUSIVE)
 			__add_wait_queue_tail(q, wait);
 		else
 			__add_wait_queue(q, wait);
 	}
-	set_current_state(state);
+	set_current_state(state);//设置进程状态
 	spin_unlock_irqrestore(&q->lock, flags);
 
 	return 0;
@@ -296,10 +297,10 @@ EXPORT_SYMBOL(abort_exclusive_wait);
 
 int autoremove_wake_function(wait_queue_t *wait, unsigned mode, int sync, void *key)
 {
-	int ret = default_wake_function(wait, mode, sync, key);
+	int ret = default_wake_function(wait, mode, sync, key);//唤醒函数
 
 	if (ret)
-		list_del_init(&wait->task_list);
+		list_del_init(&wait->task_list);//从列表中移除wait
 	return ret;
 }
 EXPORT_SYMBOL(autoremove_wake_function);

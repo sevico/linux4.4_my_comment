@@ -4032,6 +4032,11 @@ SYSCALL_DEFINE1(unlink, const char __user *, pathname)
 {
 	return do_unlinkat(AT_FDCWD, pathname);
 }
+/* 建立软链接
+ * @dir:软连接父目录inode
+ * @dentry:软连接的dentry
+ * @oldname:源文件或目录的名字
+ */
 
 int vfs_symlink(struct inode *dir, struct dentry *dentry, const char *oldname)
 {
@@ -4067,12 +4072,17 @@ SYSCALL_DEFINE3(symlinkat, const char __user *, oldname,
 	if (IS_ERR(from))
 		return PTR_ERR(from);
 retry:
+	//创建软链接目标的dentry结构
 	dentry = user_path_create(newdfd, newname, &path, lookup_flags);
 	error = PTR_ERR(dentry);
 	if (IS_ERR(dentry))
 		goto out_putname;
 
 	error = security_path_symlink(&path, dentry, from->name);
+	/* d_inode:链接文件父目录inode结构
+     * dentry:链接文件的dentry结构
+     * from:源文件名
+     */
 	if (!error)
 		error = vfs_symlink(path.dentry->d_inode, dentry, from->name);
 	done_path_create(&path, dentry);

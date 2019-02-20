@@ -3060,6 +3060,10 @@ end_unlink:
 	trace_ext4_unlink_exit(dentry, retval);
 	return retval;
 }
+//ext4建立软连接函数
+//@dir:软连接的父目录的inode
+//@dentry:软连接的dentry结构
+//@symname:源文件名称
 
 static int ext4_symlink(struct inode *dir,
 			struct dentry *dentry, const char *symname)
@@ -3118,7 +3122,7 @@ static int ext4_symlink(struct inode *dir,
 		credits = EXT4_DATA_TRANS_BLOCKS(dir->i_sb) +
 			  EXT4_INDEX_EXTRA_TRANS_BLOCKS + 3;
 	}
-
+	// 为软连接创建一个新的inode结构
 	inode = ext4_new_inode_start_handle(dir, S_IFLNK|S_IRWXUGO,
 					    &dentry->d_name, 0, NULL,
 					    EXT4_HT_DIR, credits);
@@ -3193,11 +3197,17 @@ static int ext4_symlink(struct inode *dir,
 			inode->i_op = &ext4_fast_symlink_inode_operations;
 			inode->i_link = (char *)&EXT4_I(inode)->i_data;
 		}
+		 /* 如果源文件名称不够长
+         * 可直接将其保存在inode的i_data中
+         */
 		memcpy((char *)&EXT4_I(inode)->i_data, disk_link.name,
 		       disk_link.len);
 		inode->i_size = disk_link.len - 1;
 	}
 	EXT4_I(inode)->i_disksize = inode->i_size;
+	 /* 将链接文件的inode和dentry关联并
+     * 与其父目录建立关联
+     */
 	err = ext4_add_nondir(handle, dentry, inode);
 	if (!err && IS_DIRSYNC(dir))
 		ext4_handle_sync(handle);
@@ -3223,6 +3233,7 @@ static int ext4_link(struct dentry *old_dentry,
 	handle_t *handle;
 	struct inode *inode = d_inode(old_dentry);
 	int err, retries = 0;
+	/* 如果文件上的链接数过多，返回Too many links错误 */
 
 	if (inode->i_nlink >= EXT4_LINK_MAX)
 		return -EMLINK;
@@ -3244,9 +3255,10 @@ retry:
 		ext4_handle_sync(handle);
 
 	inode->i_ctime = ext4_current_time(inode);
+	/* 将源文件inode上的链接数 + 1 */
 	ext4_inc_count(handle, inode);
 	ihold(inode);
-
+	 /* 将链接文件的dentry写入到其父目录的数据块中 */
 	err = ext4_add_entry(handle, dentry, inode);
 	if (!err) {
 		ext4_mark_inode_dirty(handle, inode);

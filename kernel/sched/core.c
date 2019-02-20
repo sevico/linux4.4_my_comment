@@ -1726,12 +1726,12 @@ ttwu_stat(struct task_struct *p, int cpu, int wake_flags)
 
 static inline void ttwu_activate(struct rq *rq, struct task_struct *p, int en_flags)
 {
-	activate_task(rq, p, en_flags);
+	activate_task(rq, p, en_flags);//将进程task加入rq队列
 	p->on_rq = TASK_ON_RQ_QUEUED;
 
 	/* if a worker is waking up, notify workqueue */
 	if (p->flags & PF_WQ_WORKER)
-		wq_worker_waking_up(p, cpu_of(rq));
+		wq_worker_waking_up(p, cpu_of(rq));//worker正在唤醒中，则通知工作队列
 }
 
 /*
@@ -1741,7 +1741,7 @@ static void
 ttwu_do_wakeup(struct rq *rq, struct task_struct *p, int wake_flags)
 {
 	check_preempt_curr(rq, p, wake_flags);
-	p->state = TASK_RUNNING;
+	p->state = TASK_RUNNING;//标记该进程为TASK_RUNNING状态
 	trace_sched_wakeup(p);
 
 #ifdef CONFIG_SMP
@@ -1912,7 +1912,7 @@ bool cpus_share_cache(int this_cpu, int that_cpu)
 
 static void ttwu_queue(struct task_struct *p, int cpu)
 {
-	struct rq *rq = cpu_rq(cpu);
+	struct rq *rq = cpu_rq(cpu);// 获取当前进程的运行队列
 
 #if defined(CONFIG_SMP)
 	if (sched_feat(TTWU_QUEUE) && !cpus_share_cache(smp_processor_id(), cpu)) {
@@ -1957,7 +1957,9 @@ try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 	 * set_current_state() the waiting thread does.
 	 */
 	smp_mb__before_spinlock();
-	raw_spin_lock_irqsave(&p->pi_lock, flags);
+	raw_spin_lock_irqsave(&p->pi_lock, flags);//关闭本地中断
+	 //如果当前进程状态不属于可唤醒状态集，则无法唤醒该进程
+	 //wake_up()传递过来的TASK_NORMAL等于(TASK_INTERRUPTIBLE | TASK_UNINTERRUPTIBLE)
 	if (!(p->state & state))
 		goto out;
 
@@ -1988,6 +1990,7 @@ try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 	 * current.
 	 */
 	smp_rmb();
+	//当前进程已处于rq运行队列，则无需唤醒
 	if (p->on_rq && ttwu_remote(p, wake_flags))
 		goto stat;
 
@@ -2040,7 +2043,7 @@ try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 		set_task_cpu(p, cpu);
 	}
 #endif /* CONFIG_SMP */
-
+	//ttwu = try to wake up
 	ttwu_queue(p, cpu);
 stat:
 	ttwu_stat(p, cpu, wake_flags);
@@ -3495,6 +3498,7 @@ asmlinkage __visible void __sched preempt_schedule_irq(void)
 int default_wake_function(wait_queue_t *curr, unsigned mode, int wake_flags,
 			  void *key)
 {
+	//获取wait所对应的进程
 	return try_to_wake_up(curr->private, mode, wake_flags);
 }
 EXPORT_SYMBOL(default_wake_function);
