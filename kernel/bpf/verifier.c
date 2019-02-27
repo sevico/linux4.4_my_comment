@@ -1560,24 +1560,30 @@ static int check_cfg(struct verifier_env *env)
 	insn_state[0] = DISCOVERED; /* mark 1st insn as discovered */
 	insn_stack[0] = 0; /* 0 is the first instruction */
 	cur_stack = 1;
-
+	 /* (3.4.1) DFS深度优先算法的循环 */
 peek_stack:
 	if (cur_stack == 0)
 		goto check_state;
 	t = insn_stack[cur_stack - 1];
-
+	 /* (3.4.2) 分支指令 */
 	if (BPF_CLASS(insns[t].code) == BPF_JMP) {
 		u8 opcode = BPF_OP(insns[t].code);
-
+		/* (3.4.2.1) 碰到BPF_EXIT指令，路径终结，开始回溯确认 */
 		if (opcode == BPF_EXIT) {
 			goto mark_explored;
 		} else if (opcode == BPF_CALL) {
+		/* (3.4.2.2) 碰到BPF_CALL指令，继续探索 
+		    并且把env->explored_states[]设置成STATE_LIST_MARK，标识call函数调用后需要重新跟踪计算寄存器和堆栈
+		 */
 			ret = push_insn(t, t + 1, FALLTHROUGH, env);
 			if (ret == 1)
 				goto peek_stack;
 			else if (ret < 0)
 				goto err_free;
 		} else if (opcode == BPF_JA) {
+				/* (3.4.2.3) 碰到BPF_JA指令，继续探索 
+		    并且把env->explored_states[]设置成STATE_LIST_MARK，标识call函数调用后需要重新跟踪计算寄存器和堆栈
+		 */
 			if (BPF_SRC(insns[t].code) != BPF_K) {
 				ret = -EINVAL;
 				goto err_free;
@@ -1595,13 +1601,17 @@ peek_stack:
 			if (t + 1 < insn_cnt)
 				env->explored_states[t + 1] = STATE_LIST_MARK;
 		} else {
+		/* (3.4.2.4) 剩下的是有条件跳转指令，首先探测条件失败路径，再探测条件成功路径 
+		    并且把env->explored_states[]设置成STATE_LIST_MARK，标识call函数调用后需要重新跟踪计算寄存器和堆栈
+		 */
 			/* conditional jump with two edges */
+		/* 条件失败路径 */
 			ret = push_insn(t, t + 1, FALLTHROUGH, env);
 			if (ret == 1)
 				goto peek_stack;
 			else if (ret < 0)
 				goto err_free;
-
+			/* 条件成功路径 */
 			ret = push_insn(t, t + insns[t].off + 1, BRANCH, env);
 			if (ret == 1)
 				goto peek_stack;
@@ -1612,13 +1622,20 @@ peek_stack:
 		/* all other non-branch instructions with single
 		 * fall-through edge
 		 */
+		 /* (3.4.3) 非分支指令 */
 		ret = push_insn(t, t + 1, FALLTHROUGH, env);
+		/* (3.4.3.1) ret的含义如下
+		    ret == 1：继续探索路径
+		    ret == 0：已经是叶子节点了，跳转到mark_explored确认并回溯
+		    ret < 0：探测到"back-edge"环路，或者其他错误
+		 */
 		if (ret == 1)
 			goto peek_stack;
 		else if (ret < 0)
 			goto err_free;
 	}
-
+	/* (3.4.4) 确认并回溯，状态标记为EXPLORED 
+     */
 mark_explored:
 	insn_state[t] = EXPLORED;
 	if (cur_stack-- <= 0) {
@@ -1627,7 +1644,7 @@ mark_explored:
 		goto err_free;
 	}
 	goto peek_stack;
-
+	/* (3.4.5) 确认没有unreachable的指令，就是路径没法抵达 */
 check_state:
 	for (i = 0; i < insn_cnt; i++) {
 		if (insn_state[i] != EXPLORED) {
@@ -2039,7 +2056,7 @@ static int replace_map_fd_with_map_ptr(struct verifier_env *env)
 	struct bpf_insn *insn = env->prog->insnsi;
 	int insn_cnt = env->prog->len;
 	int i, j;
-
+	/* (3.3.1) 遍历所有BPF指令 */
 	for (i = 0; i < insn_cnt; i++, insn++) {
 		if (BPF_CLASS(insn->code) == BPF_LDX &&
 		    (BPF_MODE(insn->code) != BPF_MEM || insn->imm != 0)) {
@@ -2053,7 +2070,9 @@ static int replace_map_fd_with_map_ptr(struct verifier_env *env)
 			verbose("BPF_STX uses reserved fields\n");
 			return -EINVAL;
 		}
-
+		 /* (3.3.2) 符合条件：(insn[0].code == (BPF_LD | BPF_IMM | BPF_DW)) && (insn[0]->src_reg == BPF_PSEUDO_MAP_FD)  
+            的指令为map指针加载指针
+         */
 		if (insn[0].code == (BPF_LD | BPF_IMM | BPF_DW)) {
 			struct bpf_map *map;
 			struct fd f;
@@ -2073,7 +2092,7 @@ static int replace_map_fd_with_map_ptr(struct verifier_env *env)
 				verbose("unrecognized bpf_ld_imm64 insn\n");
 				return -EINVAL;
 			}
-
+			/* (3.3.3) 根据指令中的立即数insn[0]->imm指定的fd，得到实际的map指针 */
 			f = fdget(insn->imm);
 			map = __bpf_map_get(f);
 			if (IS_ERR(map)) {
@@ -2081,7 +2100,7 @@ static int replace_map_fd_with_map_ptr(struct verifier_env *env)
 					insn->imm);
 				return PTR_ERR(map);
 			}
-
+			/* (3.3.5) 把64bit的map指针拆分成两个32bit的立即数，存储到insn[0].imm、insn[1].imm中 */
 			/* store map pointer inside BPF_LD_IMM64 instruction */
 			insn[0].imm = (u32) (unsigned long) map;
 			insn[1].imm = ((u64) (unsigned long) map) >> 32;
@@ -2092,7 +2111,7 @@ static int replace_map_fd_with_map_ptr(struct verifier_env *env)
 					fdput(f);
 					goto next_insn;
 				}
-
+			/* (3.3.6) 一个prog最多引用64个map */
 			if (env->used_map_cnt >= MAX_USED_MAPS) {
 				fdput(f);
 				return -E2BIG;
@@ -2108,6 +2127,7 @@ static int replace_map_fd_with_map_ptr(struct verifier_env *env)
 				fdput(f);
 				return PTR_ERR(map);
 			}
+			/* (3.3.7) 记录prog对map的引用 */
 			env->used_maps[env->used_map_cnt++] = map;
 
 			fdput(f);
@@ -2266,8 +2286,9 @@ static int fixup_bpf_calls(struct verifier_env *env)
 	struct bpf_prog *new_prog;
 	struct bpf_map *map_ptr;
 	int i, cnt, delta = 0;
-
+	/* (3.8.1) 遍历指令 */
 	for (i = 0; i < insn_cnt; i++, insn++) {
+		/* (3.8.2) 修复ALU指令的一个bug */
 		if (insn->code == (BPF_ALU | BPF_MOD | BPF_X) ||
 		    insn->code == (BPF_ALU | BPF_DIV | BPF_X)) {
 			/* due to JIT bugs clear upper 32-bits of src register
@@ -2285,10 +2306,12 @@ static int fixup_bpf_calls(struct verifier_env *env)
 			insn      = new_prog->insnsi + i + delta;
 			continue;
 		}
-
+		/* (3.8.3) 符合条件：(insn->code == (BPF_JMP | BPF_CALL)) 
+            的指令，即是调用helper function的指令
+         */
 		if (insn->code != (BPF_JMP | BPF_CALL))
 			continue;
-
+		 /* (3.8.3.1) 几种特殊helper function的处理 */
 		if (insn->imm == BPF_FUNC_get_route_realm)
 			prog->dst_needed = 1;
 		if (insn->imm == BPF_FUNC_get_prandom_u32)
@@ -2328,7 +2351,7 @@ static int fixup_bpf_calls(struct verifier_env *env)
 			insn      = new_prog->insnsi + i + delta;
 			continue;
 		}
-
+		/* (3.8.3.2) 通用helper function的处理：根据insn->imm指定的编号找打对应的函数指针 */
 		fn = prog->aux->ops->get_func_proto(insn->imm);
 		/* all functions that have prototype and verifier allowed
 		 * programs to call them, must be real in-kernel functions
@@ -2338,6 +2361,7 @@ static int fixup_bpf_calls(struct verifier_env *env)
 				insn->imm);
 			return -EFAULT;
 		}
+		/* (3.8.3.3) 然后再把函数指针和__bpf_call_base之间的offset，赋值到insn->imm中 */
 		insn->imm = fn->func - __bpf_call_base;
 	}
 
@@ -2378,6 +2402,7 @@ int bpf_check(struct bpf_prog **prog, union bpf_attr *attr)
 	/* 'struct verifier_env' can be global, but since it's not small,
 	 * allocate/free it every time bpf_check() is called
 	 */
+	 /* (3.1) 分配verifier静态扫描需要的数据结构  */
 	env = kzalloc(sizeof(struct verifier_env), GFP_KERNEL);
 	if (!env)
 		return -ENOMEM;
@@ -2391,6 +2416,9 @@ int bpf_check(struct bpf_prog **prog, union bpf_attr *attr)
 
 	/* grab the mutex to protect few globals used by verifier */
 	mutex_lock(&bpf_verifier_lock);
+	/* (3.2) 如果用户指定了attr->log_buf，说明用户需要具体的代码扫描log，这个在出错时非常有用 
+		   先在内核中分配log空间，在返回时拷贝给用户
+		*/
 
 	if (attr->log_level || attr->log_buf || attr->log_size) {
 		/* user requested verbose verifier output
@@ -2414,6 +2442,9 @@ int bpf_check(struct bpf_prog **prog, union bpf_attr *attr)
 	} else {
 		log_level = 0;
 	}
+	/* (3.3) 把BPF程序中操作map的指令，从map_fd替换成实际的map指针 
+			由此可见用户态的loader程序，肯定是先根据__section("maps")中定义的map调用bpf()创建map，再加载其他的程序section；
+		 */
 
 	ret = replace_map_fd_with_map_ptr(env);
 	if (ret < 0)
@@ -2425,29 +2456,29 @@ int bpf_check(struct bpf_prog **prog, union bpf_attr *attr)
 	ret = -ENOMEM;
 	if (!env->explored_states)
 		goto skip_full_check;
-
+	/* (3.4) step1、检查有没有环路 */
 	ret = check_cfg(env);
 	if (ret < 0)
 		goto skip_full_check;
 
 	env->allow_ptr_leaks = capable(CAP_SYS_ADMIN);
-
+	/* (3.5) step2、详细扫描BPF代码的运行过程，跟踪分析寄存器和堆栈，检查是否有不符合规则的情况出现 */
 	ret = do_check(env);
 
 skip_full_check:
 	while (pop_stack(env, NULL) >= 0);
 	free_states(env);
-
+	 /* (3.6) 把扫描分析出来的dead代码(就是不会运行的代码)转成nop指令 */
 	if (ret == 0)
 		sanitize_dead_code(env);
-
+	 /* (3.7) 根据程序的type，转换对ctx指针成员的访问 */
 	if (ret == 0)
 		/* program is valid, convert *(u32*)(ctx + off) accesses */
 		ret = convert_ctx_accesses(env);
-
+	 /* (3.8) 修复BPF指令中对内核helper function函数的调用，把函数编号替换成实际的函数指针 */
 	if (ret == 0)
 		ret = fixup_bpf_calls(env);
-
+	 /* (3.9) 拷贝verifier log到用户空间 */
 	if (log_level && log_len >= log_size - 1) {
 		BUG_ON(log_len >= log_size);
 		/* verifier log exceeded user supplied buffer */
@@ -2456,6 +2487,7 @@ skip_full_check:
 	}
 
 	/* copy verifier log back to user space including trailing zero */
+	 /* (3.10) 备份BPF程序对map的引用信息，到prog->aux->used_maps中 */
 	if (log_level && copy_to_user(log_ubuf, log_buf, log_len + 1) != 0) {
 		ret = -EFAULT;
 		goto free_log_buf;

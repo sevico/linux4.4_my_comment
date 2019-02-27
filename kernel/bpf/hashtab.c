@@ -36,7 +36,7 @@ static struct bpf_map *htab_map_alloc(union bpf_attr *attr)
 {
 	struct bpf_htab *htab;
 	int err, i;
-
+	/* (1.1.1) 因为hash是用链表存储的，所以bpf_htab结构是固定的，优先分配 */
 	htab = kzalloc(sizeof(*htab), GFP_USER);
 	if (!htab)
 		return ERR_PTR(-ENOMEM);
@@ -55,6 +55,7 @@ static struct bpf_map *htab_map_alloc(union bpf_attr *attr)
 		goto free_htab;
 
 	/* hash table size must be power of 2 */
+		/* (1.1.2) 链表头buckets的个数，等于和最大条目值最接近的2的n次方 */
 	htab->n_buckets = roundup_pow_of_two(htab->map.max_entries);
 
 	err = -E2BIG;
@@ -72,7 +73,7 @@ static struct bpf_map *htab_map_alloc(union bpf_attr *attr)
 		 * kmalloc-able later in htab_map_update_elem()
 		 */
 		goto free_htab;
-
+	/* (1.1.3) hash的一个element size = htab_elem + key_size + value_size */
 	htab->elem_size = sizeof(struct htab_elem) +
 			  round_up(htab->map.key_size, 8) +
 			  htab->map.value_size;
@@ -81,7 +82,9 @@ static struct bpf_map *htab_map_alloc(union bpf_attr *attr)
 	if (htab->n_buckets == 0 ||
 	    htab->n_buckets > U32_MAX / sizeof(struct hlist_head))
 		goto free_htab;
-
+	/* (1.1.4) 总占用内存的大小cost = bucket_size*max_entries + elem_size*max_entries + extra_element_size，
+        其中extra_element_size = elem_size * num_possible_cpus();
+     */
 	if ((u64) htab->n_buckets * sizeof(struct hlist_head) +
 	    (u64) htab->elem_size * htab->map.max_entries >=
 	    U32_MAX - PAGE_SIZE)
@@ -93,6 +96,7 @@ static struct bpf_map *htab_map_alloc(union bpf_attr *attr)
 				   PAGE_SIZE) >> PAGE_SHIFT;
 
 	err = -ENOMEM;
+	/* (1.1.5) 分配bucket空间 */
 	htab->buckets = kmalloc_array(htab->n_buckets, sizeof(struct hlist_head),
 				      GFP_USER | __GFP_NOWARN);
 
@@ -149,11 +153,11 @@ static void *htab_map_lookup_elem(struct bpf_map *map, void *key)
 	WARN_ON_ONCE(!rcu_read_lock_held());
 
 	key_size = map->key_size;
-
+	/* (2.1) 根据key计算出hash值 */
 	hash = htab_map_hash(key, key_size);
-
+	/* (2.2) 根据hash值找到链表头bucket */
 	head = select_bucket(htab, hash);
-
+	/* (2.3) 在bucket链表中搜索key相等的htab_elem，如果找不到返回NULL */
 	l = lookup_elem_raw(head, hash, key, key_size);
 
 	if (l)

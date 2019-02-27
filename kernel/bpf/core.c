@@ -780,6 +780,7 @@ static int bpf_check_tail_call(const struct bpf_prog *fp)
 int bpf_prog_select_runtime(struct bpf_prog *fp)
 {
 #ifndef CONFIG_BPF_JIT_ALWAYS_ON
+	/* (4.1) 在不支持JIT只能使用解析器(interpreter)时，BPF程序的运行入口 */
 	fp->bpf_func = (void *) __bpf_prog_run;
 #else
 	fp->bpf_func = (void *) __bpf_prog_ret0;
@@ -791,6 +792,7 @@ int bpf_prog_select_runtime(struct bpf_prog *fp)
 	 * valid program, which in this case would simply not
 	 * be JITed, but falls back to the interpreter.
 	 */
+	 /* (4.2) 尝试对BPF程序进行JIT转换 */
 	bpf_int_jit_compile(fp);
 #ifdef CONFIG_BPF_JIT_ALWAYS_ON
 	if (!fp->jited)
@@ -803,6 +805,7 @@ int bpf_prog_select_runtime(struct bpf_prog *fp)
 	 * with JITed or non JITed program concatenations and not
 	 * all eBPF JITs might immediately support all features.
 	 */
+	 /* (4.3) 对tail call使用的BPF_MAP_TYPE_PROG_ARRAY类型的map，进行一些检查 */
 	return bpf_check_tail_call(fp);
 }
 EXPORT_SYMBOL_GPL(bpf_prog_select_runtime);

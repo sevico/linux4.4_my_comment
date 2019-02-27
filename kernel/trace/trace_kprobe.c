@@ -1123,7 +1123,7 @@ kprobe_perf_func(struct trace_kprobe *tk, struct pt_regs *regs)
 	struct hlist_head *head;
 	int size, __size, dsize;
 	int rctx;
-
+	 /* (1) 调用bpf_prog处理 */
 	if (prog && !trace_call_bpf(prog, regs))
 		return;
 
@@ -1143,6 +1143,7 @@ kprobe_perf_func(struct trace_kprobe *tk, struct pt_regs *regs)
 	entry->ip = (unsigned long)tk->rp.kp.addr;
 	memset(&entry[1], 0, dsize);
 	store_trace_args(sizeof(*entry), &tk->tp, regs, (u8 *)&entry[1], dsize);
+	/* (2) perf_event的数据处理 */
 	perf_trace_buf_submit(entry, size, rctx, 0, 1, regs, head, NULL);
 }
 NOKPROBE_SYMBOL(kprobe_perf_func);
@@ -1158,7 +1159,7 @@ kretprobe_perf_func(struct trace_kprobe *tk, struct kretprobe_instance *ri,
 	struct hlist_head *head;
 	int size, __size, dsize;
 	int rctx;
-
+	/* (1) 调用bpf_prog处理 */
 	if (prog && !trace_call_bpf(prog, regs))
 		return;
 
@@ -1178,6 +1179,7 @@ kretprobe_perf_func(struct trace_kprobe *tk, struct kretprobe_instance *ri,
 	entry->func = (unsigned long)tk->rp.kp.addr;
 	entry->ret_ip = (unsigned long)ri->ret_addr;
 	store_trace_args(sizeof(*entry), &tk->tp, regs, (u8 *)&entry[1], dsize);
+	/* (2) perf_event的数据处理 */
 	perf_trace_buf_submit(entry, size, rctx, 0, 1, regs, head, NULL);
 }
 NOKPROBE_SYMBOL(kretprobe_perf_func);

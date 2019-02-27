@@ -29,6 +29,7 @@ static struct bpf_map *find_and_alloc_map(union bpf_attr *attr)
 
 	list_for_each_entry(tl, &bpf_map_types, list_node) {
 		if (tl->type == attr->map_type) {
+			 /* (1.1) 根据type找到对应的tl，分配map空间 */
 			map = tl->ops->map_alloc(attr);
 			if (IS_ERR(map))
 				return map;
@@ -119,6 +120,7 @@ static const struct file_operations bpf_map_fops = {
 
 int bpf_map_new_fd(struct bpf_map *map)
 {
+	/* (3.1) 给map分配对应的文件句柄fd，把map指针赋值给file->private_data */
 	return anon_inode_getfd("bpf-map", &bpf_map_fops, map,
 				O_RDWR | O_CLOEXEC);
 }
@@ -143,17 +145,18 @@ static int map_create(union bpf_attr *attr)
 		return -EINVAL;
 
 	/* find map type and init map: hashtable vs rbtree vs bloom vs ... */
+	/* (1) 根据map的类型分配空间 */
 	map = find_and_alloc_map(attr);
 	if (IS_ERR(map))
 		return PTR_ERR(map);
 
 	atomic_set(&map->refcnt, 1);
 	atomic_set(&map->usercnt, 1);
-
+	/* (2) 在进程vm中给map锁定空间 */
 	err = bpf_map_charge_memlock(map);
 	if (err)
 		goto free_map;
-
+	/* (3) 给map分配对应的文件句柄 */
 	err = bpf_map_new_fd(map);
 	if (err < 0)
 		/* failed to allocate fd */
@@ -252,8 +255,11 @@ static int map_lookup_elem(union bpf_attr *attr)
 		goto free_key;
 
 	rcu_read_lock();
+	//BPF_MAP_TYPE_ARRAY ->array_map_lookup_elem
+	//BPF_MAP_TYPE_HASH -> htab_map_lookup_elem
 	ptr = map->ops->map_lookup_elem(map, key);
 	if (ptr)
+		/* (3.1) 赋值给value */
 		memcpy(value, ptr, map->value_size);
 	rcu_read_unlock();
 
@@ -262,6 +268,7 @@ static int map_lookup_elem(union bpf_attr *attr)
 		goto free_value;
 
 	err = -EFAULT;
+	/* (3.2) 将value值拷贝会给用户空间 */
 	if (copy_to_user(uvalue, value, map->value_size) != 0)
 		goto free_value;
 
@@ -583,29 +590,34 @@ static int bpf_prog_load(union bpf_attr *attr)
 		return -EINVAL;
 
 	/* copy eBPF program license from user space */
+	/* (1.1) 根据attr->license地址，从用户空间拷贝license字符串到内核 */
 	if (strncpy_from_user(license, u64_to_ptr(attr->license),
 			      sizeof(license) - 1) < 0)
 		return -EFAULT;
 	license[sizeof(license) - 1] = 0;
 
 	/* eBPF programs must be GPL compatible to use GPL-ed functions */
+	/* (1.2) 判断license是否符合GPL协议 */
 	is_gpl = license_is_gpl_compatible(license);
-
+	/* (1.3) 判断BPF的总指令数是否超过BPF_MAXINSNS(4k) */
 	if (attr->insn_cnt >= BPF_MAXINSNS)
 		return -EINVAL;
-
+	/* (1.4) 如果加载BPF_PROG_TYPE_KPROBE类型的BPF程序，指定的内核版本需要和当前内核版本匹配。 
+        不然由于内核的改动，可能会附加到错误的地址上。
+     */
 	if (type == BPF_PROG_TYPE_KPROBE &&
 	    attr->kern_version != LINUX_VERSION_CODE)
 		return -EINVAL;
-
+	 /* (1.5) 对BPF_PROG_TYPE_SOCKET_FILTER和BPF_PROG_TYPE_CGROUP_SKB以外的BPF程序加载，需要管理员权限 */
 	if (type != BPF_PROG_TYPE_SOCKET_FILTER && !capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
 	/* plain bpf_prog allocation */
+	/* (2.1) 根据BPF指令数分配bpf_prog空间，和bpf_prog->aux空间 */
 	prog = bpf_prog_alloc(bpf_prog_size(attr->insn_cnt), GFP_USER);
 	if (!prog)
 		return -ENOMEM;
-
+	 /* (2.2) 把整个bpf_prog空间在当前进程的memlock_limit中锁定 */
 	err = bpf_prog_charge_memlock(prog);
 	if (err)
 		goto free_prog_nouncharge;
@@ -613,6 +625,7 @@ static int bpf_prog_load(union bpf_attr *attr)
 	prog->len = attr->insn_cnt;
 
 	err = -EFAULT;
+	/* (2.3) 把BPF代码从用户空间地址attr->insns，拷贝到内核空间地址prog->insns */
 	if (copy_from_user(prog->insns, u64_to_ptr(attr->insns),
 			   prog->len * sizeof(struct bpf_insn)) != 0)
 		goto free_prog;
@@ -624,20 +637,27 @@ static int bpf_prog_load(union bpf_attr *attr)
 	prog->gpl_compatible = is_gpl ? 1 : 0;
 
 	/* find program type: socket_filter vs tracing_filter */
+	/* (2.4) 根据attr->prog_type指定的type值，找到对应的bpf_prog_types，
+	    给bpf_prog->aux->ops赋值，这个ops是一个函数操作集
+	 */
 	err = find_prog_type(type, prog);
 	if (err < 0)
 		goto free_prog;
 
 	/* run eBPF verifier */
+	/* (3) 使用verifer对BPF程序进行合法性扫描 */
 	err = bpf_check(&prog, attr);
 	if (err < 0)
 		goto free_used_maps;
 
 	/* eBPF program is ready to be JITed */
+	/* (4) 尝试对BPF程序进行JIT转换 */
 	err = bpf_prog_select_runtime(prog);
 	if (err < 0)
 		goto free_used_maps;
-
+	 /* (5) 给BPF程序分配一个文件句柄fd
+	 对于加载到内核空间的BPF程序，最后会给它分配一个文件句柄fd，将prog存储到对应的file->private_data上。方便后续的引用
+	 */
 	err = bpf_prog_new_fd(prog);
 	if (err < 0)
 		/* failed to allocate fd */

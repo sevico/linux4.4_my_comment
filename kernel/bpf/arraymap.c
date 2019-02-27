@@ -35,7 +35,7 @@ static struct bpf_map *array_map_alloc(union bpf_attr *attr)
 		 * access the elements.
 		 */
 		return ERR_PTR(-E2BIG);
-
+	/* (1.1.1) 计算value的size，key的size不用计算也不用存储，因为这里的key直接就是index */
 	elem_size = round_up(attr->value_size, 8);
 
 	max_entries = attr->max_entries;
@@ -63,10 +63,11 @@ static struct bpf_map *array_map_alloc(union bpf_attr *attr)
 	if (elem_size == 0 ||
 	    max_entries > (U32_MAX - PAGE_SIZE - sizeof(*array)) / elem_size)
 		return ERR_PTR(-ENOMEM);
-
+	 /* (1.1.2) 计算bpf_array + value数组的总大小，bpf_array包含了map的通用结构bpf_map */
 	array_size = sizeof(*array) + max_entries * elem_size;
 
 	/* allocate all map elements and zero-initialize them */
+	/* (1.1.3) 根据总大小，分配bpf_array空间 */
 	array = kzalloc(array_size, GFP_USER | __GFP_NOWARN);
 	if (!array) {
 		array = vzalloc(array_size);
@@ -77,6 +78,7 @@ static struct bpf_map *array_map_alloc(union bpf_attr *attr)
 	array->map.unpriv_array = unpriv;
 
 	/* copy mandatory map attributes */
+	/* (1.1.4) 拷贝attr到array->map中 */
 	array->map.key_size = attr->key_size;
 	array->map.value_size = attr->value_size;
 	array->map.max_entries = attr->max_entries;
@@ -90,11 +92,12 @@ static struct bpf_map *array_map_alloc(union bpf_attr *attr)
 static void *array_map_lookup_elem(struct bpf_map *map, void *key)
 {
 	struct bpf_array *array = container_of(map, struct bpf_array, map);
+	/* (2.1) key就是index */
 	u32 index = *(u32 *)key;
 
 	if (index >= array->map.max_entries)
 		return NULL;
-
+	/* (2.2) 根据index，找到array->value[]数组中的value指针 */
 	return array->value + array->elem_size * (index & array->index_mask);
 }
 

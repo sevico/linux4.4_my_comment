@@ -62,10 +62,11 @@ static void bpf_any_put(void *raw, enum bpf_type type)
 static void *bpf_fd_probe_obj(u32 ufd, enum bpf_type *type)
 {
 	void *raw;
-
+	/* (2.1) 根据fd，尝试获取map对象 */
 	*type = BPF_TYPE_MAP;
 	raw = bpf_map_get_with_uref(ufd);
 	if (IS_ERR(raw)) {
+		/* (2.2) 如果失败，根据fd，尝试获取prog对象 */
 		*type = BPF_TYPE_PROG;
 		raw = bpf_prog_get(ufd);
 	}
@@ -204,12 +205,13 @@ static int bpf_obj_do_pin(const struct filename *pathname, void *raw,
 	umode_t mode;
 	dev_t devt;
 	int ret;
-
+	 /* (3.1) 创建dentry对象 */
 	dentry = kern_path_create(AT_FDCWD, pathname->name, &path, 0);
 	if (IS_ERR(dentry))
 		return PTR_ERR(dentry);
 
 	mode = S_IFREG | ((S_IRUSR | S_IWUSR) & ~current_umask());
+	/* (3.2) type存储在devt中 */
 	devt = MKDEV(UNNAMED_MAJOR, type);
 
 	ret = security_path_mknod(&path, dentry, mode, devt);
@@ -221,7 +223,7 @@ static int bpf_obj_do_pin(const struct filename *pathname, void *raw,
 		ret = -EPERM;
 		goto out;
 	}
-
+	/* (3.3) 对象指针raw存放到dentry->d_fsdata中，再来创建inode */
 	dentry->d_fsdata = raw;
 	ret = vfs_mknod(dir, dentry, mode, devt);
 	dentry->d_fsdata = NULL;
@@ -236,17 +238,17 @@ int bpf_obj_pin_user(u32 ufd, const char __user *pathname)
 	enum bpf_type type;
 	void *raw;
 	int ret;
-
+	/* (1) 根据字符串获取路径 */
 	pname = getname(pathname);
 	if (IS_ERR(pname))
 		return PTR_ERR(pname);
-
+	/* (2) 根据fd获取到bpf_map/bpf_prog对象 */
 	raw = bpf_fd_probe_obj(ufd, &type);
 	if (IS_ERR(raw)) {
 		ret = PTR_ERR(raw);
 		goto out;
 	}
-
+	 /* (3) 创建文件节点，和bpf对象联结起来 */
 	ret = bpf_obj_do_pin(pname, raw, type);
 	if (ret != 0)
 		bpf_any_put(raw, type);
@@ -262,20 +264,20 @@ static void *bpf_obj_do_get(const struct filename *pathname,
 	struct path path;
 	void *raw;
 	int ret;
-
+	/* (2.1) 根据路径，获取到dentry */
 	ret = kern_path(pathname->name, LOOKUP_FOLLOW, &path);
 	if (ret)
 		return ERR_PTR(ret);
-
+	 /* (2.2) 根据dentry，获取到inode */
 	inode = d_backing_inode(path.dentry);
 	ret = inode_permission(inode, MAY_WRITE);
 	if (ret)
 		goto out;
-
+	/* (2.3) 根据inode，获取到type */
 	ret = bpf_inode_type(inode, type);
 	if (ret)
 		goto out;
-
+	/* (2.4) 根据inode和type，获取到raw指针 */
 	raw = bpf_any_get(inode->i_private, *type);
 	if (!IS_ERR(raw))
 		touch_atime(&path);
@@ -293,17 +295,18 @@ int bpf_obj_get_user(const char __user *pathname)
 	struct filename *pname;
 	int ret = -ENOENT;
 	void *raw;
+	/* (1) 根据字符串获取路径 */
 
 	pname = getname(pathname);
 	if (IS_ERR(pname))
 		return PTR_ERR(pname);
-
+	/* (2) 根据路径，在对应inode中找到bpf对象的raw指针和type */
 	raw = bpf_obj_do_get(pname, &type);
 	if (IS_ERR(raw)) {
 		ret = PTR_ERR(raw);
 		goto out;
 	}
-
+	/* (3) 根据对象type，在本进程中给bpf对象分配一个fd */
 	if (type == BPF_TYPE_PROG)
 		ret = bpf_prog_new_fd(raw);
 	else if (type == BPF_TYPE_MAP)

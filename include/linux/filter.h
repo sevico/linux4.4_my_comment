@@ -329,13 +329,18 @@ struct bpf_prog {
 				cb_access:1,	/* Is control block accessed? */
 				dst_needed:1;	/* Do we need dst entry? */
 	kmemcheck_bitfield_end(meta);
+	//程序包含bpf指令的数量
 	u32			len;		/* Number of filter blocks */
+	//当前bpf程序的类型(kprobe/tracepoint/perf_event/sk_filter/sched_cls/sched_act/xdp/cg_skb)；
 	enum bpf_prog_type	type;		/* Type of BPF program */
+	//主要用来辅助verifier校验和转换的数据
 	struct bpf_prog_aux	*aux;		/* Auxiliary fields */
 	struct sock_fprog_kern	*orig_prog;	/* Original BPF program */
+	//运行时BPF程序的入口。如果JIT转换成功，这里指向的就是BPF程序JIT转换后的映像；否则这里指向内核解析器(interpreter)的通用入口__bpf_prog_run()
 	unsigned int		(*bpf_func)(const struct sk_buff *skb,
 					    const struct bpf_insn *filter);
 	/* Instructions for interpreter */
+	//从用户态拷贝过来的，BPF程序原始指令的存放空间
 	union {
 		struct sock_filter	insns[0];
 		struct bpf_insn		insnsi[0];
