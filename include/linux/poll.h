@@ -124,6 +124,7 @@ static inline int poll_schedule(struct poll_wqueues *pwq, int state)
 /*
  * Scalable version of the fd_set.
  */
+//记录可读、可写、异常 的输入和输出结果信息
 
 typedef struct {
 	unsigned long *in, *out, *ex;
@@ -143,6 +144,7 @@ typedef struct {
  *
  * Use "unsigned long" accesses to let user-mode fd_set's be long-aligned.
  */
+ // 将用户空间的ufdset拷贝到内核空间fdset
 static inline
 int get_fd_set(unsigned long nr, void __user *ufdset, unsigned long *fdset)
 {
@@ -153,6 +155,7 @@ int get_fd_set(unsigned long nr, void __user *ufdset, unsigned long *fdset)
 	memset(fdset, 0, nr);
 	return 0;
 }
+// 将内核fdset拷贝到用户空间的ufdset
 
 static inline unsigned long __must_check
 set_fd_set(unsigned long nr, void __user *ufdset, unsigned long *fdset)
@@ -161,6 +164,7 @@ set_fd_set(unsigned long nr, void __user *ufdset, unsigned long *fdset)
 		return __copy_to_user(ufdset, fdset, FDS_BYTES(nr));
 	return 0;
 }
+//将fdset内容清零
 
 static inline
 void zero_fd_set(unsigned long nr, unsigned long *fdset)

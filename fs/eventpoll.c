@@ -237,6 +237,7 @@ struct epitem {
 	 * single linked chain of items.
 	 */
 	 // 连接到ovflist 的指针
+	 //配合ovflist一起使用来保持单向链的条目
 	struct epitem *next; //用于主结构体中的链表
 
 	/* The file descriptor information this item refers to */
@@ -244,6 +245,7 @@ struct epitem {
 	struct epoll_filefd ffd;  //这个结构体对应的被监听的文件描述符信息
 
 	/* Number of active wait queue attached to poll operations */
+	//附加到poll轮询中的活跃等待队列数
 	int nwait;  //poll操作中事件的个数
 
 	/* List containing poll wait queues */
@@ -296,7 +298,7 @@ struct eventpoll {
 	wait_queue_head_t wq;  // sys_epoll_wait() 等待在这里
 
 	/* Wait queue used by file->poll() */
-	/* 这个用于epollfd本事被poll的时候... */
+	/* 这个用于epollfd本身被poll的时候... */
 	// f_op->poll()  使用的, 被其他事件通知机制利用的wait_address 
 	wait_queue_head_t poll_wait;
 
@@ -319,9 +321,11 @@ struct eventpoll {
         这是一个单链表链接着所有的struct epitem当event转移到用户空间时
      */
      // 当正在向用户空间复制数据时, 产生的可用文件
+      // 当正在向用户空间传递事件，则就绪事件会临时放到该队列，否则直接放到rdllist
 	struct epitem *ovflist;
 
 	/* wakeup_source used when ep_scan_ready_list is running */
+	// 当ep_scan_ready_list运行时使用wakeup_source
 	struct wakeup_source *ws;
 
 	/* The user that created the eventpoll descriptor */
@@ -340,6 +344,7 @@ struct eventpoll {
 // 与一个文件上的一个wait_queue_head 相关联，因为同一文件可能有多个等待的事件，这些事件可能使用不同的等待队列  
 struct eppoll_entry {
 	/* List header used to link this structure to the "struct epitem" */
+	//指向epitem的列表头
 	struct list_head llink;
 
 	/* The "base" pointer is set to the container "struct epitem" */
@@ -1138,7 +1143,7 @@ static int ep_alloc(struct eventpoll **pep)
 	spin_lock_init(&ep->lock);
 	mutex_init(&ep->mtx);
 	init_waitqueue_head(&ep->wq); //初始化自己睡在的等待队列
-	init_waitqueue_head(&ep->poll_wait);//初始化
+	init_waitqueue_head(&ep->poll_wait);//初始化eventpoll文件的等待队列
 	INIT_LIST_HEAD(&ep->rdllist);//初始化就绪链表
 	ep->rbr = RB_ROOT;
 	ep->ovflist = EP_UNACTIVE_PTR;
@@ -1974,6 +1979,7 @@ fetch_events:
 
 			spin_lock_irqsave(&ep->lock, flags);
 		}
+		//从队列中移除wait
 
 		__remove_wait_queue(&ep->wq, &wait);
 		 /* OK 我们醒来了... */
@@ -2129,6 +2135,7 @@ SYSCALL_DEFINE1(epoll_create1, int, flags)
 	 * Creates all the items needed to setup an eventpoll file. That is,
 	 * a file structure and a free file descriptor.
 	 */
+	 //查询未使用的fd
 	fd = get_unused_fd_flags(O_RDWR | (flags & O_CLOEXEC));
 	if (fd < 0) {
 		error = fd;
@@ -2156,6 +2163,7 @@ SYSCALL_DEFINE1(epoll_create1, int, flags)
 		goto out_free_fd;
 	}
 	ep->file = file;
+	//建立fd和file的关联关系
 	fd_install(fd, file);
 	return fd;
 
@@ -2199,12 +2207,12 @@ SYSCALL_DEFINE4(epoll_ctl, int, epfd, int, op, int, fd,
 		goto error_return;
 	// 取得 epfd 对应的文件
 	error = -EBADF;
+	/* 取得struct file结构, epfd既然是真正的fd, 那么内核空间
+	* 就会有与之对于的一个struct file结构
+	* 这个结构在epoll_create1()中, 由函数anon_inode_getfd()分配 */
 	f = fdget(epfd);
 	if (!f.file)
 		goto error_return;
-		/* 取得struct file结构, epfd既然是真正的fd, 那么内核空间
-		 * 就会有与之对于的一个struct file结构
-		 * 这个结构在epoll_create1()中, 由函数anon_inode_getfd()分配 */
 	/* Get the "struct file *" for the target file */
 	// 取得目标文件
 	tf = fdget(fd);

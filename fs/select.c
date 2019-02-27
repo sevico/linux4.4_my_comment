@@ -126,7 +126,7 @@ void poll_initwait(struct poll_wqueues *pwq)
 {
 	// 初始化poll_table, 相当于调用基类的构造函数  
 	init_poll_funcptr(&pwq->pt, __pollwait);
-	pwq->polling_task = current;
+	pwq->polling_task = current;//将当前进程记录在pwq结构体
 	pwq->triggered = 0;
 	pwq->error = 0;
 	pwq->table = NULL;
@@ -239,6 +239,7 @@ static int pollwake(wait_queue_t *wait, unsigned mode, int sync, void *key)
 static void __pollwait(struct file *filp, wait_queue_head_t *wait_address,
 				poll_table *p)
 {
+	//根据poll_wqueues的成员pt指针p找到所在的poll_wqueues结构指针
 	struct poll_wqueues *pwq = container_of(p, struct poll_wqueues, pt);
 	struct poll_table_entry *entry = poll_get_entry(pwq);
 	if (!entry)
@@ -258,6 +259,7 @@ int poll_schedule_timeout(struct poll_wqueues *pwq, int state,
 			  ktime_t *expires, unsigned long slack)
 {
 	int rc = -EINTR;
+	//设置进程状态
 
 	set_current_state(state);
 	 // 这个triggered在什么时候被置1的呢?只要有一个fd
@@ -444,7 +446,7 @@ int do_select(int n, fd_set_bits *fds, struct timespec *end_time)
 	  // poll_wqueues.poll_table.qproc函数指针初始化，该函数是驱动程序中poll函数实
 	    // 现中必须要调用的poll_wait()中使用的函数
 	    // 设置函数指针_qproc    为__pollwait
-	poll_initwait(&table); //初始化用于等待的数据，当文件描述符就绪时回调
+	poll_initwait(&table); //初始化用于等待的数据，当文件描述符就绪时回调 //初始化等待队列
 	wait = &table.pt;
 	if (end_time && !end_time->tv_sec && !end_time->tv_nsec) {
 		wait->_qproc = NULL;
@@ -488,7 +490,7 @@ int do_select(int n, fd_set_bits *fds, struct timespec *end_time)
 				if (!(bit & all_bits))
 					continue;
 				//从文件描述符(fd)获取文件结构
-				f = fdget(i);
+				f = fdget(i);//找到目标fd
 				if (f.file) {
 					const struct file_operations *f_op;
 					f_op = f.file->f_op;
@@ -506,6 +508,7 @@ int do_select(int n, fd_set_bits *fds, struct timespec *end_time)
 						设置好wake时调用的回调函数后将其添加到驱动程序中的等待队列头中。
 						*/
 						 // 获取当前的就绪状态, 并添加到文件的对应等待队列中
+						  //执行文件系统的poll函数，检测IO事件
 						mask = (*f_op->poll)(f.file, wait);
 					}
 					 // 释放file结构指针，实际就是减小他的一个引用计数字段f_count。
@@ -529,6 +532,7 @@ int do_select(int n, fd_set_bits *fds, struct timespec *end_time)
 						wait->_qproc = NULL;
 					}
 					/* got something, stop busy polling */
+					//当返回值不为零，则停止循环轮询
 					if (retval) {
 						can_busy_loop = false;
 						busy_flag = 0;
@@ -556,7 +560,7 @@ int do_select(int n, fd_set_bits *fds, struct timespec *end_time)
 			cond_resched();  //调度新程序运行
 		}
 		wait->_qproc = NULL;
-		/*跳出这个大循环的条件有: 有设备就绪或有异常(retval!=0), 超时(timed_out= 1), 或者有中止信号出现*/
+		/*跳出这个大循环的条件有: 有设备就绪或有异常(retval!=0), 超时(timed_out= 1), 或者有待处理信号出现*/
 		if (retval || timed_out || signal_pending(current))
 			break;
 		if (table.error) {
@@ -580,6 +584,7 @@ int do_select(int n, fd_set_bits *fds, struct timespec *end_time)
 		 * given, then we convert to ktime_t and set the to
 		 * pointer to the expiry value.
 		 */
+		 //首轮循环设置超时
 		if (end_time && !to) {
 			expire = timespec_to_ktime(*end_time);
 			to = &expire;
@@ -587,6 +592,7 @@ int do_select(int n, fd_set_bits *fds, struct timespec *end_time)
 		 // 第一次循环中，当前用户进程从这里进入休眠，
 		 // 上面传下来的超时时间只是为了用在睡眠超时这里而已
 		   // 超时，poll_schedule_timeout()返回0；被唤醒时返回-EINTR
+		    //设置当前进程状态为TASK_INTERRUPTIBLE，进入睡眠直到超时
 		if (!poll_schedule_timeout(&table, TASK_INTERRUPTIBLE,
 					   to, slack))
 			timed_out = 1;/* 超时后，将其设置成1，方便后面退出循环返回到上层 */
@@ -630,6 +636,7 @@ int core_sys_select(int n, fd_set __user *inp, fd_set __user *outp,
 	max_fds = fdt->max_fds;
 	rcu_read_unlock();
 	//不能大于最大描述符限制
+	//select可监控个数小于等于进程可打开的文件描述上限
 	if (n > max_fds)
 		n = max_fds;
 
@@ -639,8 +646,10 @@ int core_sys_select(int n, fd_set __user *inp, fd_set __user *outp,
 	 * long-words. 
 	 */
 	// 以一个文件描述符占一bit来计算，传递进来的这些fd_set需要用掉多少个字
+	//根据n来计算需要多少个字节, 展开为size=4*(n+32-1)/32
 	size = FDS_BYTES(n);
 	bits = stack_fds;
+	//需要6个bitmaps (int/out/ex 以及其对应的3个结果集)
 	// 除6，因为每个文件描述符需要6个bitmaps
 	if (size > sizeof(stack_fds) / 6) {
 		// 栈上的空间不够, 申请内存, 全部使用堆上的空间
@@ -878,6 +887,7 @@ static int do_poll(unsigned int nfds,  struct poll_list *list,
 	unsigned long busy_end = 0;
 
 	/* Optimise the no-wait case */
+	// 优化非阻塞的情形
 	if (end_time && !end_time->tv_sec && !end_time->tv_nsec) {
 		// 已经超时,直接遍历所有文件描述符, 然后返回
 		pt->_qproc = NULL;
@@ -915,7 +925,7 @@ static int do_poll(unsigned int nfds,  struct poll_list *list,
 					count++;
 					pt->_qproc = NULL;
 					/* found something, stop busy polling */
-					busy_flag = 0;
+					busy_flag = 0;//找到目标事件，可跳出循环
 					can_busy_loop = false;
 				}
 			}
@@ -1025,6 +1035,7 @@ int do_sys_poll(struct pollfd __user *ufds, unsigned int nfds,
 		int j;
 
 		for (j = 0; j < walk->len; j++, ufds++)
+			//将revents值拷贝到用户空间ufds
 			if (__put_user(fds[j].revents, &ufds->revents))
 				goto out_fds;
   	}
