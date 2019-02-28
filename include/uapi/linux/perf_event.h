@@ -276,36 +276,162 @@ struct perf_event_attr {
 	/*
 	 * Major type: hardware/software/tracepoint/etc.
 	 */
+	 /* (1) 指定pmu的type：
+        enum perf_type_id {
+            PERF_TYPE_HARDWARE          = 0,
+            PERF_TYPE_SOFTWARE          = 1,
+            PERF_TYPE_TRACEPOINT            = 2,
+            PERF_TYPE_HW_CACHE          = 3,
+            PERF_TYPE_RAW               = 4,
+            PERF_TYPE_BREAKPOINT            = 5,
+
+            PERF_TYPE_MAX,              
+        };
+     */
 	__u32			type;
 
 	/*
 	 * Size of the attr structure, for fwd/bwd compat.
 	 */
+	  /* (2) 整个perf_event_attr结构体的size */
 	__u32			size;
 
 	/*
 	 * Type specific configuration information.
 	 */
-	__u64			config;
+	 /* (3) 不同type的pmu，config的含义也不同：
+        1、type = PERF_TYPE_HARDWARE：
+            enum perf_hw_id {
+                PERF_COUNT_HW_CPU_CYCLES        = 0,
+                PERF_COUNT_HW_INSTRUCTIONS      = 1,
+                PERF_COUNT_HW_CACHE_REFERENCES      = 2,
+                PERF_COUNT_HW_CACHE_MISSES      = 3,
+                PERF_COUNT_HW_BRANCH_INSTRUCTIONS   = 4,
+                PERF_COUNT_HW_BRANCH_MISSES     = 5,
+                PERF_COUNT_HW_BUS_CYCLES        = 6,
+                PERF_COUNT_HW_STALLED_CYCLES_FRONTEND   = 7,
+                PERF_COUNT_HW_STALLED_CYCLES_BACKEND    = 8,
+                PERF_COUNT_HW_REF_CPU_CYCLES        = 9,
 
+                PERF_COUNT_HW_MAX,          
+            };
+        2、type = PERF_TYPE_SOFTWARE：
+            enum perf_sw_ids {
+                PERF_COUNT_SW_CPU_CLOCK         = 0,
+                PERF_COUNT_SW_TASK_CLOCK        = 1,
+                PERF_COUNT_SW_PAGE_FAULTS       = 2,
+                PERF_COUNT_SW_CONTEXT_SWITCHES      = 3,
+                PERF_COUNT_SW_CPU_MIGRATIONS        = 4,
+                PERF_COUNT_SW_PAGE_FAULTS_MIN       = 5,
+                PERF_COUNT_SW_PAGE_FAULTS_MAJ       = 6,
+                PERF_COUNT_SW_ALIGNMENT_FAULTS      = 7,
+                PERF_COUNT_SW_EMULATION_FAULTS      = 8,
+                PERF_COUNT_SW_DUMMY         = 9,
+                PERF_COUNT_SW_BPF_OUTPUT        = 10,
+
+                PERF_COUNT_SW_MAX,          
+            };
+        3、type = PERF_TYPE_TRACEPOINT：
+            trace_point对应trace_event的id：“/sys/kernel/debug/tracing/events/x/x/id”
+        4、type = PERF_TYPE_HW_CACHE：
+            enum perf_hw_cache_id {
+                PERF_COUNT_HW_CACHE_L1D         = 0,
+                PERF_COUNT_HW_CACHE_L1I         = 1,
+                PERF_COUNT_HW_CACHE_LL          = 2,
+                PERF_COUNT_HW_CACHE_DTLB        = 3,
+                PERF_COUNT_HW_CACHE_ITLB        = 4,
+                PERF_COUNT_HW_CACHE_BPU         = 5,
+                PERF_COUNT_HW_CACHE_NODE        = 6,
+
+                PERF_COUNT_HW_CACHE_MAX,        
+            };
+     */
+	__u64			config;
+	/* (4) period/freq sample模式的具体数值 */
 	union {
 		__u64		sample_period;
 		__u64		sample_freq;
 	};
+	/* (5) 在sample数据时，需要保存哪些数据：
+        enum perf_event_sample_format {
+            PERF_SAMPLE_IP              = 1U << 0,
+            PERF_SAMPLE_TID             = 1U << 1,
+            PERF_SAMPLE_TIME            = 1U << 2,
+            PERF_SAMPLE_ADDR            = 1U << 3,
+            PERF_SAMPLE_READ            = 1U << 4,
+            PERF_SAMPLE_CALLCHAIN           = 1U << 5,
+            PERF_SAMPLE_ID              = 1U << 6,
+            PERF_SAMPLE_CPU             = 1U << 7,
+            PERF_SAMPLE_PERIOD          = 1U << 8,
+            PERF_SAMPLE_STREAM_ID           = 1U << 9,
+            PERF_SAMPLE_RAW             = 1U << 10,
+            PERF_SAMPLE_BRANCH_STACK        = 1U << 11,
+            PERF_SAMPLE_REGS_USER           = 1U << 12,
+            PERF_SAMPLE_STACK_USER          = 1U << 13,
+            PERF_SAMPLE_WEIGHT          = 1U << 14,
+            PERF_SAMPLE_DATA_SRC            = 1U << 15,
+            PERF_SAMPLE_IDENTIFIER          = 1U << 16,
+            PERF_SAMPLE_TRANSACTION         = 1U << 17,
+            PERF_SAMPLE_REGS_INTR           = 1U << 18,
 
+            PERF_SAMPLE_MAX = 1U << 19, 
+        };
+     */
 	__u64			sample_type;
-	__u64			read_format;
+	/* (6) 在read counter数据时，读取的格式:
+         *
+         * The format of the data returned by read() on a perf event fd,
+         * as specified by attr.read_format:
+         *
+         * struct read_format {
+         *  { u64       value;
+         *    { u64     time_enabled; } && PERF_FORMAT_TOTAL_TIME_ENABLED
+         *    { u64     time_running; } && PERF_FORMAT_TOTAL_TIME_RUNNING
+         *    { u64     id;           } && PERF_FORMAT_ID
+         *  } && !PERF_FORMAT_GROUP
+         *
+         *  { u64       nr;
+         *    { u64     time_enabled; } && PERF_FORMAT_TOTAL_TIME_ENABLED
+         *    { u64     time_running; } && PERF_FORMAT_TOTAL_TIME_RUNNING
+         *    { u64     value;
+         *      { u64   id;           } && PERF_FORMAT_ID
+         *    }     cntr[nr];
+         *  } && PERF_FORMAT_GROUP
+         * };
+         *
+        enum perf_event_read_format {
+            PERF_FORMAT_TOTAL_TIME_ENABLED      = 1U << 0,
+            PERF_FORMAT_TOTAL_TIME_RUNNING      = 1U << 1,
+            PERF_FORMAT_ID              = 1U << 2,
+            PERF_FORMAT_GROUP           = 1U << 3,
 
+            PERF_FORMAT_MAX = 1U << 4,      
+        };
+     */
+	__u64			read_format;
+	 /* (7) bit标志 */
+                /* (7.1) 定义event的初始状态为disable/enable。
+                    如果初始被disable，后续可以通过ioctl/prctl来enable。 
+                 */
 	__u64			disabled       :  1, /* off by default        */
+	/* (7.2) 如果该标志被设置，event进程对应的子孙后代的子进程都会计入counter */
 				inherit	       :  1, /* children inherit it   */
+				 /* (7.3) 如果该标志被设置，event和cpu绑定。(只适用于硬件counter只适用于group leaders) */
 				pinned	       :  1, /* must always be on PMU */
+				 /* (7.4) 如果该标志被设置，指定当这个group在CPU上时，它应该是唯一使用CPU计数器的group */
 				exclusive      :  1, /* only group on PMU     */
+				 /* (7.5) exclude_user/exclude_kernel/exclude_hv/exclude_idle这几个标志用来标识，
+                    不要记录对应场景的数据
+                 */
 				exclude_user   :  1, /* don't count user      */
 				exclude_kernel :  1, /* ditto kernel          */
 				exclude_hv     :  1, /* ditto hypervisor      */
 				exclude_idle   :  1, /* don't count when idle */
+				/* (7.6) 允许记录PROT_EXEC mmap操作 */
 				mmap           :  1, /* include mmap data     */
+				/* (7.7) 允许记录进程创建时的comm数据 */
 				comm	       :  1, /* include comm data     */
+				 /* (7.8) 确定sample模式 = freq/period */
 				freq           :  1, /* use freq, not period  */
 				inherit_stat   :  1, /* per task counts       */
 				enable_on_exec :  1, /* next exec enables     */

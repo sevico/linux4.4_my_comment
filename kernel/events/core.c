@@ -1228,6 +1228,7 @@ static void
 list_add_event(struct perf_event *event, struct perf_event_context *ctx)
 {
 	WARN_ON_ONCE(event->attach_state & PERF_ATTACH_CONTEXT);
+	/* (10.4.1.1) 设置event->attach_state的PERF_ATTACH_CONTEXT */
 	event->attach_state |= PERF_ATTACH_CONTEXT;
 
 	/*
@@ -1235,6 +1236,10 @@ list_add_event(struct perf_event *event, struct perf_event_context *ctx)
 	 * list, group events are kept attached to the group so that
 	 * perf_group_detach can, at all times, locate all siblings.
 	 */
+	 /* (10.4.1.2) 如果event是group_leader 
+        则将其event->group_entry加入到顶级group链表：ctx->flexible_groups/pinned_groups
+        ctx->flexible_groups/pinned_groups链表只链接group_leader的event
+     */
 	if (event->group_leader == event) {
 		struct list_head *list;
 
@@ -1247,7 +1252,9 @@ list_add_event(struct perf_event *event, struct perf_event_context *ctx)
 
 	if (is_cgroup_event(event))
 		ctx->nr_cgroups++;
-
+	/* (10.4.1.3) 将event->event_entry加入到链表：ctx->event_list 
+        ctx->event_list链表链接context下所有的event
+     */
 	list_add_rcu(&event->event_entry, &ctx->event_list);
 	ctx->nr_events++;
 	if (event->attr.inherit_stat)
@@ -1384,25 +1391,28 @@ static void perf_group_attach(struct perf_event *event)
 	/*
 	 * We can have double attach due to group movement in perf_event_open.
 	 */
+	 /* (10.4.1.3) 将event->event_entry加入到链表：ctx->event_list 
+        ctx->event_list链表链接context下所有的event
+     */
 	if (event->attach_state & PERF_ATTACH_GROUP)
 		return;
 
 	event->attach_state |= PERF_ATTACH_GROUP;
-
+	/* (10.4.2.2) 如果event本身就是group_leader，不需要继续操作 */
 	if (group_leader == event)
 		return;
 
 	WARN_ON_ONCE(group_leader->ctx != event->ctx);
-
+	/* (10.4.2.3) move_group的处理？ */
 	if (group_leader->group_flags & PERF_GROUP_SOFTWARE &&
 			!is_software_event(event))
 		group_leader->group_flags &= ~PERF_GROUP_SOFTWARE;
-
+	/* (10.4.2.4) 把event->group_entry加入到group_leader->sibling_list链表 */
 	list_add_tail(&event->group_entry, &group_leader->sibling_list);
 	group_leader->nr_siblings++;
-
+	/* (10.4.2.5) 重新计算group_leader的event->read_size、event->header_size */
 	perf_event__header_size(group_leader);
-
+	/* (10.4.2.6) 重新计算group_leader所有子event的event->read_size、event->header_size */
 	list_for_each_entry(pos, &group_leader->sibling_list, group_entry)
 		perf_event__header_size(pos);
 }
@@ -2073,8 +2083,9 @@ static void add_event_to_ctx(struct perf_event *event,
 			       struct perf_event_context *ctx)
 {
 	u64 tstamp = perf_event_time(event);
-
+	/* (10.4.1) 将event加入到context的相关链表 */
 	list_add_event(event, ctx);
+	/* (10.4.2) 将event加入到group_leader的链表 */
 	perf_group_attach(event);
 	event->tstamp_enabled = tstamp;
 	event->tstamp_running = tstamp;
@@ -2179,10 +2190,14 @@ perf_install_in_context(struct perf_event_context *ctx,
 	struct task_struct *task = ctx->task;
 
 	lockdep_assert_held(&ctx->mutex);
-
+	 /* (10.1) context赋值给event->ctx */
 	event->ctx = ctx;
 	if (event->cpu != -1)
 		event->cpu = cpu;
+	/* (10.2) 如果是cpu维度的context，
+			使用cpu同步机制来调用指定的cpu上运行__perf_install_in_context() 
+			绑定context、event
+		 */
 
 	if (!task) {
 		/*
@@ -2194,6 +2209,10 @@ perf_install_in_context(struct perf_event_context *ctx,
 	}
 
 retry:
+	/* (10.3) 如果是task维度的context，且task当前正在running
+			使用cpu同步机制调用指定的task的运行cpu(即task_cpu(p))上运行__perf_install_in_context()
+			绑定context、event
+		 */
 	if (!task_function_call(task, __perf_install_in_context, event))
 		return;
 
@@ -2216,6 +2235,9 @@ retry:
 	 * Since the task isn't running, its safe to add the event, us holding
 	 * the ctx->lock ensures the task won't get scheduled in.
 	 */
+	 /* (10.4) 如果是task维度的context，但是task当前不在runnning
+        可以安全的绑定event和context
+     */
 	add_event_to_ctx(event, ctx);
 	raw_spin_unlock_irq(&ctx->lock);
 }
@@ -3480,9 +3502,10 @@ find_get_context(struct pmu *pmu, struct task_struct *task,
 	unsigned long flags;
 	int ctxn, err;
 	int cpu = event->cpu;
-
+	 /* (4.1) 如果task=null即pid=-1，获取cpu维度的context */
 	if (!task) {
 		/* Must be root to operate on a CPU event: */
+	/* (4.1.1) 权限判断 */
 		if (perf_paranoid_cpu() && !capable(CAP_SYS_ADMIN))
 			return ERR_PTR(-EACCES);
 
@@ -3491,9 +3514,10 @@ find_get_context(struct pmu *pmu, struct task_struct *task,
 		 * offline CPU and activate it when the CPU comes up, but
 		 * that's for later.
 		 */
+		 /* (4.1.2) attr指定的cpu是否online */
 		if (!cpu_online(cpu))
 			return ERR_PTR(-ENODEV);
-
+		 /* (4.1.3) 根据cpu获取到对应pmu的cpu维度context：per_cpu_ptr(pmu->pmu_cpu_context, cpu)->ctx */
 		cpuctx = per_cpu_ptr(pmu->pmu_cpu_context, cpu);
 		ctx = &cpuctx->ctx;
 		get_ctx(ctx);
@@ -3501,12 +3525,12 @@ find_get_context(struct pmu *pmu, struct task_struct *task,
 
 		return ctx;
 	}
-
+	/* (4.2) 如果task!=null即pid>=0，获取task维度的context */
 	err = -EINVAL;
 	ctxn = pmu->task_ctx_nr;
 	if (ctxn < 0)
 		goto errout;
-
+	/* (4.2.1) 部分架构context需要分配ctx->task_ctx_data */
 	if (event->attach_state & PERF_ATTACH_TASK_DATA) {
 		task_ctx_data = kzalloc(pmu->task_ctx_size, GFP_KERNEL);
 		if (!task_ctx_data) {
@@ -3516,7 +3540,12 @@ find_get_context(struct pmu *pmu, struct task_struct *task,
 	}
 
 retry:
+	/* (4.2.2) 获取task维度的context：task->perf_event_ctxp[pmu->task_ctx_nr]
+			如果此前无人创建过此context，则分配空间创建
+		 */
+
 	ctx = perf_lock_task_context(task, ctxn, &flags);
+	/* (4.2.2.1) task此context已经创建，则使用现成的 */
 	if (ctx) {
 		clone_ctx = unclone_ctx(ctx);
 		++ctx->pin_count;
@@ -3529,6 +3558,7 @@ retry:
 
 		if (clone_ctx)
 			put_ctx(clone_ctx);
+		 /* (4.2.2.2) 否则，重新创建task->perf_event_ctxp[pmu->task_ctx_nr] */
 	} else {
 		ctx = alloc_perf_context(pmu, task);
 		err = -ENOMEM;
@@ -7659,12 +7689,13 @@ int perf_pmu_register(struct pmu *pmu, const char *name, int type)
 	pmu->pmu_disable_count = alloc_percpu(int);
 	if (!pmu->pmu_disable_count)
 		goto unlock;
-
+	 /* (3.1) 如果name = null，则pmu->name=null、pmu->type=-1 */
 	pmu->type = -1;
 	if (!name)
 		goto skip_type;
+	 /* (3.1.1) pmu->name = name */
 	pmu->name = name;
-
+	 /* (3.1.2) 如果type < 0，在idr中动态分配值给pmu->type */
 	if (type < 0) {
 		type = idr_alloc(&pmu_idr, pmu, PERF_TYPE_MAX, 0, GFP_KERNEL);
 		if (type < 0) {
@@ -7679,17 +7710,27 @@ int perf_pmu_register(struct pmu *pmu, const char *name, int type)
 		if (ret)
 			goto free_idr;
 	}
+/* (3.2) 初始化cpu维度的perf_cpu_context，
+	  perf_cpu_context的作用是用来把某一维度的perf_event链接到一起 
+	*/
 
 skip_type:
+	/* (3.2.1) 如果有相同task_ctx_nr类型的pmu已经创建perf_cpu_context结构， 
+		   直接引用
+		*/
+
 	pmu->pmu_cpu_context = find_pmu_context(pmu->task_ctx_nr);
 	if (pmu->pmu_cpu_context)
 		goto got_cpu_context;
 
 	ret = -ENOMEM;
+	/* (3.2.2) 如果没有人创建本pmu task_ctx_nr类型的perf_cpu_context结构， 
+        重新创建
+     */
 	pmu->pmu_cpu_context = alloc_percpu(struct perf_cpu_context);
 	if (!pmu->pmu_cpu_context)
 		goto free_dev;
-
+	/* (3.2.3) 初始化per_cpu的perf_cpu_context结构 */
 	for_each_possible_cpu(cpu) {
 		struct perf_cpu_context *cpuctx;
 
@@ -7705,6 +7746,7 @@ skip_type:
 	}
 
 got_cpu_context:
+	/* (3.3) 给pmu赋值一些默认的操作函数 */
 	if (!pmu->start_txn) {
 		if (pmu->pmu_enable) {
 			/*
@@ -7729,7 +7771,7 @@ got_cpu_context:
 
 	if (!pmu->event_idx)
 		pmu->event_idx = perf_event_idx_default;
-
+	/* (3.4) 最重要的一步：将新的pmu加入到pmus链表中 */
 	list_add_rcu(&pmu->entry, &pmus);
 	atomic_set(&pmu->exclusive_cnt, 0);
 	ret = 0;
@@ -7897,7 +7939,7 @@ perf_event_alloc(struct perf_event_attr *attr, int cpu,
 		if (!task || cpu != -1)
 			return ERR_PTR(-EINVAL);
 	}
-
+	/* (2.1) 分配perf_event空间 */
 	event = kzalloc(sizeof(*event), GFP_KERNEL);
 	if (!event)
 		return ERR_PTR(-ENOMEM);
@@ -7906,6 +7948,7 @@ perf_event_alloc(struct perf_event_attr *attr, int cpu,
 	 * Single events are their own group leaders, with an
 	 * empty sibling list:
 	 */
+	 /* (2.2) 如果group_fd == -1，那么group_leader = self */
 	if (!group_leader)
 		group_leader = event;
 
@@ -7938,7 +7981,7 @@ perf_event_alloc(struct perf_event_attr *attr, int cpu,
 	event->id		= atomic64_inc_return(&perf_event_id);
 
 	event->state		= PERF_EVENT_STATE_INACTIVE;
-
+	/* (2.3) 如果task != null */
 	if (task) {
 		event->attach_state = PERF_ATTACH_TASK;
 		/*
@@ -7960,11 +8003,17 @@ perf_event_alloc(struct perf_event_attr *attr, int cpu,
 
 	event->overflow_handler	= overflow_handler;
 	event->overflow_handler_context = context;
-
+	/* (2.4) 根据attr.disabled的值来设置event的初始化值：
+        event->state =  PERF_EVENT_STATE_OFF/PERF_EVENT_STATE_INACTIVE
+     */
 	perf_event__state_init(event);
 
 	pmu = NULL;
-
+	/* (2.5) 根据event的attr->freq和attr->sample_period/sample_freq来初始化event->hw:
+        hwc->sample_period
+        hwc->last_period
+        hwc->period_left
+     */
 	hwc = &event->hw;
 	hwc->sample_period = attr->sample_period;
 	if (attr->freq && attr->sample_freq)
@@ -7977,18 +8026,26 @@ perf_event_alloc(struct perf_event_attr *attr, int cpu,
 	 * We currently do not support PERF_SAMPLE_READ on inherited events.
 	 * See perf_output_read().
 	 */
+	 /* (2.6) inherit时不支持PERF_SAMPLE_READ */
 	if (attr->inherit && (attr->sample_type & PERF_SAMPLE_READ))
 		goto err_ns;
-
+	/* (2.7) 如果!(attr.sample_type & PERF_SAMPLE_BRANCH_STACK)：
+        则attr.branch_sample_type = 0
+     */
 	if (!has_branch_stack(event))
 		event->attr.branch_sample_type = 0;
-
+	 /* (2.8) 如果(flags & PERF_FLAG_PID_CGROUP)：
+        将当前event加入cgroup 
+     */
 	if (cgroup_fd != -1) {
 		err = perf_cgroup_connect(cgroup_fd, event, attr, group_leader);
 		if (err)
 			goto err_ns;
 	}
-
+	/* (2.9) 至关重要的一步：
+        根据attr.type在pmus链表中找到对应的pmu，
+        并且调用pmu->event_init(event)来初始化event
+     */
 	pmu = perf_init_event(event);
 	if (!pmu)
 		goto err_ns;
@@ -7996,7 +8053,7 @@ perf_event_alloc(struct perf_event_attr *attr, int cpu,
 		err = PTR_ERR(pmu);
 		goto err_ns;
 	}
-
+	 /* (2.10) exclusive类型pmu的event的处理 */
 	err = exclusive_event_init(event);
 	if (err)
 		goto err_pmu;
@@ -8010,6 +8067,7 @@ perf_event_alloc(struct perf_event_attr *attr, int cpu,
 	}
 
 	/* symmetric to unaccount_event() in _free_event() */
+	/* (2.11) 关于event操作的一些统计 */
 	account_event(event);
 
 	return event;
@@ -8324,24 +8382,25 @@ again:
 	int err;
 	int f_flags = O_RDWR;
 	int cgroup_fd = -1;
-
+	 /* (1) 一系列的合法性判断和准备工作 */
 	/* for future expandability... */
 	if (flags & ~PERF_FLAG_ALL)
 		return -EINVAL;
-
+	 /* (1.2) 拷贝用户态的perf_event_attr到内核态 */
 	err = perf_copy_attr(attr_uptr, &attr);  //将用户空间对性能计数器的配置参数拷贝到内核空间
 	if (err)
 		return err;
-
+	/* (1.1) 权限判断 */
 	if (!attr.exclude_kernel) {
 		if (perf_paranoid_kernel() && !capable(CAP_SYS_ADMIN)) //权限检查
 			return -EACCES;
 	}
-
+	/* (1.3) 如果sample是freq mode，sample_freq的合法性判断 */
 	if (attr.freq) {
 		if (attr.sample_freq > sysctl_perf_event_sample_rate)
 			return -EINVAL;
 	} else {
+	/* (1.4) 如果sample是period mode，sample_period的合法性判断 */
 		if (attr.sample_period & (1ULL << 63))
 			return -EINVAL;
 	}
@@ -8357,11 +8416,13 @@ again:
 
 	if (flags & PERF_FLAG_FD_CLOEXEC)
 		f_flags |= O_CLOEXEC;
-
+	 /* (1.5) 当前进程获取一个新的fd编号  */
 	event_fd = get_unused_fd_flags(f_flags);
 	if (event_fd < 0)
 		return event_fd;
-
+	 /* (1.6) 如果当前event需要加入到指定的group leader中，获取到： 
+        group_fd对应的fd结构 和 perf_event结构
+     */
 	if (group_fd != -1) {
 		err = perf_fget_light(group_fd, &group);
 		if (err)
@@ -8372,7 +8433,7 @@ again:
 		if (flags & PERF_FLAG_FD_NO_GROUP)
 			group_leader = NULL;
 	}
-
+	/* (1.7) 找到pid对应的task_struct结构 */
 	if (pid != -1 && !(flags & PERF_FLAG_PID_CGROUP)) {
 		task = find_lively_task_by_vpid(pid);
 		if (IS_ERR(task)) {
@@ -8380,7 +8441,7 @@ again:
 			goto err_group_fd;
 		}
 	}
-
+	 /* (1.8) 如果是加入到group leader，需要两者的attr.inherit属性一致 */
 	if (task && group_leader &&
 	    group_leader->attr.inherit != attr.inherit) {
 		err = -EINVAL;
@@ -8406,17 +8467,17 @@ again:
 		if (!ptrace_may_access(task, PTRACE_MODE_READ_REALCREDS))
 			goto err_cred;
 	}
-
+	/* (1.9) 创建cgroup fd，这和之前的group leader不一样 */
 	if (flags & PERF_FLAG_PID_CGROUP)
 		cgroup_fd = pid;
-
+	 /* (2) 重头戏：根据传入的参数，分配perf_event结构并初始化 */
 	event = perf_event_alloc(&attr, cpu, task, group_leader, NULL,
 				 NULL, NULL, cgroup_fd); //分配并初始化事件结构体：struct perf_event,struct hw_perf_event
 	if (IS_ERR(event)) {
 		err = PTR_ERR(event);
 		goto err_cred;
 	}
-
+	/* (3.1) 如果attr指定需要sample数据，但是pmu没有中断能力，返回出错(主要是针对硬件pmu) */
 	if (is_sampling_event(event)) {
 		if (event->pmu->capabilities & PERF_PMU_CAP_NO_INTERRUPT) {
 			err = -ENOTSUPP;
@@ -8429,15 +8490,18 @@ again:
 	 * any hardware group.
 	 */
 	pmu = event->pmu;
-
+	 /* (3.2) 如果用户指定时钟源，把event->clock设置为用户指定值 */
 	if (attr.use_clockid) {
 		err = perf_event_set_clock(event, attr.clockid);
 		if (err)
 			goto err_alloc;
 	}
-
+	/* (3.3) 如果event和group_leader的pmu type不一致的处理 */
 	if (group_leader &&
 	    (is_software_event(event) != is_software_event(group_leader))) {
+	    /* (3.3.1) pmu type: event == software, group_leader != software 
+            把event加入到group_leader中
+         */
 		if (is_software_event(event)) {
 			/*
 			 * If event and group_leader are not both a software
@@ -8448,6 +8512,9 @@ again:
 			 * fail to schedule.
 			 */
 			pmu = group_leader->pmu;
+			/* (3.3.2) pmu type: event != software, group_leader == software 
+            尝试把整个group移入到hardware context中
+         */
 		} else if (is_software_event(group_leader) &&
 			   (group_leader->group_flags & PERF_GROUP_SOFTWARE)) {
 			/*
@@ -8462,12 +8529,16 @@ again:
 	/*
 	 * Get the target context (task or percpu):
 	 */
+	 /* (4) get到perf_event_context，根据perf_event类型得到cpu维度/task维度的context：
+        如果pid=-1即task=NULL，获得cpu维度的context，即pmu注册时根据pmu->task_ctx_nr分配的pmu->pmu_cpu_context->ctx
+        如果pid>=0即task!=NULL，获得task维度的context，即task->perf_event_ctxp[ctxn]，如果为空则重新创建
+     */
 	ctx = find_get_context(pmu, task, event);//返回相应pid和CPU的perf_event_context，其中保存了事件上下文的各种信息
 	if (IS_ERR(ctx)) {
 		err = PTR_ERR(ctx);
 		goto err_alloc;
 	}
-
+	/* (5.1) event需要加入到group_leader，如果(pmu->capabilities & PERF_PMU_CAP_EXCLUSIVE)，出错返回  */
 	if ((pmu->capabilities & PERF_PMU_CAP_EXCLUSIVE) && group_leader) {
 		err = -EBUSY;
 		goto err_context;
@@ -8476,6 +8547,7 @@ again:
 	/*
 	 * Look up the group leader (we will attach this event to it):
 	 */
+	 /* (5.2) event需要加入到group_leader，对一些条件进行合法性判断  */
 	if (group_leader) {
 		err = -EINVAL;
 
@@ -8483,10 +8555,12 @@ again:
 		 * Do not allow a recursive hierarchy (this new sibling
 		 * becoming part of another group-sibling):
 		 */
+		 /* (5.2.1) 不允许递归的->group_leader */
 		if (group_leader->group_leader != group_leader)
 			goto err_context;
 
 		/* All events in a group should have the same clock */
+		/* (5.2.2) event加入gruop，需要时钟源一致 */
 		if (group_leader->clock != event->clock)
 			goto err_context;
 
@@ -8510,22 +8584,29 @@ again:
 		 * or CPU context. If we're moving SW events, we'll fix
 		 * this up later, so allow that.
 		 */
+		  /* (5.2.3) event加入gruop，需要task/cpu的context一致 */
 		if (!move_group && group_leader->ctx != ctx)
 			goto err_context;
 
 		/*
 		 * Only a group leader can be exclusive or pinned
 		 */
+		 /* (5.2.4) 只有group才能设置exclusive/pinned属性 */
 		if (attr.exclusive || attr.pinned)
 			goto err_context;
 	}
-
+	/* (5.3) 设置output_event */
 	if (output_event) {
 		err = perf_event_set_output(event, output_event);
 		if (err)
 			goto err_context;
 	}
 	//创建一个文件，该文件通过函数fd_install与进程相关联
+	/* (6) 分配perf_event对应的file结构： 
+        file->private_data = event; // file和event结构链接在一起
+        file->f_op = perf_fops；    // file的文件操作函数集
+        后续会把fd和file链接到一起：fd_install(event_fd, event_file);
+     */
 	event_file = anon_inode_getfile("[perf_event]", &perf_fops, event,
 					f_flags);
 	if (IS_ERR(event_file)) {
@@ -8557,7 +8638,9 @@ again:
 	} else {
 		mutex_lock(&ctx->mutex);
 	}
-
+	/* (7.1) 根据attr计算：event->read_size、event->header_size、event->id_header_size 
+        并判断是否有超长
+     */
 	if (!perf_event_validate_size(event)) {
 		err = -E2BIG;
 		goto err_locked;
@@ -8567,6 +8650,9 @@ again:
 	 * Must be under the same ctx::mutex as perf_install_in_context(),
 	 * because we need to serialize with concurrent event creation.
 	 */
+	  /* (7.2) 如果是排他性event：(pmu->capabilities & PERF_PMU_CAP_EXCLUSIVE) 
+        检查context链表中现有的event是否允许新的event插入
+     */
 	if (!exclusive_event_installable(event, ctx)) {
 		/* exclusive and group stuff are assumed mutually exclusive */
 		WARN_ON_ONCE(move_group);
@@ -8581,14 +8667,17 @@ again:
 	 * This is the point on no return; we cannot fail hereafter. This is
 	 * where we start modifying current state.
 	 */
-
+	 /* (8) 如果group和当前event的pmu type不一致，
+        尝试更改context到当前event
+     */
 	if (move_group) {
 		/*
 		 * See perf_event_ctx_lock() for comments on the details
 		 * of swizzling perf_event::ctx.
 		 */
+		 /* (8.1) 把group_leader从原有的context中remove */
 		perf_remove_from_context(group_leader, false);
-
+		/* (8.2) 把所有group_leader的子event从原有的context中remove */
 		list_for_each_entry(sibling, &group_leader->sibling_list,
 				    group_entry) {
 			perf_remove_from_context(sibling, false);
@@ -8611,6 +8700,7 @@ again:
 		 * By installing siblings first we NO-OP because they're not
 		 * reachable through the group lists.
 		 */
+		 /* (8.3) 把所有group_leader的子event安装到新的context中 */
 		list_for_each_entry(sibling, &group_leader->sibling_list,
 				    group_entry) {
 			perf_event__state_init(sibling);
@@ -8623,6 +8713,7 @@ again:
 		 * event. What we want here is event in the initial
 		 * startup state, ready to be add into new context.
 		 */
+		 /* (8.4) 把group_leader安装到新的context中 */
 		perf_event__state_init(group_leader);
 		perf_install_in_context(ctx, group_leader, group_leader->cpu);
 		get_ctx(ctx);
@@ -8641,9 +8732,11 @@ again:
 	 * perf_install_in_context() which is the point the event is active and
 	 * can use these values.
 	 */
+	  /* (9.1) 重新计算：event->read_size、event->header_size、event->id_header_size */
 	perf_event__header_size(event);
 	perf_event__id_header_size(event);
 	//将	性能事件与上下文绑定，并调用平台相关函数访问性能计数器 系统调用对硬件的操作都是在该函数内完成
+	 /* (10) 把event安装到context当中 */
 	perf_install_in_context(ctx, event, event->cpu);
 	perf_unpin_context(ctx);
 
@@ -8659,7 +8752,7 @@ again:
 	put_online_cpus();
 
 	event->owner = current;
-
+	 /* (9.2) 把当前进程创建的所有event，加入到current->perf_event_list链表中 */
 	mutex_lock(&current->perf_event_mutex);
 	list_add_tail(&event->owner_entry, &current->perf_event_list);
 	mutex_unlock(&current->perf_event_mutex);
@@ -8671,6 +8764,7 @@ again:
 	 * perf_group_detach().
 	 */
 	fdput(group);
+	/* (9.3) 把fd和file进行链接 */
 	fd_install(event_fd, event_file);
 	return event_fd;
 
@@ -9481,18 +9575,20 @@ perf_cpu_notify(struct notifier_block *self, unsigned long action, void *hcpu)
 void __init perf_event_init(void)
 {
 	int ret;
-
+	 /* (1) 初始化idr，给动态type的pmu来分配 */
 	idr_init(&pmu_idr);
-
+	/* (2) 初始化per_cpu变量swevent_htable */
 	perf_event_init_all_cpus();
 	init_srcu_struct(&pmus_srcu);
+	 /* (3) 注册"software" pmu */
 	perf_pmu_register(&perf_swevent, "software", PERF_TYPE_SOFTWARE);
 	perf_pmu_register(&perf_cpu_clock, NULL, -1);
 	perf_pmu_register(&perf_task_clock, NULL, -1);
+	 /* (4) 注册"tracepoint" pmu */
 	perf_tp_register();
 	perf_cpu_notifier(perf_cpu_notify);
 	register_reboot_notifier(&perf_reboot_notifier);
-
+	 /* (5) 注册"breakpoint" pmu */
 	ret = init_hw_breakpoint();
 	WARN(ret, "hw_breakpoint initialization failed with: %d", ret);
 
@@ -9525,18 +9621,20 @@ static int __init perf_event_sysfs_init(void)
 	int ret;
 
 	mutex_lock(&pmus_lock);
-
+	/* (1) 注册pmu_bus */
 	ret = bus_register(&pmu_bus);
 	if (ret)
 		goto unlock;
-
+	/* (2) 遍历pmus链表，创建pmu对应的device */
 	list_for_each_entry(pmu, &pmus, entry) {
+	/* 如果pmu->name = null或者pmu->type < 0，不创建 */
 		if (!pmu->name || pmu->type < 0)
 			continue;
 
 		ret = pmu_dev_alloc(pmu);
 		WARN(ret, "Failed to register pmu: %s, reason %d\n", pmu->name, ret);
 	}
+	/* (3) 设置pmu_bus_running */
 	pmu_bus_running = 1;
 	ret = 0;
 

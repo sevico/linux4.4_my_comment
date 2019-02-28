@@ -204,13 +204,45 @@ extern void proc_sched_set_task(struct task_struct *p);
  * modifying one set can't modify the other one by
  * mistake.
  */
+ /**
+ * 进程要么在CPU上执行，要么准备执行。
+ */
 #define TASK_RUNNING		0
+/**
+ * 可中断的等待状态。
+ * 进程被挂起，直到某个条件变为真。产生一个硬件中断，释放进程正等待的系统资源，或传递一个信号都是可以唤醒进程的条件
+ */
+
 #define TASK_INTERRUPTIBLE	1
+/**
+ * 不可中断的等待状态。
+ * 这种情况很少，但是有时也有用：比如进程打开一个设备文件，其相应的驱动程序在探测硬件设备时，就是这种状态。
+ * 在探测完成前，设备驱动程序如果被中断，那么硬件设备的状态可能会处于不可预知状态。
+ */
+
 #define TASK_UNINTERRUPTIBLE	2
+/**
+ * 暂停状态。当收到SIGSTOP,SIGTSTP,SIGTTIN或者SIGTTOU信号后，会进入此状态。
+ */
+
 #define __TASK_STOPPED		4
+/**
+ * 被跟踪状态。当进程被另外一个进程监控时，任何信号都可以把这个置于该状态
+ */
+
 #define __TASK_TRACED		8
 /* in tsk->exit_state */
+/**
+ * 在父进程调用wait4后，删除前，为避免其他进程在同一进程上也执行wait4调用
+ * 将其状态由EXIT_ZOMBIE转为EXIT_DEAD，即僵死撤销状态。
+ */
+
 #define EXIT_DEAD		16
+/**
+ * 僵死状态。进程的执行被终止，但是，父进程还没有调用完wait4和waitpid来返回有关
+ * 死亡进程的信息。在此时，内核不能释放相关数据结构，因为父进程可能还需要它。
+ */
+
 #define EXIT_ZOMBIE		32
 #define EXIT_TRACE		(EXIT_ZOMBIE | EXIT_DEAD)
 /* in tsk->state again */
