@@ -9215,9 +9215,15 @@ inherit_event(struct perf_event *parent_event,
 	 * which has a filp for sure, which we use as the reference
 	 * count:
 	 */
+	 /* (2.1.3.1.1) 获得子进程新建event的parent event，
+        如果是多级子进程，把所有子进程的event都挂在原始parent下面，而不是一级一级的挂载
+     */
 	if (parent_event->parent)
 		parent_event = parent_event->parent;
-
+	/* (2.1.3.2) 对group_leader event进行复制，重新分配初始化： 
+        和父event创建不同，这指定了子event的parent：event->parent = parent_event;
+        随后子event也会被加入到父event的parent_event->child_list链表中
+     */
 	child_event = perf_event_alloc(&parent_event->attr,
 					   parent_event->cpu,
 					   child,
@@ -9239,6 +9245,7 @@ inherit_event(struct perf_event *parent_event,
 	 * not its attr.disabled bit.  We hold the parent's mutex,
 	 * so we won't race with perf_event_{en, dis}able_family.
 	 */
+	 /* (2.1.3.3) 如果父event的状态已经enable，子event的状态也为enable */
 	if (parent_state >= PERF_EVENT_STATE_INACTIVE)
 		child_event->state = PERF_EVENT_STATE_INACTIVE;
 	else
@@ -9268,6 +9275,7 @@ inherit_event(struct perf_event *parent_event,
 	/*
 	 * Link it up in the child's context:
 	 */
+	 /* (2.1.3.4) 将新的event加入到子进程的context中 */
 	raw_spin_lock_irqsave(&child_ctx->lock, flags);
 	add_event_to_ctx(child_event, child_ctx);
 	raw_spin_unlock_irqrestore(&child_ctx->lock, flags);
@@ -9275,6 +9283,7 @@ inherit_event(struct perf_event *parent_event,
 	/*
 	 * Link this into the parent event's child list
 	 */
+	 /* (2.1.3.5) 将子event加入到父event的->child_list链表中 */
 	WARN_ON_ONCE(parent_event->ctx->parent_ctx);
 	mutex_lock(&parent_event->child_mutex);
 	list_add_tail(&child_event->child_list, &parent_event->child_list);
@@ -9292,11 +9301,17 @@ static int inherit_group(struct perf_event *parent_event,
 	struct perf_event *leader;
 	struct perf_event *sub;
 	struct perf_event *child_ctr;
-
+	/* (2.1.3.1) 对group_leader event进行复制继承， 
+        新建group leader的继承者是新的group leader
+     */
 	leader = inherit_event(parent_event, parent, parent_ctx,
 				 child, NULL, child_ctx);
 	if (IS_ERR(leader))
 		return PTR_ERR(leader);
+	/* (2.1.3.2) 对group_leader下面的子event进行复制继承： 
+        如果父进程group leader下面有树成员，他会把这棵树给子进程也复制一份，
+        ---oops：这里有个疑问，如果父进程group成员不是group leader所在的父进程，但是inherit会给子进程复制一个event，这样合理吗？
+     */
 	list_for_each_entry(sub, &parent_event->sibling_list, group_entry) {
 		child_ctr = inherit_event(sub, parent, parent_ctx,
 					    child, leader, child_ctx);
@@ -9314,12 +9329,12 @@ inherit_task_group(struct perf_event *event, struct task_struct *parent,
 {
 	int ret;
 	struct perf_event_context *child_ctx;
-
+	 /* (2.1.1) 如果event不支持inherit，直接返回 */
 	if (!event->attr.inherit) {
 		*inherited_all = 0;
 		return 0;
 	}
-
+	/* (2.1.2) 如果子进程的context为空，分配创建 */
 	child_ctx = child->perf_event_ctxp[ctxn];
 	if (!child_ctx) {
 		/*
@@ -9335,7 +9350,7 @@ inherit_task_group(struct perf_event *event, struct task_struct *parent,
 
 		child->perf_event_ctxp[ctxn] = child_ctx;
 	}
-
+	/* (2.1.3) 子进程对父进程的event进行复制继承 */
 	ret = inherit_group(event, parent, parent_ctx,
 			    child, child_ctx);
 
@@ -9357,7 +9372,7 @@ static int perf_event_init_context(struct task_struct *child, int ctxn)
 	int inherited_all = 1;
 	unsigned long flags;
 	int ret = 0;
-
+	/* (2.1) 父进程即为当前进程(current) */
 	if (likely(!parent->perf_event_ctxp[ctxn]))
 		return 0;
 
@@ -9386,6 +9401,9 @@ static int perf_event_init_context(struct task_struct *child, int ctxn)
 	 * We dont have to disable NMIs - we are only looking at
 	 * the list, not manipulating it:
 	 */
+	 /* (2.2) 遍历父进程context上的高优先级group leader event链表：parent_ctx->pinned_groups，
+        在子进程上复制需要inherit的event
+     */
 	list_for_each_entry(event, &parent_ctx->pinned_groups, group_entry) {
 		ret = inherit_task_group(event, parent, parent_ctx,
 					 child, ctxn, &inherited_all);
@@ -9401,7 +9419,9 @@ static int perf_event_init_context(struct task_struct *child, int ctxn)
 	raw_spin_lock_irqsave(&parent_ctx->lock, flags);
 	parent_ctx->rotate_disable = 1;
 	raw_spin_unlock_irqrestore(&parent_ctx->lock, flags);
-
+	/* (2.2) 遍历父进程context上的低优先级group leader event链表：parent_ctx->flexible_groups，
+        在子进程上复制需要inherit的event
+     */
 	list_for_each_entry(event, &parent_ctx->flexible_groups, group_entry) {
 		ret = inherit_task_group(event, parent, parent_ctx,
 					 child, ctxn, &inherited_all);
@@ -9413,7 +9433,9 @@ static int perf_event_init_context(struct task_struct *child, int ctxn)
 	parent_ctx->rotate_disable = 0;
 
 	child_ctx = child->perf_event_ctxp[ctxn];
-
+	/* (2.3) 如果inherited_all>0，表示父进程挂载的所有event都是inherit属性，都被子进程复制继承， 
+        那么给子进程的task context->parent_ctx赋值为父进程的context
+     */
 	if (child_ctx && inherited_all) {
 		/*
 		 * Mark the child context as a clone of the parent
@@ -9449,11 +9471,13 @@ out_unlock:
 int perf_event_init_task(struct task_struct *child)
 {
 	int ctxn, ret;
-
+	/* (1) 初始化child task的perf_event相关结构 */
 	memset(child->perf_event_ctxp, 0, sizeof(child->perf_event_ctxp));
 	mutex_init(&child->perf_event_mutex);
 	INIT_LIST_HEAD(&child->perf_event_list);
-
+	/* (2) 进程通过task contex(task->perf_event_ctxp[ctxn])挂载了很多面向task的perf_event，
+        如果event支持inherit属性，当进程创建子进程时需要给子进程创建task context和继承的event
+     */
 	for_each_task_context_nr(ctxn) {
 		ret = perf_event_init_context(child, ctxn);
 		if (ret) {

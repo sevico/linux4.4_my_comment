@@ -370,6 +370,10 @@ DECLARE_PER_CPU(struct irq_stack *, softirq_stack);
 extern unsigned int xstate_size;
 
 struct perf_event;
+/**
+ * 进程被切换出去后，内核把它的硬件上下文保存在这个结构中。
+ * 它包含大部分CPU寄存器，但是不包含eax、ebx这样的通用寄存器,他们的值保留在内核堆栈中
+ */
 
 struct thread_struct {
 	/* Cached TLS descriptors: */
@@ -413,6 +417,10 @@ struct thread_struct {
 	unsigned		io_bitmap_max;
 
 	/* Floating point and extended processor state */
+	/**
+	 * 为支持选择性装入FPU、MMX和XMM寄存器，引入此结构。
+	 * 当切换进程时，将进程的这些寄存器保存在fpu结构中。
+	 */
 	struct fpu		fpu;
 	/*
 	 * WARNING: 'fpu' is dynamically-sized.  It *MUST* be at
