@@ -367,30 +367,39 @@ typedef int (*read_actor_t)(read_descriptor_t *, struct page *,
 		unsigned long, unsigned long);
 
 struct address_space_operations {
+	//写操作，将页写到所有者所在的磁盘
 	int (*writepage)(struct page *page, struct writeback_control *wbc);
+	//读操作，从所有者的磁盘上读取页
 	int (*readpage)(struct file *, struct page *);
 
 	/* Write back some dirty pages from this mapping. */
+	//将所有者的多个脏页写到磁盘上
 	int (*writepages)(struct address_space *, struct writeback_control *);
 
 	/* Set a page dirty.  Return true if this dirtied it */
+	//将所有者的页的状态，设为脏
 	int (*set_page_dirty)(struct page *page);
-
+	//从磁盘上读取多个所有者的页
 	int (*readpages)(struct file *filp, struct address_space *mapping,
 			struct list_head *pages, unsigned nr_pages);
-
+	//准备一个写操作（由磁盘文件系统使用）
 	int (*write_begin)(struct file *, struct address_space *mapping,
 				loff_t pos, unsigned len, unsigned flags,
 				struct page **pagep, void **fsdata);
+	//完成一个写操作（由磁盘文件系统使用）
 	int (*write_end)(struct file *, struct address_space *mapping,
 				loff_t pos, unsigned len, unsigned copied,
 				struct page *page, void *fsdata);
 
 	/* Unfortunately this kludge is needed for FIBMAP. Don't use it */
+	//从文件块索引中，获取逻辑块号
 	sector_t (*bmap)(struct address_space *, sector_t);
+	//使拥有者的页无效（截断文件时使用）
 	void (*invalidatepage) (struct page *, unsigned int, unsigned int);
+	//准备释放页，由日志文件系统使用
 	int (*releasepage) (struct page *, gfp_t);
 	void (*freepage)(struct page *);
+	//对所有者的页进行直接I/O数据传输（不经过页面Cache）
 	ssize_t (*direct_IO)(struct kiocb *, struct iov_iter *iter, loff_t offset);
 	/*
 	 * migrate the contents of a page to the specified target. If
@@ -425,19 +434,31 @@ int pagecache_write_end(struct file *, struct address_space *mapping,
 				struct page *page, void *fsdata);
 
 struct address_space {
+	//指向拥有该对象的节点
 	struct inode		*host;		/* owner: inode, block_device */
+	//表示拥有者的页基树(radix tree)的根
 	struct radix_tree_root	page_tree;	/* radix tree of all pages */
+	//保护基树的自旋锁
 	spinlock_t		tree_lock;	/* and lock protecting it */
+	//地址空间中共享内存映射的个数
 	atomic_t		i_mmap_writable;/* count VM_SHARED mappings */
+	//radix优先搜索树的根
 	struct rb_root		i_mmap;		/* tree of private and shared mappings */
+	//保护radix优先搜索树的信号量
 	struct rw_semaphore	i_mmap_rwsem;	/* protect tree, count, list */
 	/* Protected by tree_lock together with the radix tree */
+	//所有者的页总数
 	unsigned long		nrpages;	/* number of total pages */
 	unsigned long		nrshadows;	/* number of shadow entries */
+	//最后一次回写操作所作用的页索引
 	pgoff_t			writeback_index;/* writeback starts here */
+	//对所有者页进行操作的方法
 	const struct address_space_operations *a_ops;	/* methods */
+	//错误位和内存分配标志
 	unsigned long		flags;		/* error bits/gfp mask */
+	//通常是管理private_list链表时使用的自旋锁
 	spinlock_t		private_lock;	/* for use by the address_space */
+	//通常是与索引节点相关的间接快的脏缓冲区链表
 	struct list_head	private_list;	/* ditto */
 	void			*private_data;	/* ditto */
 } __attribute__((aligned(sizeof(long))));
@@ -883,12 +904,16 @@ struct fown_struct {
  * Track a single file's readahead state
  */
 struct file_ra_state {
+//当前窗口的第一个页面索引
 	pgoff_t start;			/* where readahead started */
+//当前窗口的页面数量。值为-1表示预读临时关闭，0表示当前窗口为空
 	unsigned int size;		/* # of readahead pages */
+//异步预读页面数量
 	unsigned int async_size;	/* do asynchronous readahead when
 					   there are only # of pages ahead */
-
+	//预读窗口最大页面数量。0表示预读暂时关闭
 	unsigned int ra_pages;		/* Maximum readahead window */
+	//预读失效计数
 	unsigned int mmap_miss;		/* Cache miss stat for mmap accesses */
 	loff_t prev_pos;		/* Cache last read() position */
 };

@@ -370,6 +370,7 @@ mpage_readpages(struct address_space *mapping, struct list_head *pages,
 
 		prefetchw(&page->flags);
 		list_del(&page->lru);
+		//在读取数据前，先将页面加入到页面Cache中
 		if (!add_to_page_cache_lru(page, mapping,
 					page->index,
 					gfp)) {

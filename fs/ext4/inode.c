@@ -2780,6 +2780,13 @@ static int ext4_da_write_begin(struct file *file, struct address_space *mapping,
 	 * the page (if needed) without using GFP_NOFS.
 	 */
 retry_grab:
+	/*
+	在pagecache中查找页面。如果找到了
+	该页，则增加计数并设置PG_locked标志。如果该页不在页面Cache中，则分配一个新页，
+	并调用add_to_page_cache_lru（），将该页插入页面Cache中，这个函数也会增加页面引
+	用计数，并设置PG_locked标志
+	没能成功返回页面，说明系统没有空闲内存了，就没法继续写数据到硬盘。
+	*/
 	page = grab_cache_page_write_begin(mapping, index, flags);
 	if (!page)
 		return -ENOMEM;
