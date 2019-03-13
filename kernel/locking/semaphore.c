@@ -53,12 +53,15 @@ static noinline void __up(struct semaphore *sem);
 void down(struct semaphore *sem)
 {
 	unsigned long flags;
-
+	//获取自旋锁
 	raw_spin_lock_irqsave(&sem->lock, flags);
 	if (likely(sem->count > 0))
+		//如果count > 0，把count--，获取到计数信号量
 		sem->count--;
 	else
+		 //如果count = 0
 		__down(sem);
+	//释放自旋锁
 	raw_spin_unlock_irqrestore(&sem->lock, flags);
 }
 EXPORT_SYMBOL(down);
@@ -191,8 +194,11 @@ EXPORT_SYMBOL(up);
 /* Functions for the contended case */
 
 struct semaphore_waiter {
+	//作为一个节点放入计数信号量的睡眠任务链表中
 	struct list_head list;
+	//进程
 	struct task_struct *task;
+	//是否获取到了计数信号量
 	bool up;
 };
 
@@ -206,20 +212,26 @@ static inline int __sched __down_common(struct semaphore *sem, long state,
 {
 	struct task_struct *task = current;
 	struct semaphore_waiter waiter;
-
+	//把本进程的semaphore_waiter挂到信号量的wait_list链表的尾部
 	list_add_tail(&waiter.list, &sem->wait_list);
 	waiter.task = task;
 	waiter.up = false;
 
 	for (;;) {
+		//可以被信号打断睡眠而唤醒
 		if (signal_pending_state(state, task))
 			goto interrupted;
+		//如果是超时而被唤醒
 		if (unlikely(timeout <= 0))
 			goto timed_out;
 		__set_task_state(task, state);
+		 //进入睡眠之前释放spinlock
 		raw_spin_unlock_irq(&sem->lock);
+		//主动让出cpu，会睡眠，所以之前会释放spinlock。
 		timeout = schedule_timeout(timeout);
+		//重新获取spinlock
 		raw_spin_lock_irq(&sem->lock);
+		 //如果是获取到了计数信号量而被唤醒
 		if (waiter.up)
 			return 0;
 	}

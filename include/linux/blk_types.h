@@ -43,6 +43,7 @@ struct bvec_iter {
  * main unit of I/O for the block layer and lower layers (ie drivers and
  * stacking drivers)
  */
+ //描述硬盘里真实操作的位置与page cache的页映射关系
 struct bio {
 	struct bio		*bi_next;	/* request queue link */
 	struct block_device	*bi_bdev;

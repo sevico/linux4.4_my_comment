@@ -1530,6 +1530,7 @@ signed long __sched schedule_timeout(signed long timeout)
 
 	switch (timeout)
 	{
+	//如果是MAX_SCHEDULE_TIMEOUT，则忽略timeout参数
 	case MAX_SCHEDULE_TIMEOUT:
 		/*
 		 * These two special cases are useful to be comfortable
@@ -1538,6 +1539,7 @@ signed long __sched schedule_timeout(signed long timeout)
 		 * but I' d like to return a valid offset (>=0) to allow
 		 * the caller to do everything it want with the retval.
 		 */
+		  //引发调度让出cpu
 		schedule();
 		goto out;
 	default:
@@ -1556,11 +1558,12 @@ signed long __sched schedule_timeout(signed long timeout)
 			goto out;
 		}
 	}
-
+	
 	expire = timeout + jiffies;
-
+	 //创建一个timer
 	setup_timer_on_stack(&timer, process_timeout, (unsigned long)current);
 	__mod_timer(&timer, expire, false, TIMER_NOT_PINNED);
+	 //引发调度让出cpu
 	schedule();
 	del_singleshot_timer_sync(&timer);
 

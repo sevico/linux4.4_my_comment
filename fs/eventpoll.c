@@ -1531,6 +1531,7 @@ static int ep_insert(struct eventpoll *ep, struct epoll_event *event,
 		return -ENOMEM;
 
 	/* Item initialization follow here ... */
+	//构造并填充epi结构体
 	INIT_LIST_HEAD(&epi->rdllink);
 	INIT_LIST_HEAD(&epi->fllink);
 	INIT_LIST_HEAD(&epi->pwqlist);
@@ -1539,6 +1540,7 @@ static int ep_insert(struct eventpoll *ep, struct epoll_event *event,
 	// 初始化红黑树中的key 
 	ep_set_ffd(&epi->ffd, tfile, fd);
 	// 直接复制用户结构
+	/* 保存fd感兴趣的事件对象 */
 	epi->event = *event;
 	epi->nwait = 0;
 	/* 这个指针的初值不是NULL哦... */
@@ -1623,6 +1625,13 @@ static int ep_insert(struct eventpoll *ep, struct epoll_event *event,
 		/* 谁在epoll_wait, 就唤醒它... */
 		if (waitqueue_active(&ep->wq))
 			// 通知sys_epoll_wait , 调用回调函数唤醒sys_epoll_wait 进程
+			/*
+		 * 如果有应用程序在等待事件发生，那么就唤醒上层等待事件发生的应用程序，
+		 * 那ep->wq这个成员是在什么时候被添加了等待epoll事件发生的应用程序信息
+		 * 的呢?这个就是通过epoll_wait()系统调用来感知的。当有应用程序调用了
+		 * epoll_wait()的时候，在ep_poll()函数中就会把当前应用程序current对象
+		 * 加入到ep->wq成员中。
+		 */
 			wake_up_locked(&ep->wq);
 		 // 先不通知调用eventpoll_poll 的进程
 		if (waitqueue_active(&ep->poll_wait))
@@ -1630,7 +1639,7 @@ static int ep_insert(struct eventpoll *ep, struct epoll_event *event,
 	}
 
 	spin_unlock_irqrestore(&ep->lock, flags);
-
+	/* 增加当前用户加入epoll中的文件描述符个数 */
 	atomic_long_inc(&ep->user->epoll_watches);
 
 	/* We have to call this outside the lock */
@@ -1941,7 +1950,10 @@ fetch_events:
 		 /* OK, 初始化一个等待队列, 准备直接把自己挂起,
          * 注意current是一个宏, 代表当前进程 */
          // 添加当前进程的唤醒函数
+          //没有事件就绪则进入睡眠状态，当事件就绪后可通过ep_poll_callback()来唤醒
+          //将当前进程放入wait等待队列
 		init_waitqueue_entry(&wait, current);//初始化等待队列,wait表示当前进程
+		 //将当前进程加入eventpoll等待队列，等待文件就绪、超时或中断信号
 		__add_wait_queue_exclusive(&ep->wq, &wait);//挂载到ep结构的等待队列
 
 		for (;;) {
