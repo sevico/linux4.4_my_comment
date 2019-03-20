@@ -619,9 +619,11 @@ struct inode {
 	/* 对inode操作的具体方法
 	* 不同的文件系统会注册不同的函数方法即可
 	*/
-
+	/* inode操作函数集 */  
 	const struct inode_operations	*i_op;
+	/* 指向superblock */
 	struct super_block	*i_sb;
+	/* 指向当前使用的页缓存的映射信息 */
 	struct address_space	*i_mapping;
 
 #ifdef CONFIG_SECURITY
@@ -711,6 +713,7 @@ struct inode {
 
 	const struct file_operations	*i_fop;	/* former ->i_op->default_file_ops */
 	struct file_lock_context	*i_flctx;
+	/* 页高速缓存映射信息 一般被i_mapping所指向*/  
 	struct address_space	i_data;
 	//利用该成员作为链表元素，使得块设备或字符设备可以
 	//维护一个inode的链表，每个inode表示一个设备文件，通过设备文件可以访问对应的设备

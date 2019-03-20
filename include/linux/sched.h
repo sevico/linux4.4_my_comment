@@ -1790,6 +1790,7 @@ struct task_struct {
 	/* Control Group info protected by css_set_lock */
 	struct css_set __rcu *cgroups;
 	/* cg_list protected by css_set_lock and tsk->alloc_lock */
+	//连到同一个css_set的进程组织成一个链表
 	struct list_head cg_list;
 #endif
 #ifdef CONFIG_FUTEX

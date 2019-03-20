@@ -83,8 +83,10 @@ osq_wait_next(struct optimistic_spin_queue *lock,
 
 bool osq_lock(struct optimistic_spin_queue *lock)
 {
+	//当前cpu的node
 	struct optimistic_spin_node *node = this_cpu_ptr(&osq_node);
 	struct optimistic_spin_node *prev, *next;
+	//curr = smp_processor_id + 1
 	int curr = encode_cpu(smp_processor_id());
 	int old;
 
@@ -98,12 +100,16 @@ bool osq_lock(struct optimistic_spin_queue *lock)
 	 * the node fields we just initialised) semantics when updating
 	 * the lock tail.
 	 */
+	 //把lock->tail设置成curr，旧值返回给old
 	old = atomic_xchg(&lock->tail, curr);
+	 //如果之前是没有CPU获取到锁的，获取锁成功，返回true
 	if (old == OSQ_UNLOCKED_VAL)
 		return true;
-
+	 //获取到上个cpu的node
 	prev = decode_cpu(old);
+	//设置当前node->prev为上一个cpu的node
 	node->prev = prev;
+	//上一个cpu的node->next设置为当前cpu的node
 	WRITE_ONCE(prev->next, node);
 
 	/*
@@ -114,11 +120,12 @@ bool osq_lock(struct optimistic_spin_queue *lock)
 	 * guaranteed their existence -- this allows us to apply
 	 * cmpxchg in an attempt to undo our queueing.
 	 */
-
+	//一直查询当前node的locked是否为1，相当于自旋等待
 	while (!READ_ONCE(node->locked)) {
 		/*
 		 * If we need to reschedule bail... so we can block.
 		 */
+		 //在等待的过程中，如果有优先级更高的进程抢占或者被调度器要求调度出去，那就应该放弃自旋等待。
 		if (need_resched())
 			goto unqueue;
 
@@ -136,6 +143,7 @@ unqueue:
 	 */
 
 	for (;;) {
+		//无锁操作，把prev->next设置成null
 		if (prev->next == node &&
 		    cmpxchg(&prev->next, node, NULL) == node)
 			break;
@@ -145,6 +153,7 @@ unqueue:
 		 * in which case we should observe @node->locked becomming
 		 * true.
 		 */
+		 //如果当前的locked被置成1，说明上一个cpu释放了锁，自己获取到了锁
 		if (smp_load_acquire(&node->locked))
 			return true;
 
@@ -154,6 +163,7 @@ unqueue:
 		 * Or we race against a concurrent unqueue()'s step-B, in which
 		 * case its step-C will write us a new @node->prev pointer.
 		 */
+		 //重新获prev，防止其他地方修改链表
 		prev = READ_ONCE(node->prev);
 	}
 
@@ -190,6 +200,7 @@ void osq_unlock(struct optimistic_spin_queue *lock)
 	/*
 	 * Fast path for the uncontended case.
 	 */
+	 //如果tail为0，说明没有人竞争该锁，直接把tail设置成0，返回
 	if (likely(atomic_cmpxchg_release(&lock->tail, curr,
 					  OSQ_UNLOCKED_VAL) == curr))
 		return;
@@ -197,14 +208,20 @@ void osq_unlock(struct optimistic_spin_queue *lock)
 	/*
 	 * Second most likely case.
 	 */
+	 //反之有人竞争锁，获取当前node
 	node = this_cpu_ptr(&osq_node);
+	//把当前node的next设置成0，并返回之前next
 	next = xchg(&node->next, NULL);
+	//如果next不为0，说明有cpu在自旋等待锁
 	if (next) {
+		//把next->locked置为1，让他获取锁
 		WRITE_ONCE(next->locked, 1);
 		return;
 	}
-
+	//把当前node移除队列，设置next的prev，并返回next
 	next = osq_wait_next(lock, node, NULL);
+	//这时再判断一下next是否有值，有值得话说明有cpu在自选等待，
+    //设置next的Locked
 	if (next)
 		WRITE_ONCE(next->locked, 1);
 }

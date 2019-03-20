@@ -6,8 +6,11 @@
  * lock implementations (mutex, rwsem, etc).
  */
 struct optimistic_spin_node {
+////上一个cpu的node->next设置为当前cpu的node
 	struct optimistic_spin_node *next, *prev;
+//加锁状态
 	int locked; /* 1 if lock acquired */
+	//本地CPU的编号，表示该node处于哪个CPU上。0表示没有CPU，1表示CPU0，以此类推
 	int cpu; /* encoded CPU # + 1 value */
 };
 

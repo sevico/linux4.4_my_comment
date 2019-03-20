@@ -350,7 +350,7 @@ repeat:
 			 * Map with big pages if possible, otherwise
 			 * create normal page tables:
 			 */
-			 * 如果使用了PSE，则页框大小会变成4MB，但是这里却是用pages_2m来保存，2MB大小的页框应该是PAE技术使用的，并不是PSE，这里不太明白，可能PAE代替了PSE */
+			 /* 如果使用了PSE，则页框大小会变成4MB，但是这里却是用pages_2m来保存，2MB大小的页框应该是PAE技术使用的，并不是PSE，这里不太明白，可能PAE代替了PSE */
 			if (use_pse) {
 				unsigned int addr2;
 				/* prot设置为PAGE_KERNEL_LARGE，这个值只有在第二次迭代时才会有效 */

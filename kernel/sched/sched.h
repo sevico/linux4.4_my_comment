@@ -1278,8 +1278,6 @@ struct sched_class {
 	/* 下一优先级的调度类
 	* 调度类优先级顺序: stop_sched_class -> dl_sched_class -> rt_sched_class -> fair_sched_class -> idle_sched_class
 	*/
-	
-
 	const struct sched_class *next;
 	/* 将进程加入到运行队列中，即将调度实体（进程）放入红黑树中，并对 nr_running 变量加1 */
 	//当某个任务进入可运行状态时，该函数将得到调用。它将调度实体（进程）放入红黑树中，并对 nr_running 变量加 1。

@@ -255,12 +255,14 @@ static inline int mutex_can_spin_on_owner(struct mutex *lock)
 {
 	struct task_struct *owner;
 	int retval = 1;
-
+	 //如果需要被调度，不能自旋
 	if (need_resched())
 		return 0;
 
 	rcu_read_lock();
 	owner = READ_ONCE(lock->owner);
+	//如果owner->on_cpu为1，说明这个进程正在cpu上执行
+    //且不会被抢占
 	if (owner)
 		retval = owner->on_cpu;
 	rcu_read_unlock();
@@ -268,6 +270,7 @@ static inline int mutex_can_spin_on_owner(struct mutex *lock)
 	 * if lock->owner is not set, the mutex owner may have just acquired
 	 * it and not set the owner yet or the mutex has been released.
 	 */
+	 //通过owner的进程运行状态来判断是否可以自旋
 	return retval;
 }
 
@@ -307,7 +310,7 @@ static bool mutex_optimistic_spin(struct mutex *lock,
 				  struct ww_acquire_ctx *ww_ctx, const bool use_ww_ctx)
 {
 	struct task_struct *task = current;
-
+	//判断是否可以自旋，如果不能自旋，跳到done
 	if (!mutex_can_spin_on_owner(lock))
 		goto done;
 
@@ -316,9 +319,11 @@ static bool mutex_optimistic_spin(struct mutex *lock,
 	 * acquire the mutex all at once, the spinners need to take a
 	 * MCS (queued) lock first before spinning on the owner field.
 	 */
+	 //如果可以自旋，就获取osq锁，osq锁可能自旋等待
+        //如果获取失败，跳到done
 	if (!osq_lock(&lock->osq))
 		goto done;
-
+	//由于上面是获取到的osq锁
 	while (true) {
 		struct task_struct *owner;
 
@@ -343,6 +348,7 @@ static bool mutex_optimistic_spin(struct mutex *lock,
 		 * release the lock or go to sleep.
 		 */
 		owner = READ_ONCE(lock->owner);
+		//自旋等待成功，是owner释放了锁
 		if (owner && !mutex_spin_on_owner(lock, owner))
 			break;
 
@@ -507,6 +513,7 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
 		    struct ww_acquire_ctx *ww_ctx, const bool use_ww_ctx)
 {
 	struct task_struct *task = current;
+	//每一个Mutex_waiter 表示一个在睡眠等待的等待的等待者
 	struct mutex_waiter waiter;
 	unsigned long flags;
 	int ret;
@@ -516,22 +523,25 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
 		if (unlikely(ww_ctx == READ_ONCE(ww->ctx)))
 			return -EALREADY;
 	}
-
+	 //禁止抢占，意味着本地CPU上的进程只能有一个同时尝试上锁
 	preempt_disable();
+	 //尝试获取锁
 	mutex_acquire_nest(&lock->dep_map, subclass, 0, nest_lock, ip);
 
 	if (mutex_optimistic_spin(lock, ww_ctx, use_ww_ctx)) {
+		//获取成功，打开抢占
 		/* got the lock, yay! */
 		preempt_enable();
 		return 0;
 	}
-
+	//尝试获取锁失败，尝试自旋等待失败之后
 	spin_lock_mutex(&lock->wait_lock, flags);
 
 	/*
 	 * Once more, try to acquire the lock. Only try-lock the mutex if
 	 * it is unlocked to reduce unnecessary xchg() operations.
 	 */
+	 //再尝试获取
 	if (!mutex_is_locked(lock) &&
 	    (atomic_xchg_acquire(&lock->count, 0) == 1))
 		goto skip_wait;
@@ -540,6 +550,7 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
 	debug_mutex_add_waiter(lock, &waiter, task_thread_info(task));
 
 	/* add waiting tasks to the end of the waitqueue (FIFO): */
+	//把waiter加入到wait_list到尾部
 	list_add_tail(&waiter.list, &lock->wait_list);
 	waiter.task = task;
 
@@ -751,6 +762,7 @@ __mutex_unlock_common_slowpath(struct mutex *lock, int nested)
 	}
 
 	spin_unlock_mutex(&lock->wait_lock, flags);
+	 //唤醒
 	wake_up_q(&wake_q);
 }
 

@@ -264,7 +264,7 @@ struct cgroup {
 
 	/* Private pointers for each registered subsystem */
 	struct cgroup_subsys_state __rcu *subsys[CGROUP_SUBSYS_COUNT];
-
+	//cgroup所在的层级对应的结构体
 	struct cgroup_root *root;
 
 	/*

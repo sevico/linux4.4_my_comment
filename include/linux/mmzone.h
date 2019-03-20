@@ -372,6 +372,7 @@ struct zone {
 	 * changes.
 	 */
 	 /* 指明在处理内存不足的临界情况下管理区必须保留的页框数目，同时也用于在中断或临界区发出的原子内存分配请求(就是禁止阻塞的内存分配请求) */
+	//lowmem_reserve 的计算由 setup_per_zone_lowmem_reserve 完成。内核迭代系统的所有结点,对每个结点的各个内存域分别计算预留内存最小值,具体的算法是将内存域中页帧的总数除以sysctl_lowmem_reserve_ratio[zone]。除数的默认设置对低端内存域是256,对高端内存域是32。	
 	long lowmem_reserve[MAX_NR_ZONES];
 
 #ifdef CONFIG_NUMA
@@ -385,7 +386,11 @@ struct zone {
 	unsigned int inactive_ratio;
 	/* 指向此管理区属于的结点 */
 	struct pglist_data	*zone_pgdat;
-	/* 实现每CPU页框高速缓存，里面包含每个CPU的单页框的链表 */
+	/* 实现每CPU页框高速缓存，里面包含每个CPU的单页框的链表
+    pageset是一个数组，用于实现每个CPU的热/冷页帧列表，内核使用这些列表来保存可用于满足实现的"新鲜页"。但冷热帧对应的高速缓存状态不同
+    1. 热帧: 页帧已经加载到高速缓存中，与在内存中的页相比，因此可以快速访问，故称之为热的
+    2. 冷帧: 未缓存的页帧已经不在高速缓存中，故称之为冷的
+	*/
 	struct per_cpu_pageset __percpu *pageset;
 
 	/*
