@@ -42,9 +42,9 @@ enum {
 	/* 页框内容可移动，属于用户空间应用程序的页属于此类页面，它们是通过页表映射的，因此我们只需要更新页表项，并把数据复制到新位置就可以了
 	* 当然要注意，一个页面可能被多个进程共享，对应着多个页表项。 
 	*/
-	MIGRATE_MOVABLE,/* 可回收页 */
+	MIGRATE_MOVABLE,/* 可移动页 */
 	/* 页框内容可回收,不能直接移动，但是可以回收，因为还可以从某些源重建页面，比如映射文件的数据属于这种类别，kswapd会按照一定的规则，周期性的回收这类页面。 */
-	MIGRATE_RECLAIMABLE,/* 可移动页 */
+	MIGRATE_RECLAIMABLE,/* 可回收页 */
 	/* 用来表示每CPU页框高速缓存的数据结构中的链表的可移动类型数目 */
 	MIGRATE_PCPTYPES,	/* the number of types on the pcp lists */
 	MIGRATE_HIGHATOMIC = MIGRATE_PCPTYPES,

@@ -448,7 +448,7 @@ __alloc_pages_node(int nid, gfp_t gfp_mask, unsigned int order)
 static inline struct page *alloc_pages_node(int nid, gfp_t gfp_mask,
 						unsigned int order)
 {
-	if (nid == NUMA_NO_NODE)
+	if (nid == NUMA_NO_NODE)//如果指定的结点ID不存在，则选择当前CPU的结点ID
 		nid = numa_mem_id();
 	/* 根据node号获取此node相应的zonelist，因为如果此node上没法分配出多余的内存，会从zonelist的其他node的zone中分配 */
 
