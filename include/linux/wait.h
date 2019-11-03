@@ -123,6 +123,7 @@ static inline void __add_wait_queue(wait_queue_head_t *head, wait_queue_t *new)
 static inline void
 __add_wait_queue_exclusive(wait_queue_head_t *q, wait_queue_t *wait)
 {
+	// WQ_FLAG_EXCLUSIVE，排他性唤醒，配合SO_REUSEPORT从而解决accept惊群问题
 	wait->flags |= WQ_FLAG_EXCLUSIVE;
 	__add_wait_queue(q, wait);
 }

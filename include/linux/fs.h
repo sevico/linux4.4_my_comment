@@ -1451,6 +1451,7 @@ struct super_block {
 	//更详细地定义设备操作和功能
 	struct block_device	*s_bdev;
 	struct backing_dev_info *s_bdi;
+	/*指向mtd相关的指针变量，这个与闪存设备抽象模块有关（内存技术模块）*/
 	struct mtd_info		*s_mtd;
 	// 文件系统实例节点
 	// file_system_type->fs_supers

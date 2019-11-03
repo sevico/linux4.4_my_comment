@@ -2510,6 +2510,7 @@ extern int task_prio(const struct task_struct *p);
  */
 static inline int task_nice(const struct task_struct *p)
 {
+	//prio - 120
 	return PRIO_TO_NICE((p)->static_prio);
 }
 extern int can_nice(const struct task_struct *p, const int nice);

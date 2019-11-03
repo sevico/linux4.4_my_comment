@@ -2270,7 +2270,7 @@ bad_unshare_out:
  *	We don't want to expose copy_files internals to
  *	the exec layer of the kernel.
  */
-
+//unshare_files继而通过unshare_fd函数复制当前进程current的文件表files，赋值操作通过dup_fd函数执行
 int unshare_files(struct files_struct **displaced)
 {
 	struct task_struct *task = current;

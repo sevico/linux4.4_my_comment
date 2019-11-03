@@ -273,7 +273,7 @@ static void flush_arg_page(struct linux_binprm *bprm, unsigned long pos,
 {
 	flush_cache_page(bprm->vma, pos, page_to_pfn(page));
 }
-
+//__bprm_mm_init函数创建虚拟内存结构vm_area_struct
 static int __bprm_mm_init(struct linux_binprm *bprm)
 {
 	int err;
@@ -305,6 +305,7 @@ static int __bprm_mm_init(struct linux_binprm *bprm)
 		goto err;
 
 	mm->stack_vm = mm->total_vm = 1;
+	//arch_bprm_mm_init函数对具体的计算机类型执行相应的初始化操作。
 	arch_bprm_mm_init(mm, vma);
 	up_write(&mm->mmap_sem);
 	bprm->p = vma->vm_end - sizeof(void *);
@@ -391,7 +392,7 @@ static int bprm_mm_init(struct linux_binprm *bprm)
 {
 	int err;
 	struct mm_struct *mm = NULL;
-
+	//bprm_mm_init函数首先通过mm_alloc创建新进程的mm_struct结构，然后执行__bprm_mm_init继续进行初始化。 
 	bprm->mm = mm = mm_alloc();
 	err = -ENOMEM;
 	if (!mm)
@@ -703,6 +704,7 @@ int setup_arg_pages(struct linux_binprm *bprm,
 	mm->arg_start = bprm->p - stack_shift;
 	bprm->p = vma->vm_end - stack_shift;
 #else
+//传入的参数stack_top添加了随机因子，首先对该stack_top进行页对齐，然后计算位移stack_shift，再将该位移添加到栈的指针bprm->p也即当前参数的存放地址mm->arg_start
 	stack_top = arch_align_stack(stack_top);
 	stack_top = PAGE_ALIGN(stack_top);
 
@@ -742,6 +744,7 @@ int setup_arg_pages(struct linux_binprm *bprm,
 	BUG_ON(prev != vma);
 
 	/* Move stack pages down in memory. */
+	//再往下既然修改了栈的指针，就要通过shift_arg_pages函数修改堆栈对应的虚拟内存了
 	if (stack_shift) {
 		ret = shift_arg_pages(vma, stack_shift);
 		if (ret)
@@ -770,6 +773,7 @@ int setup_arg_pages(struct linux_binprm *bprm,
 		stack_base = vma->vm_start - stack_expand;
 #endif
 	current->mm->start_stack = bprm->p;
+//最后需要通过expand_stack函数拓展栈的大小，默认为stack_expand即4个页面
 	ret = expand_stack(vma, stack_base);
 	if (ret)
 		ret = -EFAULT;
@@ -920,7 +924,7 @@ static int de_thread(struct task_struct *tsk)
 	struct signal_struct *sig = tsk->signal;
 	struct sighand_struct *oldsighand = tsk->sighand;
 	spinlock_t *lock = &oldsighand->siglock;
-
+	//首先通过thread_group_empty函数检查线程组中是否有其他线程，如果没有就直接返回。 
 	if (thread_group_empty(tsk))
 		goto no_thread_group;
 
@@ -928,6 +932,7 @@ static int de_thread(struct task_struct *tsk)
 	 * Kill all other threads in the thread group.
 	 */
 	spin_lock_irq(lock);
+	// 接下来通过signal_group_exit函数检查是否已经开始删除线程组，如果是，也直接返回。 
 	if (signal_group_exit(sig)) {
 		/*
 		 * Another group action in progress, just
@@ -938,10 +943,11 @@ static int de_thread(struct task_struct *tsk)
 	}
 
 	sig->group_exit_task = tsk;
+	// zap_other_threads开始执行删除线程组的操作，其内部会向除了本线程外的所有其他线程发送SIGKILL信号。 
 	sig->notify_count = zap_other_threads(tsk);
 	if (!thread_group_leader(tsk))
 		sig->notify_count--;
-
+	//接下来通过while循环等待其他线程的退出
 	while (sig->notify_count) {
 		__set_current_state(TASK_KILLABLE);
 		spin_unlock_irq(lock);
@@ -957,6 +963,7 @@ static int de_thread(struct task_struct *tsk)
 	 * do is to wait for the thread group leader to become inactive,
 	 * and to assume its PID:
 	 */
+	 //如果不是线程组leader，就要等待该leader的退出，省略的代码用来将当前task替换成线程组leader
 	if (!thread_group_leader(tsk)) {
 		struct task_struct *leader = tsk->group_leader;
 
@@ -1044,7 +1051,7 @@ no_thread_group:
 
 	exit_itimers(sig);
 	flush_itimer_signals();
-
+	//再往下为新的进程分配新的sighand_struct结构并初始化
 	if (atomic_read(&oldsighand->count) != 1) {
 		struct sighand_struct *newsighand;
 		/*
@@ -1121,6 +1128,7 @@ int flush_old_exec(struct linux_binprm * bprm)
 	 * not visibile until then. This also enables the update
 	 * to be lockless.
 	 */
+	 //set_mm_exe_file函数设置新进程的路径，即mm_struct中的exe_file成员变量
 	set_mm_exe_file(bprm->mm, bprm->file);
 
 	/*
@@ -1137,7 +1145,9 @@ int flush_old_exec(struct linux_binprm * bprm)
 	set_fs(USER_DS);
 	current->flags &= ~(PF_RANDOMIZE | PF_FORKNOEXEC | PF_KTHREAD |
 					PF_NOFREEZE | PF_NO_SETAFFINITY);
+	// flush_thread函数主要用来初始化thread_struct中的TLS元数据信息。 
 	flush_thread();
+	// 最后设置进程的标志位flags和personality，personality用来兼容linux的旧版本或者BSD等其他版本。
 	current->personality &= ~bprm->per_clear;
 
 	/*
@@ -1177,6 +1187,7 @@ EXPORT_SYMBOL(would_dump);
 
 void setup_new_exec(struct linux_binprm * bprm)
 {
+//arch_pick_mmap_layout函数对设置了mmap的起始地址和分配函数
 	arch_pick_mmap_layout(current->mm);
 
 	/* This is the point of no return */
@@ -1188,6 +1199,7 @@ void setup_new_exec(struct linux_binprm * bprm)
 		set_dumpable(current->mm, suid_dumpable);
 
 	perf_event_exec();
+	//然后更新mm的标志位，通过kbasename函数根据文件路径bprm->filename获得最后的文件名，再调用__set_task_comm函数设置进程的文件路径，最终设置到task_struct的comm变量中
 	__set_task_comm(current, kbasename(bprm->filename), true);
 
 	/* Set the new mm task size. We have to do that late because it may
@@ -1208,6 +1220,7 @@ void setup_new_exec(struct linux_binprm * bprm)
 	/* An exec changes our domain. We are no longer part of the thread
 	   group */
 	current->self_exec_id++;
+	//flush_signal_handlers用于清空信号的处理函数
 	flush_signal_handlers(current, 0);
 }
 EXPORT_SYMBOL(setup_new_exec);
@@ -1297,7 +1310,7 @@ static void check_unsafe_exec(struct linux_binprm *bprm)
 {
 	struct task_struct *p = current, *t;
 	unsigned n_fs;
-
+	//ptrace标志位决定了该进程是否被跟踪
 	if (p->ptrace) {
 		if (ptracer_capable(p, current_user_ns()))
 			bprm->unsafe |= LSM_UNSAFE_PTRACE_CAP;
@@ -1309,6 +1322,7 @@ static void check_unsafe_exec(struct linux_binprm *bprm)
 	 * This isn't strictly necessary, but it makes it harder for LSMs to
 	 * mess up.
 	 */
+	 //task_no_new_privs是个宏定义，定义在include/linux/sched.h中，用于检测task_struct结构中atomic_flags的标志位PFA_NO_NEW_PRIVS
 	if (task_no_new_privs(current))
 		bprm->unsafe |= LSM_UNSAFE_NO_NEW_PRIVS;
 
@@ -1316,6 +1330,10 @@ static void check_unsafe_exec(struct linux_binprm *bprm)
 	n_fs = 1;
 	spin_lock(&p->fs->lock);
 	rcu_read_lock();
+	//while_each_thread遍历同一个线程组中的其他线程，查找具有相同
+	//fs_struct结构的线程，检查fs_struct结构体的使用者计数（即current->fs->users）
+	//是否超过线程组中所有线程的数量，若是，则标记bprm->unsafe为LSM_UNSAFE_SHARE，若不是，则标记current->fs->in_exec为1。
+	
 	while_each_thread(p, t) {
 		if (t->fs == p->fs)
 			n_fs++;
@@ -1385,16 +1403,18 @@ static void bprm_fill_uid(struct linux_binprm *bprm)
 int prepare_binprm(struct linux_binprm *bprm)
 {
 	int retval;
-
+	//bprm_fill_uid设置即将运行的进程的uid和gid
 	bprm_fill_uid(bprm);
 
 	/* fill in binprm security blob */
+	//。security_bprm_set_creds函数设置授权
 	retval = security_bprm_set_creds(bprm);
 	if (retval)
 		return retval;
 	bprm->cred_prepared = 1;
 
 	memset(bprm->buf, 0, BINPRM_BUF_SIZE);
+	//最后通过kernel_read函数将file中的内容读取到bprm的缓存buf中
 	return kernel_read(bprm->file, 0, bprm->buf, BINPRM_BUF_SIZE);
 }
 
@@ -1550,6 +1570,7 @@ static int do_execveat_common(int fd, struct filename *filename,
 	 * don't check setuid() return code.  Here we additionally recheck
 	 * whether NPROC limit is still exceeded.
 	 */
+	 //检查当前用户的进程数是否超过限制
 	if ((current->flags & PF_NPROC_EXCEEDED) &&
 	    atomic_read(&current_user()->processes) > rlimit(RLIMIT_NPROC)) {
 		retval = -EAGAIN;
@@ -1560,6 +1581,7 @@ static int do_execveat_common(int fd, struct filename *filename,
 	 * further execve() calls fail. */
 	current->flags &= ~PF_NPROC_EXCEEDED;
 	//	1.	调用unshare_files()为进程复制一份文件表；
+	//unshare_files函数用于备份当前进程的文件表至displaced中，即当前进程的files_struct结构，当出错或者返回时用于恢复当前进程的文件表。 
 	retval = unshare_files(&displaced);
 	if (retval)
 		goto out_ret;
@@ -1570,10 +1592,12 @@ static int do_execveat_common(int fd, struct filename *filename,
 	if (!bprm)
 		goto out_files;
 	//分配creds结构体，处理锁信息
+	//prepare_bprm_creds函数会从当前进程内复制一份cred结构，封装了进程的安全信息。 
 	retval = prepare_bprm_creds(bprm);
 	if (retval)
 		goto out_free;
-//回传值是void，因为相关的结果都存在bprm->unsafe这个成员变量之内
+//回传值是void，因为相关的结果都存在bprm>unsafe这个成员变量之内
+// check_unsafe_exec检查程序执行后是否存在潜在的风险，进而设置linux_binprm的unsafe标志位。 
 	check_unsafe_exec(bprm);
 	//表明当前进程正在执行新程序，这个在进程调度中有意义
 	current->in_execve = 1;
@@ -1616,6 +1640,7 @@ static int do_execveat_common(int fd, struct filename *filename,
 	if (retval)
 		goto out_unmark;
 	//	7、填充structlinux_binprm结构体中的命令行参数argv,环境变量envp
+	//然后计算用户和环境变量的字符串个数，分别赋值给bprm的argc和envc。count函数内部会通过get_user函数检查用户空间指针的合法性（根据thread_info中的addr_limit变量进行检查）
 	bprm->argc = count(argv, MAX_ARG_STRINGS);
 	if ((retval = bprm->argc) < 0)
 		goto out;
@@ -1633,6 +1658,7 @@ static int do_execveat_common(int fd, struct filename *filename,
 		goto out;
 	/*接下来的3个copy用来拷贝文件名、命令行参数和环境变量*/
 	//  9、调用copy_strings_kernel()从内核空间获取二进制文件的路径名称；
+	//再往下的copy_strings_kernel和copy_strings函数都是讲用户空间的数据拷贝到内核空间，其内部通过kmap系统调用获取内核空间的页面
 	retval = copy_strings_kernel(1, &bprm->filename, bprm);
 	if (retval < 0)
 		goto out;

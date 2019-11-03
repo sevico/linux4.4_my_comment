@@ -2894,6 +2894,7 @@ void sched_exec(void)
 	int dest_cpu;
 
 	raw_spin_lock_irqsave(&p->pi_lock, flags);
+	//select_task_rq函数选择负载最小的cpu，其内部通过select_task_rq_fair函数进行筛选，最后通过stop_one_cpu函数执行切换。
 	dest_cpu = p->sched_class->select_task_rq(p, task_cpu(p), SD_BALANCE_EXEC, 0);
 	if (dest_cpu == smp_processor_id())
 		goto unlock;
@@ -3682,6 +3683,7 @@ SYSCALL_DEFINE1(nice, int, increment)
 	 * We don't have to worry. Conceptually one call occurs first
 	 * and we have a single winner.
 	 */
+	 //限制increment只能在-40到+40之间
 	increment = clamp(increment, -NICE_WIDTH, NICE_WIDTH);
 	nice = task_nice(current) + increment;
 

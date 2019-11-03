@@ -196,10 +196,11 @@ int copy_thread_tls(unsigned long clone_flags, unsigned long sp,
 	}
 	return err;
 }
-
+//传入的参数regs为保存的寄存器，new_ip为解释器或者应用程序的起始代码地址，new_sp为用户空间的堆栈指针
 void
 start_thread(struct pt_regs *regs, unsigned long new_ip, unsigned long new_sp)
 {
+//设置完这些变量后，最后通过force_iret强制返回，跳到new_ip指向的地址处开始执行。对于glibc而言，最终就会跳转到_start函数中
 	set_user_gs(regs, 0);// 将用户态的寄存器清空
 	regs->fs		= 0;
 	regs->ds		= __USER_DS;

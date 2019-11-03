@@ -146,7 +146,8 @@ static int padzero(unsigned long elf_bss)
  */
 #define ELF_BASE_PLATFORM NULL
 #endif
-
+//依次把传递ELF解释器信息的辅助向量,环境指针数组envp,参数指针数组argv和参数个数argc
+//压入到进程的用户栈
 static int
 create_elf_tables(struct linux_binprm *bprm, struct elfhdr *exec,
 		unsigned long load_addr, unsigned long interp_load_addr)
@@ -333,7 +334,7 @@ create_elf_tables(struct linux_binprm *bprm, struct elfhdr *exec,
 }
 
 #ifndef elf_map
-
+//传入的参数filep是文件指针，addr是即将映射的内存中的虚拟地址，size是文件映像的大小，off是映像在文件中的偏移
 static unsigned long elf_map(struct file *filep, unsigned long addr,
 		struct elf_phdr *eppnt, int prot, int type,
 		unsigned long total_size)
@@ -397,6 +398,9 @@ static unsigned long total_mapping_size(struct elf_phdr *cmds, int nr)
  * header pointed to by elf_ex, into a newly allocated array. The caller is
  * responsible for freeing the allocated data. Returns an ERR_PTR upon failure.
  */
+// elf文件头的e_phnum表示Segment头的个数，e_phentsize是Segment头的大小，
+//两者的乘积size即所有Segment头的大小和，所以要先分配size大小的内存空间，
+//e_phoff是第一个Segment头在文件中的偏移。接着调用kernel_read从文件中读取Segment信息到elf_phdata中。
 static struct elf_phdr *load_elf_phdrs(struct elfhdr *elf_ex,
 				       struct file *elf_file)
 {
@@ -702,12 +706,14 @@ static int load_elf_binary(struct linux_binprm *bprm)
 	 // 如果既不是可执行文件也不是动态链接程序，就错误退出
 	if (loc->elf_ex.e_type != ET_EXEC && loc->elf_ex.e_type != ET_DYN)
 		goto out;
+	//elf_check_arch检查e_machine 的值是否为EM_X86_64（0x3E）。 
 	if (!elf_check_arch(&loc->elf_ex))
 		goto out;
 	if (!bprm->file->f_op->mmap)
 		goto out;
 	// 读取所有的头部信息
 	// 读入程序的头部分
+	//load_elf_phdrs函数读取elf文件中的Segment头信息到elf_phdata中
 	elf_phdata = load_elf_phdrs(&loc->elf_ex, bprm->file);
 	if (!elf_phdata)
 		goto out;
@@ -728,12 +734,14 @@ static int load_elf_binary(struct linux_binprm *bprm)
 			 * shared libraries - for now assume that this
 			 * is an a.out format binary
 			 */
+			 //对于解释器信息的Segment头，p_filesz其实是解释器的路径，p_offset是路径信息在elf文件中的偏移，接下来检查该路径信息是否合理。 
 			retval = -ENOEXEC;
 			if (elf_ppnt->p_filesz > PATH_MAX || 
 			    elf_ppnt->p_filesz < 2)
 				goto out_free_ph;
 
 			retval = -ENOMEM;
+			// 再往下分配用于存储解释器路径的内存空间elf_interpreter，并通过kernel_read函数从文件中读取路径信息到elf_interpreter中。 
 			elf_interpreter = kmalloc(elf_ppnt->p_filesz,
 						  GFP_KERNEL);
 			if (!elf_interpreter)
@@ -752,6 +760,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 			if (elf_interpreter[elf_ppnt->p_filesz - 1] != '\0')
 				goto out_free_interp;
 			// 打开解释器文件
+			// 然后通过open_exec函数打开解释器，返回一个file结构，open_exec函数内部也是调用do_open_execat函数打开文件。 
 			interpreter = open_exec(elf_interpreter);
 			retval = PTR_ERR(interpreter);
 			if (IS_ERR(interpreter))
@@ -779,7 +788,8 @@ static int load_elf_binary(struct linux_binprm *bprm)
 		}
 		elf_ppnt++;
 	}
-
+	//这部分代码首先通过查找类型为PT_GNU_STACK的Segment，检查堆栈的可执行性，设置在executable_stack中
+	//PT_LOPROC和PT_HIPROC类型的Segment用来提供给特定的计算机体系进行检查
 	elf_ppnt = elf_phdata;
 	for (i = 0; i < loc->elf_ex.e_phnum; i++, elf_ppnt++)
 		switch (elf_ppnt->p_type) {
@@ -800,6 +810,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 		}
 
 	/* Some simple consistency checks for the interpreter */
+	//因为解释器也是elf文件，被读取到内存中后，这部分代码首先检查解释器的elf文件头信息，然后再次调用load_elf_phdrs函数读取解释器文件的Segment信息，找到类型为PT_LOPROC和PT_HIPROC的Segment以供特定的体系结构检查。
 	if (elf_interpreter) {
 		retval = -ELIBBAD;
 		/* Not an ELF interpreter */
@@ -852,7 +863,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 
 	if (!(current->personality & ADDR_NO_RANDOMIZE) && randomize_va_space)
 		current->flags |= PF_RANDOMIZE;
-
+	//既然前面已经替换了新进程的mm_struct结构，下面就要对该结构进行设置
 	setup_new_exec(bprm);
 
 	/* Do this so that we can load the interpreter, if need be.  We will
@@ -873,7 +884,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 		int elf_prot = 0, elf_flags;
 		unsigned long k, vaddr;
 		unsigned long total_size = 0;
-
+		//首先循环遍历Segment头，查找类型为PT_LOAD的头， 
 		if (elf_ppnt->p_type != PT_LOAD)
 			continue;
 
@@ -903,7 +914,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 				}
 			}
 		}
-
+		//然后根据Segment头的flag标志位设置内存的标志位elf_prot
 		if (elf_ppnt->p_flags & PF_R)
 			elf_prot |= PROT_READ;
 		if (elf_ppnt->p_flags & PF_W)
@@ -918,6 +929,9 @@ static int load_elf_binary(struct linux_binprm *bprm)
 		 * If we are loading ET_EXEC or we have already performed
 		 * the ET_DYN load_addr calculations, proceed normally.
 		 */
+		 //接下来如果要加载的文件数据类型为ET_EXEC，则在固定地址上分配虚拟内存，
+		 //因此要加上MAP_FIXED标志，而如果要加载的数据类型为ET_DYN，则需要从ELF_ET_DYN_BASE地址处开始映射时，
+		 //在设置了PF_RANDOMIZE标志位时，需要加上arch_mmap_rnd()随机因子，将偏移记录到load_bias中。total_size为计算的需要映射的内存大小。 
 		 // 可执行程序
 		if (loc->elf_ex.e_type == ET_EXEC || load_addr_set) {
 			elf_flags |= MAP_FIXED;
@@ -977,6 +991,9 @@ static int load_elf_binary(struct linux_binprm *bprm)
 			}
 		}
 		// 创建一个新线性区对可执行文件的数据段进行映射
+		//再往下就通过elf_map函数将文件映射到虚拟内存中。如果是第一次映射，则需要记录虚拟的elf文件装载地址load_addr，如果是ET_DYN类型的数据，需要加上偏移load_bias
+		//传入的参数filep是文件指针，addr是即将映射的内存中的虚拟地址，size是文件映像的大小，off是映像在文件中的偏移
+		//elf_map函数主要通过vm_mmap为文件申请虚拟空间并进行相应的映射，然后返回虚拟空间的起始地址map_addr
 		error = elf_map(bprm->file, load_bias + vaddr, elf_ppnt,
 				elf_prot, elf_flags, total_size);
 		if (BAD_ADDR(error)) {
@@ -995,6 +1012,9 @@ static int load_elf_binary(struct linux_binprm *bprm)
 				reloc_func_desc = load_bias;
 			}
 		}
+		//每次映射后，都要修改bss段、代码段、数据段、堆的起始位置，
+		//对同一个elf文件而言，start_code向上增长，start_data向下增长，elf_bss向上增长，end_code 向上增长，end_data 向上增长，elf_brk向上增长，
+		//因此从虚拟内存中看，从低地址到高地址依次为代码段，数据段，bss段和堆的起始地址。当装载完毕退出循环后需要将这些变量加上偏移load_bias
 		k = elf_ppnt->p_vaddr;
 		if (k < start_code)
 			start_code = k;
@@ -1041,6 +1061,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 	 * up getting placed where the bss needs to go.
 	 */
 	 // 创建一个新的匿名线性区，来映射程序的bss段
+	 //最后通过set_brk在elf_bss到elf_brk之间分配内存空间
 	retval = set_brk(elf_bss, elf_brk);
 	if (retval)
 		goto out_free_dentry;
@@ -1049,6 +1070,9 @@ static int load_elf_binary(struct linux_binprm *bprm)
 		goto out_free_dentry;
 	}
 	// 如果是动态链接
+	//前面一部分将elf文件中类型为PT_LOAD的数据映射到虚拟内存中，
+	//这一部分代码采用相同的方法将解释器的数据映射到虚拟内存中，
+	//其内部都是通过elf_map函数进行映射，最后将程序的起始地址保存在elf_entry中
 	if (elf_interpreter) {
 		unsigned long interp_map_addr = 0;
 		// 调用一个装入动态链接程序的函数 此时elf_entry指向一个动态链接程序的入口
@@ -1085,7 +1109,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 
 	kfree(interp_elf_phdata);
 	kfree(elf_phdata);
-
+	//set_binfmt将elf_format记录到mm_struct的binfmt变量中。 
 	set_binfmt(&elf_format);
 
 #ifdef ARCH_HAS_SETUP_ADDITIONAL_PAGES
@@ -1093,19 +1117,21 @@ static int load_elf_binary(struct linux_binprm *bprm)
 	if (retval < 0)
 		goto out;
 #endif /* ARCH_HAS_SETUP_ADDITIONAL_PAGES */
-
+	//install_exec_creds会设置新进程的cred结构
 	install_exec_creds(bprm);
+//create_elf_tables函数在将启动解释器或者程序前，向用户空间的堆栈添加一些额外信息，例如应用程序Segment头的起始地址，入口地址等等
 	retval = create_elf_tables(bprm, &loc->elf_ex,
 			  load_addr, interp_load_addr);
 	if (retval < 0)
 		goto out;
 	/* N.B. passed_fileno might not be initialized? */
+	// 接着向新进程mm_struct结构中设置前面计算的代码段、数据段、bss段和堆的位置。 
 	current->mm->end_code = end_code;
 	current->mm->start_code = start_code;
 	current->mm->start_data = start_data;
 	current->mm->end_data = end_data;
 	current->mm->start_stack = bprm->p;
-
+	// 再往下根据标志位PF_RANDOMIZE选择是否要为堆起始地址添加随机变量。 
 	if ((current->flags & PF_RANDOMIZE) && (randomize_va_space > 1)) {
 		current->mm->brk = current->mm->start_brk =
 			arch_randomize_brk(current->mm);
@@ -1137,6 +1163,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 	ELF_PLAT_INIT(regs, reloc_func_desc);
 #endif
 	// 修改保存在内核堆栈，但属于用户态的eip和esp
+	//最后调用start_thread函数将执行权交给解释器或者应用程序了
 	start_thread(regs, elf_entry, bprm->p);
 	retval = 0;
 out:

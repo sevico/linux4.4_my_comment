@@ -279,6 +279,8 @@ struct epitem {
  // epoll的核心实现对应于一个epoll描述符  
 struct eventpoll {
 	/* Protect the access to this structure */
+	// 自旋锁，在kernel内部用自旋锁加锁，就可以同时多线(进)程对此结构体进行操作
+	// 主要是保护ready_list
 	spinlock_t lock;
 
 	/*
@@ -291,6 +293,7 @@ struct eventpoll {
     /* 添加, 修改或者删除监听fd的时候, 以及epoll_wait返回, 向用户空间
      * 传递数据时都会持有这个互斥锁, 所以在用户空间可以放心的在多个线程
      * 中同时执行epoll相关的操作, 内核级已经做了保护. */
+     // 这个互斥锁是为了保证在eventloop使用对应的文件描述符的时候，文件描述符不会被移除掉
 	struct mutex mtx;
 
 	/* Wait queue used by sys_epoll_wait() */

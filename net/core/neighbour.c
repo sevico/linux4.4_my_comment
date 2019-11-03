@@ -468,6 +468,7 @@ struct neighbour *__neigh_create(struct neigh_table *tbl, const void *pkey,
 
 	/* Protocol specific setup. */
 	//IPV4实际调用arp_constructor函数，设置output函数
+	// tbl->constructor-> arp_constructor
 	if (tbl->constructor &&	(error = tbl->constructor(n)) < 0) {
 		rc = ERR_PTR(error);
 		goto out_neigh_release;

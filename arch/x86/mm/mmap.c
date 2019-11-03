@@ -103,9 +103,9 @@ void arch_pick_mmap_layout(struct mm_struct *mm)
 
 	if (current->flags & PF_RANDOMIZE)
 		random_factor = arch_mmap_rnd();
-
+	// mmap_legacy_base修改该地址，加上TASK_UNMAPPED_BASE，值为((1UL << 47) - PAGE_SIZE)/3。 
 	mm->mmap_legacy_base = TASK_UNMAPPED_BASE + random_factor;
-
+	// 最后设置mmap_base地址和get_unmapped_area函数指针，get_unmapped_area函数用于分配虚拟内存。
 	if (mmap_is_legacy()) {
 		mm->mmap_base = mm->mmap_legacy_base;
 		mm->get_unmapped_area = arch_get_unmapped_area;
